@@ -9,7 +9,7 @@ Other agent-entry files in a target repo should **point here** rather than
 duplicate it:
 
 - `CLAUDE.md` → single line `@AGENTS.md` (Claude Code include syntax) or a
-  symlink to `AGENTS.md`.
+  symlink to `AGENTS.md`. Nothing else goes in this file.
 - `CODEX.md`  → symlink or include of `AGENTS.md`.
 - Any tool-specific file → thin wrapper that `@`-includes `AGENTS.md`.
 
@@ -20,7 +20,7 @@ Keep one source of truth. Do not fork agent rules per tool.
 ## 1. Abstract development contract
 
 These rules apply to **every** project owned by the repo owner unless a
-project-local `AGENTS.md` explicitly overrides a specific point.
+project-local `docs/AGENTS.md` explicitly overrides a specific point.
 
 ### 1.1 Tone and output
 
@@ -50,14 +50,35 @@ project-local `AGENTS.md` explicitly overrides a specific point.
 - Bug fixes need a named root cause in code (file:line), not "I tweaked
   something and the symptom went away".
 
-### 1.4 Safety and reversibility
+### 1.4 Safety, secrets, and file size
 
 - Destructive git actions (`reset --hard`, `push --force`, branch deletion,
   stash drop, worktree removal) require explicit owner approval per-invocation.
   A previous approval does not carry forward.
 - Never `--no-verify` a commit or skip hooks to make something "just pass".
-- Never commit secrets, real phone numbers, real emails, private keys,
-  `.env` files, or vendor dumps. Use obvious placeholders.
+- **Never commit `.env` files to GitHub.** Treat this as a critical security
+  issue, not a style preference. Only a clearly non-secret `.env.example` or
+  `sample.env` with obvious placeholder values may ship. `.env`, `.env.local`,
+  `.env.production`, `.env.*` with real values must be in `.gitignore` and
+  never staged. Also never commit real credentials, private keys, real phone
+  numbers, real emails, or vendor dumps.
+- **Never commit a file larger than 300 MB** unless the owner explicitly
+  asked for it and Git LFS (or an equivalent) is configured. Check staged
+  sizes (`git diff --cached --stat`) before pushing, not after.
+- Never commit platform-mismatched binaries (Linux `.so`, macOS `.dylib`,
+  Windows `.dll`, `.exe`) or build artifacts from another architecture.
+- `.gitignore` must cover, at minimum, the language caches and build output
+  of every toolchain the repo actually uses:
+  - Python: `__pycache__/`, `*.pyc`, `*.pyo`, `.pytest_cache/`, `.mypy_cache/`,
+    `.ruff_cache/`, `.venv/`, `venv/`, `dist/`, `build/`, `*.egg-info/`.
+  - Node / JS / TS: `node_modules/`, `.next/`, `.nuxt/`, `.turbo/`, `dist/`,
+    `build/`, `.pnpm-store/`, `coverage/`.
+  - Dart / Flutter: `.dart_tool/`, `build/`, `.flutter-plugins*`.
+  - JVM / Go / Rust: `target/`, `out/`, `bin/`, `.gradle/`.
+  - OS / editor junk: `.DS_Store`, `Thumbs.db`, `.idea/`, `.vscode/` (when
+    not repo-shared).
+  When you add a new language or toolchain to a repo, extend `.gitignore` in
+  the same commit.
 - Do not touch another agent's in-progress work in a shared worktree. If you
   see unrecognized files, keep going on your own scope — do not delete them.
 
@@ -70,6 +91,32 @@ project-local `AGENTS.md` explicitly overrides a specific point.
 - Keep files under ~500 LOC when feasible; split by responsibility, not by
   arbitrary line count.
 
+### 1.6 Root-directory hygiene (agent-authored files)
+
+Agent-authored files at the repo root are the user's first impression of the
+project. Keep the root minimal.
+
+- The **only** files an agent may author at repo root on its own initiative:
+  - `README.md` — brief project description.
+  - `AGENTS.md` — this file; invariant rules + pointer to `docs/`.
+  - `CLAUDE.md` — single line `@AGENTS.md` (Claude Code include). No other
+    content goes in this file.
+  - `CODEX.md` — symlink or single-line include of `AGENTS.md`.
+  - `VERSION` — current docs or deployment version string only. Not a
+    changelog, not a release notes dump.
+  - `LICENSE`, `.gitignore`, and the project's required build / config files
+    (`package.json`, `pyproject.toml`, `Dockerfile`, `requirements*.txt`,
+    `pubspec.yaml`, etc.).
+- Every other agent-authored doc — end-of-round checklists, TODO lists,
+  architecture narratives, migration notes, deploy runbooks, project-specific
+  agent overrides — lives under `docs/`. Specifically:
+  - `LLM_CHECK.md` lives at `docs/LLM_CHECK.md`, never at root.
+  - `TODO.md` lives at `docs/TODO.md` (see §2.5).
+  - A project-specific extension of this file lives at `docs/AGENTS.md`; the
+    root `AGENTS.md` stays as the invariant entry point.
+- Exception: the owner explicitly asked for a root-level file. That approval
+  covers that file only, not a precedent.
+
 ---
 
 ## 2. Docs-in-`docs/` rule (IMPORTANT)
@@ -78,7 +125,9 @@ This is the rule the owner cares about most; follow it aggressively.
 
 ### 2.1 When a `docs/` directory is required
 
-Create a `docs/` directory at the **repo root** if any of the following is true:
+In practice, **every agent-managed repo needs `docs/`**, because
+`docs/LLM_CHECK.md` lives there. Create `docs/` at the repo root on first
+round. You also need it if:
 
 - The project has a deployment method **other than one-click deploy** (Vercel
   import, Render Blueprint, Netlify import, a single `docker compose up`, a
@@ -104,7 +153,14 @@ Create a `docs/` directory at the **repo root** if any of the following is true:
   - If the original `AGENTS.md` is too long to be ergonomic
     (roughly > 200 lines of project-specific detail), move the deep
     architectural content, deploy runbooks, and pitfall lists into
-    `docs/index.md` and leave `AGENTS.md` as a short pointer file.
+    `docs/index.md` and leave root `AGENTS.md` as a short pointer file.
+- `docs/LLM_CHECK.md` — end-of-round checklist (see §5). Do not keep a second
+  copy at repo root.
+- `docs/TODO.md` — user-visible task / todo tracker (see §2.5). Present when
+  the project is complex enough to warrant one.
+- `docs/AGENTS.md` — optional. Project-specific agent rules that extend or
+  override the root `AGENTS.md`. Use when project-specific rules outgrow a
+  pointer file.
 - Subfolders for major topic areas, mirroring how the project is actually
   deployed / tested / shipped:
   - `docs/deployment/<target>.md` per deploy target (Jenkins, Render, Docker,
@@ -184,7 +240,7 @@ When you land in a repo whose existing `AGENTS.md` (or `CODEX.md`, or
    - Move it into `README.md` as a **brief** summary (what + why + how to
      start). Trim aggressively; `README.md` is not a design doc.
    - Leave `AGENTS.md` as a short pointer file that says "see README.md for
-     product, see docs/ for deep detail, see LLM_CHECK.md for end-of-round
+     product, see docs/ for deep detail, see docs/LLM_CHECK.md for end-of-round
      checklist".
 
 2. If the content is **too long to be ergonomic** for agents (very roughly:
@@ -195,29 +251,66 @@ When you land in a repo whose existing `AGENTS.md` (or `CODEX.md`, or
    - Leave `AGENTS.md` at the root with only:
      - the invariant rules an agent must obey before touching code,
      - a pointer to `docs/index.md` for architecture,
-     - a pointer to `LLM_CHECK.md` for the end-of-round checklist.
+     - a pointer to `docs/LLM_CHECK.md` for the end-of-round checklist.
 
 3. If the content is a **mix of rules and project description**:
    - Split along that seam. Rules stay in `AGENTS.md`. Description moves to
      `README.md` (short) and `docs/index.md` (long).
 
+4. If the repo has a legacy `LLM_CHECK.md` at root, move it to
+   `docs/LLM_CHECK.md` in the same commit and update every in-repo reference
+   (root `AGENTS.md`, README, CI scripts, commit templates) to the new path.
+
 Never delete the original content without first landing the moved copy; the
 move and the delete can be one commit, but both must be in the diff.
+
+### 2.5 Project-level TODO list
+
+- Any user-visible task / todo list the owner wants to track lives at
+  `docs/TODO.md`.
+- If the repo currently has a `TASK.md`, `tasks.md`, `TODOS.md`, or similarly
+  named task-tracking file at root (or anywhere else), rename it to
+  `docs/TODO.md` and update **every** reference in the same commit:
+  docs, in-code comments, CI scripts, commit-message templates, any linked
+  section headings. Stale `TASK.md` links are a common drift footgun.
+- `docs/TODO.md` is for owner-visible, multi-round work items. Don't use it
+  for per-round agent scratch — those go in the agent's live plan / todo
+  tool and do not get committed.
+- Skip creating `docs/TODO.md` for trivial repos where the whole project
+  fits in a single round. Create it on first round the project grows beyond
+  that.
+
+### 2.6 Keep `docs/` and `README.md` in sync with material changes
+
+- A change is **material** if it adds, removes, or renames any of: a runtime,
+  a deploy target, an env var, a required CLI tool, a CI pipeline step, an
+  entry-point script, or the "how to rebuild this with an LLM" recipe.
+- Material changes ship with an accompanying edit to `README.md`,
+  `docs/readme.md`, and whichever `docs/<area>/...` file documents the
+  affected piece, **in the same commit** as the code change. No "docs will
+  catch up later" commits.
+- Before closing the round, reopen `README.md` and `docs/readme.md` and
+  confirm they still describe what actually runs. If they don't, fix them in
+  that same round; do not punt.
 
 ---
 
 ## 3. Standard repo layout this template encourages
 
-```
+```text
 <repo>/
 ├── README.md                  ← brief: what + why + quick start
 ├── AGENTS.md                  ← agent rules only; pointer to docs/
-├── CLAUDE.md                  ← symlink or `@AGENTS.md` include
+├── CLAUDE.md                  ← single line `@AGENTS.md`
 ├── CODEX.md                   ← symlink or include of AGENTS.md
-├── LLM_CHECK.md               ← end-of-round checklist (see §5)
+├── VERSION                    ← optional; docs / deploy version only
+├── .gitignore                 ← caches, node_modules, .env, build output, OS junk
 ├── docs/
 │   ├── readme.md              ← how the project works (human-facing)
-│   ├── index.md               ← long-form agent/architecture notes
+│   ├── index.md               ← long-form agent / architecture notes
+│   ├── LLM_CHECK.md           ← end-of-round checklist (see §5)
+│   ├── TODO.md                ← user task tracker (when warranted)
+│   ├── AGENTS.md              ← optional project-specific override
 │   ├── deployment/<target>.md
 │   ├── development/
 │   ├── operations/
@@ -229,7 +322,8 @@ move and the delete can be one commit, but both must be in the diff.
 ```
 
 Not every repo needs every folder. Create folders on first real content, not
-pre-emptively.
+pre-emptively. Only `README.md`, `AGENTS.md`, `CLAUDE.md`, `.gitignore`, and
+`docs/LLM_CHECK.md` are expected on day one for any agent-managed project.
 
 ---
 
@@ -251,6 +345,9 @@ apply all of them.
   is missing.
 - `requirements-<target>.txt` variants are allowed (e.g. `requirements-render.txt`
   excluding heavy ML deps for free-tier hosts).
+- `.gitignore` must include `__pycache__/`, `*.pyc`, `.pytest_cache/`,
+  `.mypy_cache/`, `.ruff_cache/`, `.venv/`, `venv/`, `*.egg-info/`, `dist/`,
+  `build/`.
 
 ### 4.2 TypeScript / Next.js
 
@@ -262,6 +359,8 @@ apply all of them.
 - Static-export sites on GitHub project Pages: set `basePath: "/<repo>"` and
   `trailingSlash: true`. Verify built HTML bootstraps with the correct base
   href before claiming the deploy works.
+- `.gitignore` must include `node_modules/`, `.next/`, `.turbo/`, `dist/`,
+  `build/`, `coverage/`, `.pnpm-store/`.
 
 ### 4.3 Flutter
 
@@ -272,6 +371,8 @@ apply all of them.
   (carousels, polling); use bounded pumps.
 - Pages deploys for Flutter web: use `--no-web-resources-cdn`, disable the
   service worker in the final bootstrap, confirm `useLocalCanvasKit: true`.
+- `.gitignore` must include `.dart_tool/`, `build/`, `.flutter-plugins*`,
+  per-app `ios/Pods/`, `android/.gradle/`.
 
 ### 4.4 Bash / shell scripts
 
@@ -303,21 +404,25 @@ apply all of them.
 
 ## 5. `LLM_CHECK.md` contract
 
-Every repo gets an `LLM_CHECK.md`. It is the **end-of-round checklist** the
-agent runs before declaring a modification round done. See this repo's
-[LLM_CHECK.md](LLM_CHECK.md) for the canonical template.
+Every agent-managed repo ships a `docs/LLM_CHECK.md`. It is the **end-of-round
+checklist** the agent runs before declaring a modification round done. See
+this repo's [docs/LLM_CHECK.md](docs/LLM_CHECK.md) for the canonical template.
 
-Minimum sections each project's `LLM_CHECK.md` must have:
+`LLM_CHECK.md` lives at `docs/LLM_CHECK.md`. There is no root-level copy. If
+you find one at root, move it in the current commit and update every
+reference.
+
+Minimum sections each project's `docs/LLM_CHECK.md` must have:
 
 1. **Common mistakes seen in prior rounds** — concrete, with enough context
    to avoid repeating the mistake.
 2. **Round-end checklist** — commands actually run, commands skipped with
    reason, docs path audit, config/env consistency audit, host-port audit,
-   unrelated-changes audit.
+   unrelated-changes audit, secrets / size / gitignore audit.
 3. **Current round log** — append-only list of what this round actually did.
 
-The `LLM_CHECK.md` is read **before finalizing** the round. If a check fails,
-fix the underlying issue; do not just remove the check.
+The `docs/LLM_CHECK.md` is read **before finalizing** the round. If a check
+fails, fix the underlying issue; do not just remove the check.
 
 ---
 
@@ -332,8 +437,29 @@ fix the underlying issue; do not just remove the check.
 - Lint/format-only churn: auto-resolve if no semantic change. If the user
   already asked to commit, include formatting in the same commit.
 - PR titles stay under 70 characters. Use the body for detail.
-- Do not push to `main` / `origin/main` without explicit per-task approval.
-  Pulling `--rebase` to integrate is fine; force-pushing is not.
+- **Commit, but do not push by default.** When a round finishes cleanly
+  (no known bugs, no outstanding architectural concerns), stage the work
+  and commit it locally with a clear message and stop there. Leave `git
+  push` to the repo owner unless they explicitly asked you to push this
+  round. If the round leaves known bugs, missing tests, or architectural
+  concerns that should block a push, call them out in the final message
+  and leave the work either uncommitted or on a scratch branch — do not
+  quietly ship half-done work.
+- Branch discipline:
+  - If the repo has any branch other than `main` (release branches, feature
+    branches, protected `develop`, a `gh-pages`, etc.), work on a feature
+    branch and open a PR; do not commit directly to `main` / `origin/main`.
+  - If `main` is the **only** branch **and** the repo has GitHub Actions
+    wired up (i.e. CI is the review gate), committing to `main` directly
+    is fine. Pushing still follows the commit-without-push default above —
+    the owner decides when `main` moves forward on the remote.
+- Force-pushing to `main` / `origin/main` is never allowed without explicit
+  per-task approval. Pulling `--rebase` to integrate is fine; force-pushing
+  is not.
+- Before any push: `git diff --cached --stat` (and `git log origin/<branch>..HEAD`
+  for already-committed work) to confirm no `.env` files and no > 300 MB
+  blobs are in the range. If either appears, unstage / amend the history
+  and fix `.gitignore` before you push.
 
 ---
 
@@ -346,6 +472,8 @@ Expand these only when encountered:
   conflicts; otherwise `git push`.
 - **"update docs"**: edit `docs/readme.md` (+ `docs/index.md` if the change
   affects architecture) in the same commit as the code change it documents.
+  This is the manual version of §2.6; the rule applies whether or not the
+  owner says the word.
 - **"one-click push"**: use the repo's review-and-push helper if present
   (see `scripts/review-and-push.ps1` in the `index` repo for the pattern).
 
@@ -353,17 +481,24 @@ Expand these only when encountered:
 
 ## 8. How to use this template in a new repo
 
-1. Copy `AGENTS.md` and `LLM_CHECK.md` from this repo into the new repo's
-   root.
-2. Trim §4 down to only the stacks the new repo actually uses.
-3. Replace this §1–§3 boilerplate **only** with a short note saying "this
+1. Copy `AGENTS.md` into the new repo's root and copy `docs/LLM_CHECK.md`
+   into the new repo's `docs/` directory (create `docs/` if it doesn't
+   exist yet).
+2. Add `CLAUDE.md` at root as a single-line `@AGENTS.md` include; add
+   `CODEX.md` as a symlink or include of `AGENTS.md`.
+3. Add a `.gitignore` that covers the project's language caches, build
+   output, and `.env*` (keeping only `.env.example` / `sample.env`
+   trackable). Cross-check against §1.4.
+4. Trim §4 down to only the stacks the new repo actually uses.
+5. Replace this §1–§3 boilerplate **only** with a short note saying "this
    project inherits the canonical rules from
    `github.com/<owner>/AGENTS.md`; overrides below".
-4. Add project-specific sections: repo map, invariants, build/test commands,
-   deployment topology, open-work / caution list.
-5. If the repo already has a bloated `AGENTS.md`, follow the migration
-   policy in §2.4 before adding new rules.
-6. Add `CLAUDE.md` and `CODEX.md` as symlinks or single-line `@`-includes
-   pointing at `AGENTS.md`.
+6. Add project-specific sections: repo map, invariants, build/test commands,
+   deployment topology, open-work / caution list. If those sections outgrow
+   a pointer file, move them into `docs/AGENTS.md` and keep the root
+   `AGENTS.md` short.
+7. If the repo already has a bloated `AGENTS.md` (or a root `LLM_CHECK.md`,
+   `TASK.md`, `tasks.md`), follow the migration policy in §2.4 and §2.5
+   before adding new rules.
 
 That is the whole contract. Keep it boring, keep it truthful, keep it short.

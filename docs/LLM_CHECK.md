@@ -1,9 +1,15 @@
 # LLM_CHECK.md — Canonical End-of-Round Checklist
 
-This file is the **reference template** for the `LLM_CHECK.md` that every
-project in this owner's workspace should ship. Copy it into a target repo and
-adapt the project-specific items. The agent reads this at the end of a
-modification round **before** declaring the round done.
+This file is the **reference template** for the `docs/LLM_CHECK.md` that every
+project in this owner's workspace should ship. Copy it into a target repo's
+`docs/` directory and adapt the project-specific items. The agent reads this
+at the end of a modification round **before** declaring the round done.
+
+This file lives at `docs/LLM_CHECK.md`. Do not keep a second copy at repo
+root — the root-directory hygiene rule in `AGENTS.md` §1.6 forbids it. If
+you find `LLM_CHECK.md` at repo root, the migration step in `AGENTS.md` §2.4
+(point 4) applies: move it here and update every reference in the same
+commit.
 
 If you are an agent reading this inside the `AGENTS.md` repo itself: there is
 no project to verify here; use this as the shape, not as the live checklist.
@@ -31,52 +37,78 @@ you start a round, and again before you claim it's done.
    (e.g. describing a monolith after a three-app split).
 6. Documentation that references paths, scripts, or env var names that no
    longer exist.
+7. Dropping an agent-authored doc at repo root. Everything except
+   `README.md`, `AGENTS.md`, `CLAUDE.md` (single-line `@AGENTS.md` only),
+   `CODEX.md`, `VERSION`, `LICENSE`, `.gitignore`, and required build /
+   config files belongs under `docs/`. `LLM_CHECK.md` lives at
+   `docs/LLM_CHECK.md`, not at root.
+8. Renaming a task file without updating its references. If you rename
+   `TASK.md` / `tasks.md` to `docs/TODO.md`, every mention in other docs,
+   CI scripts, in-code comments, and commit templates must change in the
+   same commit.
+9. `CLAUDE.md` with content other than `@AGENTS.md`. This file is a pointer,
+   not a place to cache notes.
 
 ### 1.3 Cleanup
 
-7. Leaving dead links after removing a feature.
-8. Removing UI code but forgetting the related settings import/export,
-   config schema, or type definitions.
-9. Leaving unused dependencies in `package.json` / `pubspec.yaml` /
-   `requirements.txt` / `pyproject.toml`.
-10. Editing `.gitignore` with OS- or editor-specific noise the project does
+10. Leaving dead links after removing a feature.
+11. Removing UI code but forgetting the related settings import/export,
+    config schema, or type definitions.
+12. Leaving unused dependencies in `package.json` / `pubspec.yaml` /
+    `requirements.txt` / `pyproject.toml`.
+13. Editing `.gitignore` with OS- or editor-specific noise the project does
     not need, or inadvertently ignoring tracked source.
 
-### 1.4 Infra and deploy
+### 1.4 Infra, deploy, and repository hygiene
 
-11. Assuming a host port (`80`, `443`, `8080`, `5432`, …) is free without
+14. Assuming a host port (`80`, `443`, `8080`, `5432`, …) is free without
     confirming it on the target machine. You do not know host-machine state
     until you check.
-12. Hard-coding `localhost` or `host.docker.internal` for container-to-container
+15. Hard-coding `localhost` or `host.docker.internal` for container-to-container
     traffic; in Compose, use the service name.
-13. Volume-mounting over a directory that contains baked-in code; this
+16. Volume-mounting over a directory that contains baked-in code; this
     produces "random missing package" bugs that look like dependency drift.
-14. Wait loops in container scripts with no timeout, or waiting on a tool
+17. Wait loops in container scripts with no timeout, or waiting on a tool
     that isn't installed in the image (`nc` in `entrypoint.sh` without
     `netcat` in the build).
-15. Parsing `.env` files with naive `source` when values can contain spaces.
-16. GitHub project-site Pages deploys that forget the `/<repo>/` base path
+18. Parsing `.env` files with naive `source` when values can contain spaces.
+19. GitHub project-site Pages deploys that forget the `/<repo>/` base path
     (Next.js `basePath`, mkdocs `site_url`, Flutter `--base-href`).
+20. **Staging a real `.env` / `.env.local` / `.env.production` for commit.**
+    This is a critical security issue, not a style nit. Only
+    `.env.example` / `sample.env` with obvious placeholder values may ship.
+21. Staging a file larger than 300 MB without the owner's explicit ask and
+    Git LFS (or equivalent) configured. Big blobs pollute history and are
+    hard to remove.
+22. `.gitignore` missing the project's language caches — `__pycache__/`,
+    `node_modules/`, `.venv/`, `.dart_tool/`, `target/`, `.next/`, `.turbo/`,
+    `dist/`, `build/`, `coverage/`. Also missing platform-mismatched
+    binaries (`.so`, `.dylib`, `.dll`, `.exe`) that aren't a deliberate
+    distribution artifact.
+23. Committing a cache / build directory from another architecture (e.g.
+    Linux `node_modules` shipped from a dev's laptop, Windows
+    `__pycache__`). These produce "works on my machine" bugs that only show
+    up in CI.
 
 ### 1.5 Code shape
 
-17. Module-import-time initialization of vendor SDK clients (OpenAI, Stripe,
+24. Module-import-time initialization of vendor SDK clients (OpenAI, Stripe,
     etc.); do it lazily at call time so missing env vars don't break unrelated
     tests or URL imports.
-18. Mixing `await import("x")` with static `import ... from "x"` for the
+25. Mixing `await import("x")` with static `import ... from "x"` for the
     same module in the same production code path.
-19. Using prototype mutation or `Object.defineProperty` on `.prototype` to
+26. Using prototype mutation or `Object.defineProperty` on `.prototype` to
     share behavior instead of explicit inheritance / composition.
-20. Leaving UI strings with mojibake or placeholder artifacts in shipped
+27. Leaving UI strings with mojibake or placeholder artifacts in shipped
     copy.
 
 ### 1.6 Multi-agent safety
 
-21. Touching another agent's in-progress work — unrecognized files, stashes,
+28. Touching another agent's in-progress work — unrecognized files, stashes,
     worktrees, branches — in a shared checkout.
-22. Auto-stashing (`git pull --rebase --autostash`) without being explicitly
+29. Auto-stashing (`git pull --rebase --autostash`) without being explicitly
     asked; silently mutating global git state.
-23. Scope creep: expanding a bug-fix round into a refactor without checking
+30. Scope creep: expanding a bug-fix round into a refactor without checking
     whether the owner wanted that.
 
 ---
@@ -108,6 +140,19 @@ item is either confirmed or explicitly called out as skipped-with-reason.
       current round's user-facing changes are captured there.
 - [ ] If I created new deploy steps, a matching `docs/deployment/<target>.md`
       exists and names the exact commands.
+- [ ] Every agent-authored doc created this round lives under `docs/`
+      (unless the owner explicitly asked otherwise). Root contains only the
+      files listed in `AGENTS.md` §1.6.
+- [ ] `docs/LLM_CHECK.md` exists here; there is no root-level `LLM_CHECK.md`
+      copy lingering.
+- [ ] `CLAUDE.md` at root contains only `@AGENTS.md` (no other content).
+- [ ] If I renamed `TASK.md` / `tasks.md` to `docs/TODO.md` this round,
+      every reference in docs, in-code comments, CI scripts, and commit
+      templates has been updated in the same commit.
+- [ ] If this round is a material change (runtime / deploy target / env var
+      / CI step / entry-point script / agent recipe), `README.md`,
+      `docs/readme.md`, and the relevant `docs/<area>/` file are updated in
+      the **same commit** as the code.
 
 ### 2.3 Code hygiene
 
@@ -115,6 +160,17 @@ item is either confirmed or explicitly called out as skipped-with-reason.
       dangling imports / routes / settings fields are gone.
 - [ ] Unused deps removed from the relevant manifest and its lockfile.
 - [ ] `.gitignore` ignores only local junk; no tracked source is hidden.
+- [ ] `.gitignore` covers the project's language caches and build output
+      for every toolchain it uses (Python, Node, Dart, JVM, etc. — see
+      `AGENTS.md` §1.4).
+- [ ] No `.env` / `.env.local` / `.env.production` / `.env.*` with real
+      values is staged. Only `.env.example` / `sample.env` with obvious
+      placeholders may ship. Checked with `git diff --cached --name-only`.
+- [ ] No single staged file exceeds 300 MB. Checked with
+      `git diff --cached --stat` (or `git ls-files -s` + sort) before
+      pushing.
+- [ ] No platform-mismatched binaries or cross-architecture cache dirs are
+      staged.
 - [ ] UI strings are plain, intentional, free of mojibake and placeholder
       artifacts.
 - [ ] Any new comment explains a non-obvious **why**, not a **what**.
@@ -165,6 +221,8 @@ Adapt to the repo's stack. Default bar:
       invariant changed during the round.
 - [ ] If the round materially changes the "how to rebuild this project with
       an LLM" recipe, the relevant section (§2 of the template) is updated.
+- [ ] `docs/TODO.md` reflects closed / opened items if the project tracks
+      them there.
 
 ---
 
@@ -180,3 +238,8 @@ bullets specific: filenames, command names, outcomes.
   template in the `AGENTS.md` repo, derived from patterns already in use
   across `openclaw`, `Notechondria`, `Leetcode_Checker`, `TestLover`,
   `Sheaf`, and `index`.
+- 2026-04-13: Added root-directory hygiene rule (`AGENTS.md` §1.6), secrets
+  / 300 MB / cache `.gitignore` rules (§1.4), `docs/TODO.md` rename policy
+  (§2.5), material-change docs sync rule (§2.6). Moved `LLM_CHECK.md` from
+  repo root to `docs/LLM_CHECK.md`, added `CLAUDE.md` at root as the
+  `@AGENTS.md` include, and updated every in-repo path reference.
