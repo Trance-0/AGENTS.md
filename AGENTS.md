@@ -117,6 +117,64 @@ project. Keep the root minimal.
 - Exception: the owner explicitly asked for a root-level file. That approval
   covers that file only, not a precedent.
 
+### 1.7 Error and info messages (IMPORTANT)
+
+Applies to every user-visible error/warning/info prompt, alert, toast, modal,
+flash message, and every log line emitted for debugging or operations. "Simple"
+messages like `"Invalid token"`, `"Session expired"`, `"Something went wrong"`,
+or `"Error"` are **never acceptable**. They hide the blast radius from the user
+and the root cause from the next maintainer.
+
+Every error, warning, or diagnostic message must contain all three of the
+following components:
+
+1. **Consequence** — what the user or system can no longer do as a result.
+   Examples: "unable to log in", "note cannot be synchronized", "upload
+   aborted", "draft not saved".
+2. **Source module + process** — a uniquely defined module name and the
+   specific process inside it that triggered the message. Examples: "user
+   authentication / token refresh", "remote notes synchronization / pull",
+   "note data validation / schema check", "payments / webhook verification".
+   Use names that are stable and greppable across the codebase; do not use
+   ad-hoc phrasing that changes per call site.
+3. **Cause / triggering condition** — the specific condition that produced
+   the message. Examples: "incorrect password", "server connection timed
+   out after 10s", "session key mismatch", "schema version 4 expected, got
+   3", "rate limit exceeded (429)".
+
+Shape (informal): `"<consequence>: <module>/<process> — <cause>"`. Wording can
+vary per UI surface, but all three pieces must be present.
+
+Examples:
+
+- Bad: `"Invalid token"`
+- Good: `"Unable to log in: user authentication / token refresh — session
+  token signature mismatch. Please sign in again."`
+
+- Bad: `"Sync failed"`
+- Good: `"Note cannot be synchronized: remote notes synchronization / pull —
+  server connection timed out after 10s. Will retry in the background."`
+
+- Bad: `"Validation error"`
+- Good: `"Draft not saved: note data validation / schema check — required field 'title' is empty."`
+
+Rules:
+
+- This applies to **every** surface: end-user-facing prompts/alerts/toasts,
+  developer-facing logs, telemetry events, assertion failures, thrown
+  exception messages, and CLI stderr output. End-user wording may be gentler
+  than log wording, but all three components must still be present.
+- Never swallow the cause to "simplify" the user-facing message. If the raw
+  cause is too technical, keep a user-friendly consequence + module/process
+  in the UI string and include the precise cause in the accompanying log
+  line; do not drop it.
+- Any log message, alert, or user feedback that is missing any of the three
+  components is considered **INVALID** and must be revised in the same round
+  it is discovered. Do not defer these fixes.
+- When adding or editing an error path, audit nearby existing messages in
+  the same module for this rule; bring them into compliance as part of the
+  same change if the scope allows.
+
 ---
 
 ## 2. Docs-in-`docs/` rule (IMPORTANT)
