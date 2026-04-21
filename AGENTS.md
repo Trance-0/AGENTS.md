@@ -90,6 +90,16 @@ project-local `docs/AGENTS.md` explicitly overrides a specific point.
   line do" comments.
 - Keep files under ~500 LOC when feasible; split by responsibility, not by
   arbitrary line count.
+- **Hard ceiling: no file may exceed 1000 lines, including helper text and
+  comments.** If a file crosses 1000 lines (or a change you are about to
+  land would push it over), you must bring it back under the cap in the
+  same round: split it into submodules by categorizing its functions,
+  introduce a better architecture, or factor out components that can be
+  reused elsewhere, and rewire the code so the file is strictly less than
+  1000 lines. Never shrink a file by deleting function docstrings, API
+  comments, or other explanatory documentation to squeeze under the cap —
+  if the only way under 1000 lines is to delete docs, the file still needs
+  to be split.
 
 ### 1.6 Root-directory hygiene (agent-authored files)
 
