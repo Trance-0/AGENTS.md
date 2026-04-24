@@ -50,7 +50,23 @@ project-local `docs/AGENTS.md` explicitly overrides a specific point.
 - Bug fixes need a named root cause in code (file:line), not "I tweaked
   something and the symptom went away".
 
-### 1.4 Safety, secrets, and file size
+### 1.4 Long-running process visibility
+
+- Any process that may run longer than 1 minute must emit progress while it
+  runs. Prefer native progress bars such as Python `tqdm`; otherwise print
+  meaningful heartbeat / verbose messages at a fine enough cadence that the
+  run never appears hung. Examples: loading datasets, tokenizing corpora,
+  training models, exporting large assets, database migrations, bulk uploads,
+  and other time-consuming work.
+- Any code path that produces no output for 5 minutes may be terminated across
+  the owner's projects. Design long-running commands so a user, notebook
+  runtime, CI job, or watchdog can see forward motion before that threshold.
+- Any process that may run longer than 1 hour must also checkpoint durable
+  progress so interrupted work can resume without starting over. This is
+  especially required for model training, dataset processing, generated
+  artifact builds, and other expensive batch jobs.
+
+### 1.5 Safety, secrets, and file size
 
 - Destructive git actions (`reset --hard`, `push --force`, branch deletion,
   stash drop, worktree removal) require explicit owner approval per-invocation.
@@ -82,7 +98,7 @@ project-local `docs/AGENTS.md` explicitly overrides a specific point.
 - Do not touch another agent's in-progress work in a shared worktree. If you
   see unrecognized files, keep going on your own scope — do not delete them.
 
-### 1.5 Style defaults
+### 1.6 Style defaults
 
 - American English in code, comments, docs, UI strings.
 - Write comments only when the **why** is non-obvious (hidden constraint,
@@ -101,7 +117,7 @@ project-local `docs/AGENTS.md` explicitly overrides a specific point.
   if the only way under 1000 lines is to delete docs, the file still needs
   to be split.
 
-### 1.6 Root-directory hygiene (agent-authored files)
+### 1.7 Root-directory hygiene (agent-authored files)
 
 Agent-authored files at the repo root are the user's first impression of the
 project. Keep the root minimal.
@@ -127,7 +143,7 @@ project. Keep the root minimal.
 - Exception: the owner explicitly asked for a root-level file. That approval
   covers that file only, not a precedent.
 
-### 1.7 Error and info messages (IMPORTANT)
+### 1.8 Error and info messages (IMPORTANT)
 
 Applies to every user-visible error/warning/info prompt, alert, toast, modal,
 flash message, and every log line emitted for debugging or operations. "Simple"
@@ -556,7 +572,7 @@ Expand these only when encountered:
    `CODEX.md` as a symlink or include of `AGENTS.md`.
 3. Add a `.gitignore` that covers the project's language caches, build
    output, and `.env*` (keeping only `.env.example` / `sample.env`
-   trackable). Cross-check against §1.4.
+   trackable). Cross-check against §1.5.
 4. Trim §4 down to only the stacks the new repo actually uses.
 5. Replace this §1–§3 boilerplate **only** with a short note saying "this
    project inherits the canonical rules from
