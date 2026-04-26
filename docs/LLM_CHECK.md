@@ -102,13 +102,49 @@ you start a round, and again before you claim it's done.
 27. Leaving UI strings with mojibake or placeholder artifacts in shipped
     copy.
 
-### 1.6 Multi-agent safety
+### 1.6 Long-running process visibility
 
-28. Touching another agent's in-progress work — unrecognized files, stashes,
+28. Adding or changing work that can run longer than 1 minute without a
+    progress bar, heartbeat, or other visible progress message. Use a
+    native progress UI (`tqdm` etc.) where possible; otherwise emit
+    structured heartbeats at fine enough cadence that the run never
+    appears hung.
+29. Adding or changing work that can run longer than 1 hour without a
+    durable checkpoint / resume path. Model training, tokenisation,
+    dataset processing, and large artifact generation must not lose all
+    progress on interruption.
+30. Leaving any code path silent for 5 minutes. Across the owner's
+    projects such runs may be terminated as hung.
+31. Bare `print` / `console.log` calls during a long-running stage that
+    interleave with an active progress bar and shred its rendering. Use
+    the language's structured logger (Python `logging`, etc.) and let
+    the file own the verbose record while the terminal owns the
+    progress UI.
+32. Letting a per-run log grow without bound. INFO+ records persist for
+    the lifetime of the run; DEBUG records may be aged out (e.g. drop
+    older than 3 hours) so a multi-hour run leaves a sparse, readable
+    log instead of a multi-GB blob. WARNING / ERROR are reserved for
+    actionable conditions and must not be aged out automatically.
+33. Logging secrets — API keys, push tokens, raw user PII, or any line
+    from `.env` / `*.bark.env` / similar config files. Log the basename
+    at most.
+34. Repos with a long-running pipeline that *do not* probe for a
+    `*.bark.env` (or equivalent) push-channel config and fire silent
+    milestone notifications when one is present. The config is gated
+    by `*.env` already being in `.gitignore`; verify before staging
+    anything that adds a notification channel.
+35. Echoing a URL template, device key, or any line of a `*.bark.env`
+    file to logs, terminal output, commit messages, PR descriptions, or
+    agent reasoning summaries. The basename of the config file is the
+    most that should ever appear.
+
+### 1.7 Multi-agent safety
+
+36. Touching another agent's in-progress work — unrecognized files, stashes,
     worktrees, branches — in a shared checkout.
-29. Auto-stashing (`git pull --rebase --autostash`) without being explicitly
+37. Auto-stashing (`git pull --rebase --autostash`) without being explicitly
     asked; silently mutating global git state.
-30. Scope creep: expanding a bug-fix round into a refactor without checking
+38. Scope creep: expanding a bug-fix round into a refactor without checking
     whether the owner wanted that.
 
 ---

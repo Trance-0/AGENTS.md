@@ -66,6 +66,70 @@ project-local `docs/AGENTS.md` explicitly overrides a specific point.
   especially required for model training, dataset processing, generated
   artifact builds, and other expensive batch jobs.
 
+#### 1.4.1 File logging convention
+
+For projects with long-running work, ship structured per-run logs alongside
+the live progress UI. The terminal stays owned by the progress bar; the file
+is the canonical replay.
+
+- Use the language's standard structured logger (Python `logging`, Node
+  `pino` / `winston`, Rust `tracing`, etc.). Avoid bare `print` /
+  `console.log` paths that can interleave with an active progress bar and
+  shred its rendering.
+- One file per run, e.g. `logs/run-<YYYYMMDD-HHMMSS>.log`. Add a single
+  short startup line on the terminal naming the file path so a watcher
+  knows where to tail.
+- `logs/` (and `*.log`) belong in `.gitignore`. They contain timing,
+  hostnames, and other operational data that should not ship.
+- Use levels with intent. **INFO** is for stage milestones (data loaded,
+  checkpoint saved, run finished) — keep these for the lifetime of the
+  log. **DEBUG** is for high-frequency detail (per-batch progress, full
+  paths, save/load heartbeats) and may be pruned by *age*, not only by
+  size, on multi-hour runs (e.g. drop records older than 3 hours). The
+  goal is that the long-term file remains a sparse human-readable
+  timeline of what happened, not a multi-GB blob nobody can read.
+- WARNING / ERROR are reserved for actionable conditions; they must
+  not be aged out automatically.
+- Never log secrets — push tokens, API keys, raw user PII, or the
+  contents of `.env` / `*.bark.env` / similar credential files. Log
+  the basename of the config file at most.
+- **Format must be machine-greppable.** A single canonical line shape
+  per record (timestamp + level + message) keeps tooling cheap. Multi-
+  line messages are fine as long as continuation lines do not start
+  with another timestamp.
+
+#### 1.4.2 Notification convention for milestones
+
+If the repo root contains a notification-config file matching `*.bark.env`
+(or an equivalent owner-configured channel), long-running work should send a
+**silent push** at every meaningful milestone so the owner can step away
+from the terminal without losing visibility.
+
+- Detect the config by glob (`*.bark.env`) at repo root only. The file
+  format is one URL template per line; `$0` is a placeholder for the
+  URL-encoded message body. Comments (`#`) and blank lines are ignored.
+  Multiple files are valid — send to all matching configs.
+- All `*.env` (including `*.bark.env`) must already be in `.gitignore`
+  per §1.5. Verify before staging anything in a project that adds the
+  notification channel.
+- Pushes must be **silent** (e.g. Bark `level=passive`) and short. They
+  are awareness signals, not interrupts.
+- Fire pushes at *milestones*, not on every iteration: process start,
+  major stage boundaries (data ready, training started, fine-tune
+  started, etc.), checkpoint persisted, completion / final artifact, and
+  failure / abort. Inside long stages (>1 hour), emit an additional
+  periodic push that includes the current **ETA**.
+- Network failures must not crash the run. Treat them as WARNING in the
+  log and continue.
+- **Never echo URL templates, device keys, or any line of a `*.bark.env`
+  file to logs, terminal output, commit messages, PR descriptions, or
+  AI-agent reasoning summaries.** The basename of the config file is the
+  most that should ever appear.
+- For agent-authored projects: include a `<channel>.env.example`
+  template at repo root with placeholder values and a comment block
+  explaining the format, so future contributors know to drop in their
+  own real config without committing it.
+
 ### 1.5 Safety, secrets, and file size
 
 - Destructive git actions (`reset --hard`, `push --force`, branch deletion,
