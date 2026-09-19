@@ -1,0 +1,32 @@
+{
+  "name": "cpa-usage",
+  "version": "1.0.0",
+  "description": "Report remaining CPA (CliProxy) quota from the OpenAI-compatible endpoint.",
+  "author": {
+    "name": "wuzhe"
+  },
+  "license": "MIT",
+  "keywords": [
+    "cpa",
+    "cliproxy",
+    "quota",
+    "usage",
+    "capacity"
+  ],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "CPA Usage",
+    "shortDescription": "Check remaining CPA quota",
+    "longDescription": "Queries the CPA (CliProxy) OpenAI-compatible endpoint and reports the remaining quota read from response headers, so you can see when capacity is exhausted or restored without leaving a session.",
+    "developerName": "wuzhe",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read"
+    ],
+    "websiteURL": "https://localhost:14000/plugins/cpa-usage",
+    "defaultPrompt": [
+      "Configure quota monitoring",
+      "Check remaining quota"
+    ]
+  }
+}

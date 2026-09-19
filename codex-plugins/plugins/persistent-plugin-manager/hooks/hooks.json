@@ -1,0 +1,7 @@
+{
+  "description": "Keep the local plugin manager available for Codex lifecycle events.",
+  "hooks": {
+    "SessionStart": [{"matcher":"startup|resume|clear|compact","hooks":[{"type":"command","command":"node \"C:/Users/wuzhe/plugins/persistent-plugin-manager/server.mjs\" --ensure"}]}],
+    "SessionEnd": [{"hooks":[{"type":"command","command":"node \"C:/Users/wuzhe/plugins/persistent-plugin-manager/server.mjs\" --stop","timeout":3}]}]
+  }
+}

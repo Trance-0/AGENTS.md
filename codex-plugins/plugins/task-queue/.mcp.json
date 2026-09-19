@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "task-queue": {
+      "command": "node",
+      "args": ["server.mjs"],
+      "cwd": "."
+    }
+  }
+}

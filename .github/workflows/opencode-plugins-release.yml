@@ -1,0 +1,107 @@
+# Publish a GitHub release for every opencode plugin whose managed version is
+# stable and not yet released.
+#
+# The version manifest (`opencode/versions.json`) is the only trigger: a plugin
+# at `x.y.0` that has no `opencode-<plugin>-v<x.y.0>` tag gets a release with a
+# zip of its sources. A beta (`x.y.z`, z > 0) is a local build and is skipped,
+# so pushing one never publishes anything.
+name: opencode Plugins Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - opencode/**
+      - .github/workflows/opencode-plugins-release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Releases and tags are shared repository state; never run two at once.
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: opencode
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    outputs:
+      releases: ${{ steps.plan.outputs.releases }}
+      any: ${{ steps.plan.outputs.any }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tags decide what has already shipped, and they are not fetched by
+          # a default shallow checkout.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # Validates the manifest as a side effect: an unlisted plugin, a missing
+      # file or a malformed version fails the job here rather than mid-publish.
+      - id: plan
+        name: Decide what to release
+        run: |
+          EXISTING_TAGS="$(git tag --list 'opencode-*')" node scripts/plan-release.mjs plan
+
+  release:
+    name: Release
+    needs: plan
+    if: needs.plan.outputs.any == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      # Creating releases and their tags writes to the repository.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Pack plugin archives
+        run: EXISTING_TAGS="$(git tag --list 'opencode-*')" node scripts/plan-release.mjs pack dist
+
+      - name: Publish releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASES: ${{ needs.plan.outputs.releases }}
+        # One release per plugin, each tagged at this commit. `--verify-tag` is
+        # deliberately not used: the tag is created by this step.
+        run: |
+          echo "$RELEASES" | jq -c '.[]' | while read -r entry; do
+            id=$(echo "$entry" | jq -r '.id')
+            version=$(echo "$entry" | jq -r '.version')
+            tag=$(echo "$entry" | jq -r '.tag')
+            asset=$(echo "$entry" | jq -r '.asset')
+            notes=$(echo "$entry" | jq -r '.notes')
+
+            if [ ! -f "dist/$asset" ]; then
+              echo "::error::expected dist/$asset to exist"
+              exit 1
+            fi
+
+            echo "publishing $tag"
+            gh release create "$tag" "dist/$asset" \
+              --title "$id v$version" \
+              --notes "$notes"$'\n\n'"Install into \`~/.config/opencode/\`: unzip and keep \`plugin/\` and \`lib/\` together." \
+              --target "$GITHUB_SHA"
+          done
+
+      - name: Upload archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-plugins
+          path: opencode/dist/*.zip
+          if-no-files-found: error
+          retention-days: 7

@@ -1,0 +1,34 @@
+{
+  "name": "persistent-plugin-manager",
+  "version": "0.2.0",
+  "description": "Manage personal plugin workers and a local configuration dashboard across Codex sessions.",
+  "author": {
+    "name": "wuzhe"
+  },
+  "license": "MIT",
+  "keywords": [
+    "plugins",
+    "manager",
+    "dashboard",
+    "lifecycle",
+    "workers"
+  ],
+  "mcpServers": "./.mcp.json",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Persistent Plugin Manager",
+    "shortDescription": "Manage plugin workers and local settings",
+    "longDescription": "Runs a local dashboard and supervises configured personal plugin workers across Codex sessions.",
+    "developerName": "wuzhe",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Open plugin settings dashboard",
+      "Show managed plugin status"
+    ],
+    "websiteURL": "https://localhost:14000/"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "cpa-usage": {
+      "command": "node",
+      "args": ["server.mjs"],
+      "cwd": "."
+    }
+  }
+}

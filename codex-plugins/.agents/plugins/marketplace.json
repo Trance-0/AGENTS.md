@@ -1,0 +1,68 @@
+{
+  "name": "dsh-personal",
+  "interface": {
+    "displayName": "DSH Personal Plugins"
+  },
+  "plugins": [
+    {
+      "name": "bark-notify",
+      "source": {
+        "source": "local",
+        "path": "./plugins/bark-notify"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "cpa-usage",
+      "source": {
+        "source": "local",
+        "path": "./plugins/cpa-usage"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "task-queue",
+      "source": {
+        "source": "local",
+        "path": "./plugins/task-queue"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "session-importer",
+      "source": {
+        "source": "local",
+        "path": "./plugins/session-importer"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "persistent-plugin-manager",
+      "source": {
+        "source": "local",
+        "path": "./plugins/persistent-plugin-manager"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

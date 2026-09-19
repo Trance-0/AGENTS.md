@@ -1,0 +1,34 @@
+{
+  "name": "task-queue",
+  "version": "1.0.0",
+  "description": "Durable importance-ordered task queue that resumes existing Codex sessions, auto-started when CPA quota returns.",
+  "author": {
+    "name": "wuzhe"
+  },
+  "license": "MIT",
+  "keywords": [
+    "task",
+    "queue",
+    "resume",
+    "quota",
+    "auto-start"
+  ],
+  "mcpServers": "./.mcp.json",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Task Queue",
+    "shortDescription": "Queue work and auto-resume when quota returns",
+    "longDescription": "Queue continuation prompts against existing Codex sessions, ordered by importance. A watcher daemon resumes the top task headless when CPA quota returns from exhausted.",
+    "developerName": "wuzhe",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://localhost:14000/plugins/task-queue",
+    "defaultPrompt": [
+      "View pending tasks",
+      "Configure task queue"
+    ]
+  }
+}

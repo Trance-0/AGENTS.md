@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "bark-notify": {
+      "command": "node",
+      "args": ["server.mjs"],
+      "cwd": "."
+    }
+  }
+}

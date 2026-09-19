@@ -1,0 +1,34 @@
+{
+  "name": "bark-notify",
+  "version": "1.2.0",
+  "description": "Push Bark notifications for Codex lifecycle events, with per-type message templates, push presentation, focus mode, and per-subscriber profiles.",
+  "author": {
+    "name": "wuzhe"
+  },
+  "license": "MIT",
+  "keywords": [
+    "bark",
+    "notification",
+    "push",
+    "alert"
+  ],
+  "mcpServers": "./.mcp.json",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Bark Notify",
+    "shortDescription": "Bark push notifications for Codex events",
+    "longDescription": "Sends Bark push notifications to your phone when Codex finishes a turn, needs a response, hits an error, or starts and stops. Each event type has its own message template and push presentation (level, sound, icon, group), and every subscriber device can override any type independently. Configure it from a session or from the local settings dashboard.",
+    "developerName": "wuzhe",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://localhost:14000/plugins/bark-notify",
+    "defaultPrompt": [
+      "Configure Bark notifications",
+      "Show Bark notification status",
+      "Preview the task-done notification template"
+    ]
+  }
+}

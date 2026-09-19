@@ -1,0 +1,26 @@
+# Dependencies. `opencode/node_modules` is a junction into
+# ~/.config/opencode/node_modules so the plugins can resolve
+# @opencode-ai/plugin; it is machine-local and never committed.
+node_modules/
+
+# Release archives staged by opencode/scripts/plan-release.mjs. The published
+# copies live on the GitHub release, never in the tree.
+opencode/dist/
+
+# Backups written by the dashboard's config editor before it overwrites a file.
+*.bak-*
+*.tmp
+
+# Machine-local state the plugins write into their own directory.
+opencode/*.port
+opencode/*.pid
+
+# Editors and OS noise.
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local, uncommitted agent instructions.
+CLAUDE.local.md
+.env
