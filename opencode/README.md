@@ -6,7 +6,7 @@ lives in `lib/`.
 
 | Plugin | Ports | Tools |
 | --- | --- | --- |
-| `session-manager` | dsh `session-sync`, codex `session-importer` | `session_scan`, `session_list`, `session_read`, `session_import`, `session_sync_all`, `session_projects`, `session_register_projects`, `session_status` |
+| `session-manager` | dsh `session-sync`, codex `session-importer` | `session_scan`, `session_search`, `session_list`, `session_read`, `session_import`, `session_sync_all`, `session_projects`, `session_register_projects`, `session_status` |
 | `bark-notify` | dsh `dsh-bark-notify` | `bark_send`, `bark_state`, `bark_set_mode`, `bark_set_type`, `bark_profile`, `bark_preview`, `bark_device`, `bark_flush` — plus an `event` hook |
 | `cpa-usage` | dsh `cliproxy-quota` | `cpa_quota`, `cpa_models`, `cpa_config` |
 | `task-queue` | dsh `task-runner` | `task_create`, `task_list`, `task_update`, `task_run`, `task_retry`, `task_resume`, `task_sync` — plus `session.created` / `session.idle` / `session.error` hooks |
@@ -146,6 +146,27 @@ poll cannot destroy it mid-click, and the poll is suppressed while it is open.
 Open/closed state and loaded rows live at module scope in the client, keyed
 `"<plugin>:<panel>:<group>"`, because `render()` rebuilds the pane wholesale
 every five seconds.
+
+### Search
+
+A plugin that declares `search` gets a search box on its Info tab:
+
+```ts
+search: {
+  placeholder: "Search every session…",
+  async run(query) { return [ /* PanelItem[] */ ] },
+}
+```
+
+Like `children`, `run` stays server-side — the snapshot advertises only the
+placeholder — and is served by `GET /api/plugins/:id/search?q=`. The query is
+in the URL so a search is shareable and cannot be mistaken for a mutation.
+
+Results replace the panels while a query is active, since a search is a
+question the user asked rather than state to be polled. Searching runs on
+submit, not on keystroke, because a full-text scan is far too expensive to fire
+per character. `render()` restores the caret and the in-progress value, so a
+poll landing mid-word neither steals focus nor reverts what was typed.
 
 ### URLs
 
@@ -355,6 +376,31 @@ carrying both halves of the mapping — the source store, file, native id, devic
 and directory on one side; the opencode session it was imported into on the
 other. An import can therefore be traced in either direction. Cards filter by
 `imported`, `pending`, `conflict` and `missing`.
+
+### Search
+
+The Info tab carries a search box over the **full text of every opencode
+session** — natively created ones and imported transcripts alike. It reads
+message bodies, not titles: an imported transcript's title is only its first
+prompt, which usually says nothing about what the session went on to do.
+
+- All terms must appear somewhere in the session, though not in the same
+  message — a session that discussed two things in separate turns is still the
+  one being looked for.
+- `"quoted phrases"` match as a unit.
+- `%` and `_` are literal, not wildcards.
+- Results rank by how many times a session matched, then by recency, so a
+  passing mention does not outrank the session that did the work.
+- Each result shows the project, source, match count and a snippet around the
+  first hit, and opens that session's transcript.
+
+The same thing is available to a model as `session_search`, which additionally
+takes `project` and `source` filters.
+
+This is a plain scan rather than an FTS index. At the scale opencode reaches —
+~23k parts, ~33 MB — the worst case (a term matching nothing, so `LIMIT` cannot
+short-circuit) answers in about 150 ms, and an index would mean maintaining a
+shadow table inside a database this plugin does not own.
 
 ### Why the counts differ
 

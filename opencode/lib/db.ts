@@ -417,6 +417,148 @@ function basename(value: string): string {
   return parts[parts.length - 1] ?? ""
 }
 
+export type SearchHit = {
+  sessionID: string
+  title: string
+  projectID: string
+  projectName: string
+  source: SessionSource
+  directory: string
+  updated: number
+  /** How many text parts in this session matched every term. */
+  matches: number
+  /** Text around the first match, for showing why the session matched. */
+  snippet: string
+}
+
+export type SearchOptions = {
+  /** Restrict to one project. */
+  projectID?: string
+  /** Restrict to one source, e.g. only native opencode sessions. */
+  source?: SessionSource
+  /** Max sessions returned (default 40). */
+  limit?: number
+}
+
+/** `%` and `_` are LIKE wildcards; `\` escapes them via the ESCAPE clause. */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (c) => `\\${c}`)
+}
+
+/**
+ * Split a query into terms, honouring "quoted phrases".
+ *
+ * Quoting is what lets a phrase containing a space be searched as one unit
+ * rather than as unrelated words that happen to appear in the same message.
+ */
+export function parseQuery(query: string): string[] {
+  const terms: string[] = []
+  for (const match of query.matchAll(/"([^"]+)"|(\S+)/g)) {
+    const term = (match[1] ?? match[2] ?? "").trim()
+    if (term) terms.push(term)
+  }
+  // More than a handful of terms is a pathological query, not a useful one.
+  return terms.slice(0, 8)
+}
+
+/** Text around the first match, with the match roughly centred. */
+function snippetFor(text: string, term: string, width = 160): string {
+  const at = text.toLowerCase().indexOf(term.toLowerCase())
+  if (at === -1) return text.slice(0, width).replace(/\s+/g, " ").trim()
+
+  const start = Math.max(0, at - Math.floor((width - term.length) / 2))
+  const end = Math.min(text.length, start + width)
+  const body = text.slice(start, end).replace(/\s+/g, " ").trim()
+  return (start > 0 ? "…" : "") + body + (end < text.length ? "…" : "")
+}
+
+/**
+ * Find sessions whose transcript contains every term.
+ *
+ * Searches the text parts of opencode's own message store, so it covers
+ * natively created sessions as well as imported transcripts. Terms are ANDed
+ * across the session rather than within a single message: a session discussing
+ * two things in separate turns is still the session being looked for.
+ *
+ * This is a plain scan. At the scale opencode reaches — tens of thousands of
+ * parts, tens of megabytes — it answers in well under a second, and an FTS
+ * index would mean maintaining a shadow table inside a database this plugin
+ * does not own.
+ */
+export function search(db: DatabaseSync, query: string, options: SearchOptions = {}): SearchHit[] {
+  const terms = parseQuery(query)
+  if (terms.length === 0) return []
+
+  const limit = Math.max(1, Math.min(options.limit ?? 40, 200))
+  const conditions: string[] = [`json_extract(p.data,'$.type') = 'text'`]
+  const params: Array<string | number> = []
+
+  for (const term of terms) {
+    conditions.push(`lower(json_extract(p.data,'$.text')) LIKE lower(?) ESCAPE '\\'`)
+    params.push(`%${escapeLike(term)}%`)
+  }
+  if (options.projectID) {
+    conditions.push(`s.project_id = ?`)
+    params.push(options.projectID)
+  }
+  if (options.source) {
+    conditions.push(`${SOURCE_SQL} = ?`)
+    params.push(options.source)
+  }
+
+  // Rank by how often a session matched, then by recency: a passing mention
+  // should not outrank the session that actually worked on the thing.
+  const rows = db
+    .prepare(
+      `SELECT p.session_id AS sessionID, COUNT(*) AS matches,
+              s.title AS title, s.directory AS directory, s.time_updated AS updated,
+              s.project_id AS projectID, pr.name AS projectName, pr.worktree AS worktree,
+              ${SOURCE_SQL} AS source
+       FROM "part" p
+       JOIN "session" s ON s.id = p.session_id
+       LEFT JOIN "project" pr ON pr.id = s.project_id
+       WHERE ${conditions.join(" AND ")}
+       GROUP BY p.session_id
+       ORDER BY matches DESC, s.time_updated DESC
+       LIMIT ?`,
+    )
+    .all(...params, limit) as Array<{
+    sessionID: string
+    matches: number
+    title: string | null
+    directory: string | null
+    updated: number
+    projectID: string
+    projectName: string | null
+    worktree: string | null
+    source: string
+  }>
+
+  // The snippet comes from the earliest part matching the first term, which is
+  // where a reader looks to judge whether this is the session they meant.
+  const excerpt = db.prepare(
+    `SELECT json_extract(data,'$.text') AS text FROM "part"
+     WHERE session_id = ? AND json_extract(data,'$.type') = 'text'
+       AND lower(json_extract(data,'$.text')) LIKE lower(?) ESCAPE '\\'
+     ORDER BY time_created LIMIT 1`,
+  )
+
+  return rows.map((row) => {
+    const found = excerpt.get(row.sessionID, `%${escapeLike(terms[0])}%`) as { text: string } | undefined
+    return {
+      sessionID: row.sessionID,
+      title: row.title || "(untitled)",
+      projectID: row.projectID,
+      projectName: row.projectName || basename(row.worktree ?? "") || row.projectID,
+      source: row.source,
+      directory: row.directory ?? "",
+      updated: row.updated,
+      matches: row.matches,
+      snippet: found?.text ? snippetFor(found.text, terms[0]) : "",
+    }
+  })
+}
+
 export function sessionExists(db: DatabaseSync, session: string): boolean {
   return db.prepare(`SELECT 1 FROM "session" WHERE id = ?`).get(session) !== undefined
 }

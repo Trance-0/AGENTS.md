@@ -206,6 +206,18 @@ export type PluginDescriptor = {
    * the action was run from a settings field carrying a `prompt`.
    */
   actions?: Record<string, { label: string; run: (input?: string) => Promise<string> }>
+  /**
+   * Full-text search over whatever the plugin owns.
+   *
+   * When present the Info tab grows a search box, and results replace the
+   * panels while a query is active. Kept off the panel list because a search
+   * is a question the user asks, not state to be polled.
+   */
+  search?: {
+    /** Placeholder shown in the box, e.g. "Search every session…". */
+    placeholder?: string
+    run: (query: string) => Promise<PanelItem[]>
+  }
   /** False when the plugin cannot be disabled (the manager itself). */
   toggleable?: boolean
 }
@@ -283,6 +295,14 @@ export async function children(id: string, panelKey: string, groupID: string): P
   if (!panel.children) throw new Error(`Panel ${panelKey} has no children resolver`)
 
   return panel.children(groupID)
+}
+
+/** Run a plugin's search, returning rows the dashboard renders as cards. */
+export async function runSearch(id: string, query: string): Promise<PanelItem[]> {
+  const plugin = get(id)
+  if (!plugin) throw new Error(`Unknown plugin: ${id}`)
+  if (!plugin.search) throw new Error(`Plugin ${id} does not support search`)
+  return plugin.search.run(query)
 }
 
 /**
@@ -410,6 +430,8 @@ export async function snapshot() {
       ).map(({ children, ...panel }) => panel),
       logs: Logs.read(plugin.id, 200),
       actions: Object.entries(plugin.actions ?? {}).map(([key, action]) => ({ key, label: action.label })),
+      // Advertised as a capability; `run` stays server-side like `children`.
+      search: plugin.search ? { placeholder: plugin.search.placeholder ?? "Search…" } : null,
     })),
   )
 }

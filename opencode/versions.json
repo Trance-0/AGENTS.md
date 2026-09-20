@@ -19,9 +19,9 @@
     },
     {
       "id": "session-manager",
-      "version": "1.1.3",
+      "version": "1.1.4",
       "promotedFrom": "1.1.0",
-      "notes": "Projects tree listing every opencode session by source, with lazily loaded rows and project rename/merge."
+      "notes": "Projects tree listing every opencode session by source, plus full-text search across every transcript."
     },
     {
       "id": "task-queue",

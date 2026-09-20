@@ -319,6 +319,38 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
         },
       ]
     },
+    /**
+     * Full-text search over every opencode session.
+     *
+     * Reads the message bodies, so it finds sessions by what was discussed in
+     * them rather than by title — which for an imported transcript is only the
+     * first prompt and often says nothing about the work.
+     */
+    search: {
+      placeholder: 'Search every session… (use "quotes" for a phrase)',
+      async run(query: string) {
+        const db = DB.open(true)
+        let hits: DB.SearchHit[]
+        try {
+          hits = DB.search(db, query, { limit: 60 })
+        } finally {
+          db.close()
+        }
+
+        return hits.map((hit) => ({
+          title: hit.title,
+          subtitle: hit.snippet || undefined,
+          tone: hit.source === "opencode" ? ("ok" as const) : ("muted" as const),
+          fields: [
+            { label: "project", value: hit.projectName },
+            { label: "source", value: SOURCE_LABEL[hit.source] ?? hit.source },
+            { label: "matches", value: String(hit.matches), tone: "ok" as const },
+            { label: "updated", value: new Date(hit.updated).toISOString().slice(0, 16).replace("T", " ") },
+          ],
+          link: { view: "session", arg: hit.sessionID },
+        }))
+      },
+    },
     actions: {
       scan: {
         label: "Rescan stores",
@@ -611,6 +643,62 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
                 },
                 ...counts,
                 pending: [...diff.added, ...diff.grown, ...diff.rewritten].slice(0, 25),
+              },
+              null,
+              2,
+            ),
+          }
+        },
+      }),
+
+      session_search: tool({
+        description:
+          "Search the full text of every opencode session — both natively created ones and imported Claude Code, " +
+          "Codex and dsh transcripts — for sessions whose conversation contains all the given terms. " +
+          'Quote a phrase ("rate limit") to match it as a unit. Unlike session_list, which only matches titles ' +
+          "and directories, this reads the message bodies. Results are ranked by how often a session matched.",
+        args: {
+          query: tool.schema.string().describe('Terms to find, all of which must appear. Use "quotes" for a phrase.'),
+          project: tool.schema.string().optional().describe("Restrict to one project id (see session_projects)."),
+          source: tool.schema
+            .enum(["opencode", "claude", "codex", "dsh"])
+            .optional()
+            .describe("Restrict to one source; 'opencode' means natively created sessions."),
+          limit: tool.schema.number().int().min(1).max(200).optional().describe("Max sessions (default 40)."),
+        },
+        async execute(args) {
+          const terms = DB.parseQuery(args.query)
+          if (terms.length === 0) throw new Error("Enter at least one term to search for")
+
+          const db = DB.open(true)
+          let hits: DB.SearchHit[]
+          try {
+            hits = DB.search(db, args.query, {
+              projectID: args.project,
+              source: args.source,
+              limit: args.limit,
+            })
+          } finally {
+            db.close()
+          }
+
+          return {
+            title: hits.length ? `${hits.length} sessions match ${terms.map((t) => `"${t}"`).join(" + ")}` : "No matches",
+            output: JSON.stringify(
+              {
+                terms,
+                matched: hits.length,
+                sessions: hits.map((hit) => ({
+                  sessionID: hit.sessionID,
+                  title: hit.title,
+                  project: hit.projectName,
+                  projectID: hit.projectID,
+                  source: hit.source,
+                  matches: hit.matches,
+                  updated: new Date(hit.updated).toISOString().slice(0, 16).replace("T", " "),
+                  directory: hit.directory || null,
+                  snippet: hit.snippet,
+                })),
               },
               null,
               2,

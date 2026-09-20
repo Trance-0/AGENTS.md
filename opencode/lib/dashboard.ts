@@ -117,6 +117,24 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     }
   }
 
+  /**
+   * Full-text search across whatever a plugin owns.
+   *
+   * GET with the query in the URL so a search is shareable and re-runnable,
+   * and so it cannot be mistaken for a mutation.
+   */
+  const search = url.pathname.match(/^\/api\/plugins\/([^/]+)\/search$/)
+  if (search && req.method === "GET") {
+    const query = url.searchParams.get("q") ?? ""
+    if (!query.trim()) return json(res, 200, { items: [] })
+    try {
+      const items = await Registry.runSearch(decodeURIComponent(search[1]), query)
+      return json(res, 200, { items })
+    } catch (error) {
+      return json(res, 400, { error: error instanceof Error ? error.message : String(error) })
+    }
+  }
+
   // ── versions and marketplace ───────────────────────────────────────────
   if (url.pathname === "/api/marketplace" && req.method === "GET") {
     const config = await Marketplace.config().catch(() => null)
@@ -516,6 +534,12 @@ select.ctl:hover{border-color:var(--accent)}
   cursor:pointer;font-size:16px;line-height:1;padding:2px 8px}
 .dots:hover{border-color:var(--line);color:var(--text);background:var(--panel2)}
 
+/* ---- search ---- */
+.searchrow{display:flex;gap:8px;align-items:center}
+.searchin{flex:1;min-width:0;background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+  color:var(--text);font:inherit;font-size:13px;padding:7px 11px}
+.searchin:focus{outline:none;border-color:var(--accent)}
+
 /* ---- three-dot menu (body-appended so a poll cannot destroy it) ---- */
 .menu{position:fixed;z-index:40;min-width:190px;background:var(--panel);border:1px solid var(--line);
   border-radius:9px;padding:5px;box-shadow:0 10px 26px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:2px}
@@ -626,6 +650,7 @@ const logLevel = {} // plugin id -> minimum log level shown
 const sections = {} // "<plugin>:<group>" -> open, so a refresh keeps it open
 const expanded = {} // "<plugin>:<panel>:<group>" -> open, for tree panels
 const treeRows = {} // same key -> { loading, items, error }, filled on expand
+const searchState = {} // plugin id -> { query, items, loading, error }
 let openMenu = null // the open three-dot menu, appended to document.body
 
 /* -------------------------------- routing -------------------------------- */
@@ -977,6 +1002,67 @@ function panelItem(p, it) {
 }
 
 /**
+ * The search box on a plugin's Info tab.
+ *
+ * Submitting, not typing, runs the query: a full-text scan is far too
+ * expensive to fire on every keystroke.
+ */
+function searchBox(p) {
+  const state = searchState[p.id] || { query: "", items: [], loading: false, error: null }
+
+  const input = el("input", {
+    type: "text",
+    class: "searchin",
+    value: state.query,
+    placeholder: p.search.placeholder || "Search…",
+    // Re-render replaces this node, so the caret position has to be restored.
+    onkeydown: (e) => { if (e.key === "Enter") runSearch2(p, e.target.value) },
+  })
+
+  return el("section", { class: "panel" },
+    el("form", {
+      class: "searchrow",
+      onsubmit: (e) => { e.preventDefault(); runSearch2(p, input.value) },
+    },
+      input,
+      el("button", { class: "btn primary", type: "submit" }, "Search"),
+      state.query
+        ? el("button", {
+            class: "btn",
+            type: "button",
+            onclick: () => { delete searchState[p.id]; render() },
+          }, "Clear")
+        : null))
+}
+
+/** Results of the active search, replacing the panels while one is running. */
+function searchResults(p, state) {
+  if (state.loading) return el("div", { class: "empty" }, "searching…")
+  if (state.error) return el("div", { class: "note err" }, state.error)
+
+  return el("section", { class: "panel" },
+    el("div", { class: "phead" },
+      el("h3", {}, state.items.length ? state.items.length + " results" : "No results"),
+      el("span", { class: "when" }, "for " + state.query)),
+    state.items.length
+      ? el("div", { class: "grid" }, state.items.map((it) => panelItem(p, it)))
+      : el("div", { class: "empty" }, "Nothing matched " + state.query + "."))
+}
+
+function runSearch2(p, query) {
+  const q = (query || "").trim()
+  if (!q) { delete searchState[p.id]; render(); return }
+
+  searchState[p.id] = { query: q, items: [], loading: true, error: null }
+  render()
+
+  api("/api/plugins/" + encodeURIComponent(p.id) + "/search?q=" + encodeURIComponent(q))
+    .then((r) => { searchState[p.id] = { query: q, items: r.items || [], loading: false, error: null } })
+    .catch((e) => { searchState[p.id] = { query: q, items: [], loading: false, error: e.message } })
+    .then(() => { if (view.name === "plugin" && view.arg === p.id) render() })
+}
+
+/**
  * A three-dot menu for one tree group.
  *
  * Rendered into document.body rather than inside the header, because the
@@ -1320,12 +1406,22 @@ function viewPlugin(id) {
   if (tab === "version") {
     body = versionView(p)
   } else if (tab === "info") {
+    const hits = searchState[p.id]
     body = [
       p.status.length
         ? el("section", { class: "panel" }, el("div", { class: "phead" }, el("h3", {}, "Status")), statusPills(p.status))
         : null,
-      ...p.panels.map((panel) => panelView(p, panel)),
-      !p.status.length && !p.panels.length ? el("div", { class: "empty" }, "This plugin reports no info.") : null,
+      p.search ? searchBox(p) : null,
+      // A search answers a question, so its results take over the view until
+      // it is cleared rather than competing with the panels below.
+      hits && hits.query
+        ? searchResults(p, hits)
+        : [
+            ...p.panels.map((panel) => panelView(p, panel)),
+            !p.status.length && !p.panels.length
+              ? el("div", { class: "empty" }, "This plugin reports no info.")
+              : null,
+          ],
     ]
   } else if (tab === "logging") {
     body = [logView(p)]
@@ -1586,6 +1682,13 @@ function render() {
   const scrolled = pane.querySelector(".logs")
   const keepScroll = scrolled ? scrolled.scrollTop : null
 
+  // Same problem for the search box: a poll would otherwise steal the caret
+  // mid-word. Remember where it was and put it back.
+  const active = document.activeElement
+  const typing = active && active.classList && active.classList.contains("searchin")
+    ? { start: active.selectionStart, end: active.selectionEnd, value: active.value }
+    : null
+
   const kids =
     view.name === "plugin" ? viewPlugin(view.arg) :
     view.name === "config" ? viewConfig(view.arg) :
@@ -1596,6 +1699,17 @@ function render() {
   if (keepScroll) {
     const logs = pane.querySelector(".logs")
     if (logs) logs.scrollTop = keepScroll
+  }
+
+  if (typing) {
+    const box = pane.querySelector(".searchin")
+    if (box) {
+      // The value is restored too: a poll can land between a keystroke and a
+      // submit, and the re-render would otherwise revert what was typed.
+      box.value = typing.value
+      box.focus()
+      box.setSelectionRange(typing.start, typing.end)
+    }
   }
 }
 
