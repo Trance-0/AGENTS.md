@@ -384,6 +384,8 @@ export const SessionRename: Plugin = async ({ client }) => {
        */
       "chat-model": {
         label: "Send to the rename model",
+        // Driven by the chat window on the model field, not by a button.
+        hidden: true,
         async run(input) {
           const config = await Rename.load()
           if (config.model === Rename.NO_MODEL) throw new Error("no model selected — renaming is off")

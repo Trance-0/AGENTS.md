@@ -111,10 +111,13 @@ export type PanelItem = {
    * action stays the single place the behaviour lives.
    *
    * `select` and `prompt` collect a value first; `button` runs immediately.
+   * `toggle` is a checkbox that sends its new state, for a row of switches
+   * that would be unreadable as a column of buttons.
    */
   controls?: Array<
     | { type: "button"; action: string; label: string; input?: string; danger?: boolean; confirm?: string }
     | { type: "prompt"; action: string; label: string; input?: string; prompt: string; value?: string }
+    | { type: "toggle"; action: string; label: string; input?: string; value: boolean; column?: string }
     | {
         type: "select"
         action: string
@@ -171,9 +174,20 @@ export type Panel = {
    *
    * `cards` (the default) lays `items` out in a grid. `tree` renders `groups`
    * as collapsible headers and asks `children` for each group's rows the first
-   * time it is opened.
+   * time it is opened. `table` renders one row per item under a shared header,
+   * which is what a homogeneous list wants: the same fields on every row line
+   * up into columns and can be compared down the page, where cards force the
+   * eye to re-find each label.
    */
-  type?: "cards" | "tree"
+  type?: "cards" | "tree" | "table"
+  /**
+   * Column headers, for `type: "table"`.
+   *
+   * Each maps to the `PanelItem.fields` entry with the same `label`, so a row
+   * that is missing one leaves a blank cell rather than shifting its
+   * neighbours into the wrong columns.
+   */
+  columns?: Array<{ label: string; align?: "left" | "right" }>
   /** Collapsible groups, for `type: "tree"`. */
   groups?: PanelGroup[]
   /**
@@ -222,7 +236,15 @@ export type PluginDescriptor = {
    * Optional named actions surfaced as buttons. `input` is present only when
    * the action was run from a settings field carrying a `prompt`.
    */
-  actions?: Record<string, { label: string; run: (input?: string) => Promise<string> }>
+  /**
+   * `hidden` keeps an action off the Settings tab's button row.
+   *
+   * An action that needs an argument — a project to rename, a session to open
+   * — is only meaningful from the control that supplies it. Rendered as a bare
+   * button it either does nothing or acts on the wrong thing, so those are
+   * reachable from their panel menu and nowhere else.
+   */
+  actions?: Record<string, { label: string; run: (input?: string) => Promise<string>; hidden?: boolean }>
   /**
    * Full-text search over whatever the plugin owns.
    *
@@ -446,7 +468,11 @@ export async function snapshot() {
         ) ?? Promise.resolve([] as Panel[]))
       ).map(({ children, ...panel }) => panel),
       logs: Logs.read(plugin.id, 200),
-      actions: Object.entries(plugin.actions ?? {}).map(([key, action]) => ({ key, label: action.label })),
+      actions: Object.entries(plugin.actions ?? {}).map(([key, action]) => ({
+        key,
+        label: action.label,
+        hidden: action.hidden === true,
+      })),
       // Advertised as a capability; `run` stays server-side like `children`.
       search: plugin.search ? { placeholder: plugin.search.placeholder ?? "Search…" } : null,
     })),

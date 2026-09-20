@@ -37,6 +37,9 @@ type Logger = (level: "debug" | "info" | "warn" | "error", message: string, extr
 
 const PLUGIN_ID = "session-manager"
 
+/** Shared across every instance of this plugin in the process. */
+const SWEEP_KEY = Symbol.for("@dsh/opencode-session-manager-sweep")
+
 /** Bound the number of turns copied from a single transcript. */
 const MAX_TURNS = 4000
 
@@ -95,9 +98,20 @@ function splitInput(input?: string): [string, string] {
 export const SessionManager: Plugin = async ({ client, directory }) => {
   await Registry.init()
 
-  /** Guards against two sweeps overlapping, and paces the periodic one. */
-  let sweeping = false
-  let lastSweep = 0
+  /**
+   * Sweep bookkeeping, shared by every instance in the process.
+   *
+   * opencode instantiates this plugin once per project — 40+ times here — and
+   * they all share one index file. Per-instance guards would let all of them
+   * scan and save at once, and on Windows two concurrent saves make the
+   * atomic rename fail with EPERM because the target is still open. State on
+   * `globalThis` is what makes "one sweep at a time" mean one per process.
+   */
+  const sweepState = ((globalThis as Record<symbol, unknown>)[SWEEP_KEY] ??= {
+    running: false,
+    last: 0,
+    scheduled: false,
+  }) as { running: boolean; last: number; scheduled: boolean }
 
   const log: Logger = (level, message, extra) => {
     // Both sinks: opencode's shared stream cannot be read back, so the
@@ -351,6 +365,8 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
        */
       "open-project": {
         label: "Open in opencode",
+        // Needs a project, so it is offered by the ⋯ menu that knows which one.
+        hidden: true,
         async run(input) {
           const [projectID] = splitInput(input)
           if (!projectID) throw new Error("Pick a project to open")
@@ -372,6 +388,7 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
 
       "rename-project": {
         label: "Rename project",
+        hidden: true,
         async run(input) {
           const [projectID, name] = splitInput(input)
           if (!projectID || !name) throw new Error("Pick a project and enter a name")
@@ -388,6 +405,7 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
 
       "add-directory": {
         label: "Add folder",
+        hidden: true,
         async run(input) {
           const [projectID, directory] = splitInput(input)
           if (!projectID || !directory) throw new Error("Pick a project and enter a folder or URL")
@@ -404,6 +422,7 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
 
       "merge-project": {
         label: "Merge project",
+        hidden: true,
         async run(input) {
           const [fromID, intoID] = splitInput(input)
           if (!fromID || !intoID) throw new Error("Pick a project to merge into")
@@ -582,19 +601,19 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
    */
   async function sweep(reason: string) {
     if (!Registry.isEnabled(PLUGIN_ID)) return null
-    if (sweeping) return null
+    if (sweepState.running) return null
 
     const now = Date.now()
-    if (now - lastSweep < RESCAN_INTERVAL_MS && reason !== "manual") return null
+    if (now - sweepState.last < RESCAN_INTERVAL_MS && reason !== "manual") return null
 
-    sweeping = true
+    sweepState.running = true
     try {
       const device = await localDevice()
       const index = await Index.load()
       const scanned = await scanAll()
       const diff = Index.reconcile(index, scanned, device.id)
       await Index.save(index)
-      lastSweep = Date.now()
+      sweepState.last = Date.now()
 
       const changed = diff.added.length + diff.grown.length + diff.rewritten.length
       // Only speak up when something moved; a quiet sweep every ten minutes
@@ -617,18 +636,22 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
       log("warn", `scan failed: ${error instanceof Error ? error.message : String(error)}`)
       return null
     } finally {
-      sweeping = false
+      sweepState.running = false
     }
   }
 
-  // One sweep shortly after startup, then on a slow timer. `unref` keeps the
-  // timer from holding opencode open.
-  const first = setTimeout(() => void sweep("startup"), IDLE_SCAN_DELAY_MS)
-  const repeat = setInterval(() => void sweep("periodic"), RESCAN_INTERVAL_MS)
-  if (typeof first.unref === "function") first.unref()
-  if (typeof repeat.unref === "function") repeat.unref()
+  // One sweep shortly after startup, then on a slow timer — scheduled once for
+  // the whole process, not once per project instance, or 40+ copies would fire
+  // together. `unref` keeps the timers from holding opencode open.
+  if (!sweepState.scheduled) {
+    sweepState.scheduled = true
+    const first = setTimeout(() => void sweep("startup"), IDLE_SCAN_DELAY_MS)
+    const repeat = setInterval(() => void sweep("periodic"), RESCAN_INTERVAL_MS)
+    if (typeof first.unref === "function") first.unref()
+    if (typeof repeat.unref === "function") repeat.unref()
 
-  log("info", `loaded — watching ${Object.keys(SOURCE_LABEL).length - 1} source stores, first scan in ${IDLE_SCAN_DELAY_MS / 1000}s`)
+    log("info", `loaded — watching ${Object.keys(SOURCE_LABEL).length - 1} source stores, first scan in ${IDLE_SCAN_DELAY_MS / 1000}s`)
+  }
 
   return {
     /**

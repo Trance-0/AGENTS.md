@@ -147,7 +147,14 @@ build all of them on every poll.
 
 A group's `menu` renders behind a `⋯` button as `button`, `prompt` or `select`
 entries, each running one of the plugin's actions with `input` set — the same
-convention as per-card `controls`. The menu is appended to `document.body` so a
+convention as per-card `controls`.
+
+An action reached this way should be declared `hidden: true`, which keeps it
+off the Settings tab's button row. Those buttons take no argument, so an action
+that needs one — a project to rename, a session to open — either does nothing
+or acts on the wrong thing when rendered there. `hidden` does not restrict the
+action itself; it only stops it being offered where it cannot be given what it
+needs. The menu is appended to `document.body` so a
 poll cannot destroy it mid-click, and the poll is suppressed while it is open.
 
 Open/closed state and loaded rows live at module scope in the client, keyed
@@ -417,8 +424,21 @@ The index no longer has to be refreshed by hand. A scan runs:
 Scanning is `stat` plus a bounded head read, so it is cheap enough to run while
 opencode is working. *Importing* is not, and is still only done on request —
 a sweep that finds unimported transcripts says so in the log rather than
-deciding for you. Overlapping sweeps are refused, the periodic one is paced,
-and both timers are `unref`'d so they never hold opencode open.
+deciding for you.
+
+The sweep state lives on `globalThis`, not in the plugin instance. opencode
+instantiates a plugin **once per project** — 44 times on this device — and all
+of those instances share one index file. Per-instance guards let every copy
+scan and save at once, and two concurrent saves make the atomic rename fail
+with `EPERM: operation not permitted` on Windows, because the target is still
+open. Shared state is what makes "one sweep at a time" mean one *per process*;
+the timers are likewise scheduled once, and `unref`'d so they never hold
+opencode open.
+
+`Index.save` is hardened to match: each write goes to a uniquely named temp
+file rather than a shared `.tmp`, and the rename retries a few times on the
+transient lock codes (`EPERM`/`EACCES`/`EBUSY`) that an antivirus scanner or a
+file watcher can cause.
 
 **Rescan stores** now lives on the Settings tab, with the manual run bypassing
 the pacing. It is maintenance, and the Info tab is for reading.

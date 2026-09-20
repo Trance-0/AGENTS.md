@@ -595,6 +595,7 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
       /** One message in the picker's scratch conversation; nothing is saved. */
       "chat-summary-model": {
         label: "Send to the summary model",
+        hidden: true,
         async run(input) {
           const config = await RetryConfig.load()
           if (config.summaryModel === Summarize.NO_MODEL) {

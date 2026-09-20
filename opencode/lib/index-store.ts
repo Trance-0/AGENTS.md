@@ -96,9 +96,42 @@ export async function save(index: Index): Promise<void> {
   index.devices = { ...index.devices, [device.id]: { hostname: device.hostname, lastSeen: index.updatedAt } }
 
   await fsp.mkdir(path.dirname(STATE.sessionIndex), { recursive: true })
-  const temp = STATE.sessionIndex + ".tmp"
+
+  // A unique temp name per write: a fixed one is a shared resource, and two
+  // writers racing on it leaves one of them renaming a file the other has
+  // already moved.
+  const temp = `${STATE.sessionIndex}.${process.pid}.${Date.now().toString(36)}.tmp`
   await fsp.writeFile(temp, JSON.stringify(index, null, 2) + "\n", "utf8")
-  await fsp.rename(temp, STATE.sessionIndex)
+
+  try {
+    await replace(temp, STATE.sessionIndex)
+  } catch (error) {
+    await fsp.rm(temp, { force: true }).catch(() => {})
+    throw error
+  }
+}
+
+/**
+ * Replace a file atomically, tolerating Windows' transient locks.
+ *
+ * On Windows a rename onto an existing path fails with EPERM/EBUSY while any
+ * process still holds the target open — an antivirus scanner, a backup agent,
+ * or an editor watching the config directory is enough. The operation is
+ * genuinely retryable, so a few short backoffs turn a spurious failure into a
+ * brief wait instead of a lost scan.
+ */
+async function replace(from: string, to: string, attempts = 5): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await fsp.rename(from, to)
+      return
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      const retryable = code === "EPERM" || code === "EACCES" || code === "EBUSY"
+      if (!retryable || attempt >= attempts - 1) throw error
+      await new Promise((resolve) => setTimeout(resolve, 20 * 2 ** attempt))
+    }
+  }
 }
 
 /**

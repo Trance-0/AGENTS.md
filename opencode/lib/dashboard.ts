@@ -540,6 +540,33 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
 .item .f.ok .v{color:var(--ok)} .item .f.warn .v{color:var(--warn)} .item .f.error .v{color:var(--err)}
 .item.link{cursor:pointer;text-align:left;width:100%;font:inherit;color:inherit}
 .item.link:hover{border-color:var(--accent)}
+
+/* ---- panels: table layout, one row per item ---- */
+.table{border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--panel)}
+.trow{display:grid;grid-template-columns:var(--tcols);align-items:center;
+  gap:10px;padding:9px 13px;border-bottom:1px solid var(--line);border-left:3px solid transparent}
+.trow:last-child{border-bottom:0}
+.trow.ok{border-left-color:var(--ok)}
+.trow.warn{border-left-color:var(--warn)}
+.trow.error{border-left-color:var(--err)}
+.trow.muted{border-left-color:#3a3a45}
+.trow.thead{background:#101014;border-left-color:transparent;position:sticky;top:0;z-index:1}
+.trow.thead .tcell{color:var(--faint);font-size:10.5px;text-transform:uppercase;
+  letter-spacing:.7px;font-weight:600}
+.tcell{font-size:12.5px;color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis}
+.tcell.right{text-align:right;font-variant-numeric:tabular-nums}
+.tcell.ok{color:var(--ok)} .tcell.warn{color:var(--warn)} .tcell.error{color:var(--err)}
+.tcell.tname{overflow:visible}
+.tcell.tname .t{font-size:13.5px;font-weight:600;color:var(--text);word-break:break-word}
+.tcell.tname .s{color:var(--faint);font-size:11.5px;margin-top:1px;word-break:break-all}
+.tcell.tactions{overflow:visible}
+.tcell.tactions .ctlrow{margin:0;justify-content:flex-end;flex-wrap:nowrap}
+.ctltoggle{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.switch.sm{width:32px;height:18px}
+.switch.sm .slider:before{width:12px;height:12px;left:3px;top:3px}
+.switch.sm input:checked+.slider:before{transform:translateX(14px)}
+/* A table cannot usefully shrink below its columns; scroll instead of wrapping. */
+@media (max-width:860px){ .table{overflow-x:auto} .trow{min-width:640px} }
 /* ---- per-card controls ---- */
 .ctlrow{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;padding-top:9px;border-top:1px solid var(--line)}
 .btn.ctl{padding:3px 9px;font-size:11.5px;border-radius:6px}
@@ -770,7 +797,15 @@ function el(tag, props, ...kids) {
     else if (k in n) n[k] = v
     else n.setAttribute(k, v)
   }
-  for (const kid of kids.flat()) if (kid != null && kid !== false) n.append(kid)
+  // Flatten all the way down, not one level.
+  //
+  // Views compose naturally into nested arrays — a tab body holding a list of
+  // panels, a panel holding a list of rows — and append has no idea what to do
+  // with an array, so it stringifies it: an element two levels deep renders as
+  // the literal text "[object HTMLElement]" instead of appearing. That is
+  // silent and looks like the data was missing rather than the markup wrong,
+  // so this flattens to whatever depth the caller happened to build.
+  for (const kid of kids.flat(Infinity)) if (kid != null && kid !== false) n.append(kid)
   return n
 }
 
@@ -1088,8 +1123,10 @@ function toggleSwitch(p) {
     el("span", { class: "slider" }))
 }
 
+/** Run a plugin action. Returns whether it succeeded, so a control can revert. */
 async function runAction(p, key, button, value) {
   if (button) button.disabled = true
+  let ok = true
   try {
     const body = { action: key }
     // Only sent when present, so an action that takes no input still receives
@@ -1097,16 +1134,23 @@ async function runAction(p, key, button, value) {
     if (value !== undefined && value !== null) body.value = value
     const r = await post("/api/plugins/" + encodeURIComponent(p.id) + "/action", body)
     toast(r.message || "done")
-  } catch (err) { toast(err.message, true) }
+  } catch (err) {
+    ok = false
+    toast(err.message, true)
+  }
   if (button) button.disabled = false
   await load()
+  return ok
 }
 
 function actionRow(p) {
-  if (!p.actions.length) return null
+  // An action needing an argument is only meaningful from the control that
+  // supplies it; as a bare button it acts on nothing.
+  const runnable = p.actions.filter((a) => !a.hidden)
+  if (!runnable.length) return null
   return el("div", { class: "sect" },
     el("h4", {}, "Actions"),
-    el("div", { class: "btnrow" }, p.actions.map((a) =>
+    el("div", { class: "btnrow" }, runnable.map((a) =>
       el("button", { class: "btn", onclick: (e) => runAction(p, a.key, e.target) }, a.label))))
 }
 
@@ -1153,6 +1197,12 @@ function panelControls(p, it) {
             await runAction(p, c.action, e.target, (c.input ? c.input + "=" : "") + value)
           },
         }, c.label)
+      }
+
+      // A toggle outside a table column still renders as a switch, labelled.
+      if (c.type === "toggle") {
+        return el("label", { class: "ctltoggle", title: c.label },
+          rowToggle(p, it, c), el("span", {}, c.label))
       }
 
       return el("button", {
@@ -1423,8 +1473,88 @@ function panelView(p, panel) {
     panel.description ? el("p", { class: "pdesc" }, panel.description) : null,
     chips,
     items.length
-      ? el("div", { class: "grid" }, items.map((it) => panelItem(p, it)))
+      ? panel.type === "table"
+        ? tableView(p, panel, items)
+        : el("div", { class: "grid" }, items.map((it) => panelItem(p, it)))
       : el("div", { class: "empty" }, panel.empty || "Nothing to show."))
+}
+
+/**
+ * A panel as a table: one row per item, columns shared by every row.
+ *
+ * The right shape for a homogeneous list. Cards repeat each field's label on
+ * every item, so comparing one attribute across rows means re-finding that
+ * label each time; a table puts it in the header once and lines the values up
+ * underneath. Row controls go in a trailing column so the actions available on
+ * a row sit beside it rather than below.
+ */
+function tableView(p, panel, items) {
+  const columns = panel.columns || []
+  const hasControls = items.some((it) => (it.controls || []).length)
+
+  // Controls that name a column are cells, not buttons in the actions cell:
+  // six mute switches belong under six headings, not in a row of toggles.
+  const columnControl = (it, label) =>
+    (it.controls || []).find((c) => c.type === "toggle" && c.column === label)
+
+  // The name column takes the slack; the rest size to their content so a
+  // column of switches does not sprawl across half the table.
+  const template =
+    "minmax(140px,1.6fr) " +
+    columns.map(() => "minmax(60px,max-content)").join(" ") +
+    (hasControls ? " max-content" : "")
+
+  const head = el("div", { class: "trow thead", style: "--tcols:" + template },
+    el("div", { class: "tcell tname" }, "name"),
+    columns.map((c) => el("div", { class: "tcell" + (c.align === "right" ? " right" : "") }, c.label)),
+    hasControls ? el("div", { class: "tcell tactions" }, "") : null)
+
+  const rows = items.map((it) => {
+    const byLabel = new Map((it.fields || []).map((f) => [f.label, f]))
+    // Controls bound to a column are rendered in it; the rest are row actions.
+    const actions = (it.controls || []).filter((c) => !(c.type === "toggle" && c.column))
+
+    return el("div", { class: "trow " + (it.tone || ""), style: "--tcols:" + template },
+      el("div", { class: "tcell tname" },
+        el("div", { class: "t" }, it.title),
+        it.subtitle ? el("div", { class: "s" }, it.subtitle) : null),
+      columns.map((c) => {
+        const toggle = columnControl(it, c.label)
+        if (toggle) {
+          return el("div", { class: "tcell" + (c.align === "right" ? " right" : "") },
+            rowToggle(p, it, toggle))
+        }
+        const f = byLabel.get(c.label)
+        return el("div", {
+          class: "tcell" + (c.align === "right" ? " right" : "") + (f?.tone ? " " + f.tone : ""),
+          title: f ? String(f.value) : "",
+        }, f ? String(f.value) : "—")
+      }),
+      hasControls
+        ? el("div", { class: "tcell tactions" },
+            actions.length ? panelControls(p, { ...it, controls: actions }) : null)
+        : null)
+  })
+
+  return el("div", { class: "table" }, head, rows)
+}
+
+/** A checkbox cell that sends its new state to the plugin. */
+function rowToggle(p, it, c) {
+  const input = el("input", {
+    type: "checkbox",
+    checked: c.value,
+    title: c.label,
+    onchange: async (e) => {
+      const want = e.target.checked
+      // Send the state being requested, so the action never has to guess what
+      // the row looked like when it was clicked.
+      const ok = await runAction(p, c.action, null, (c.input ? c.input + "=" : "") + String(want))
+      if (!ok) e.target.checked = !want
+    },
+  })
+  return el("label", { class: "switch sm", onclick: (e) => e.stopPropagation() },
+    input, el("span", { class: "slider" }))
 }
 
 /**
@@ -1657,7 +1787,11 @@ function viewPlugin(id) {
         t.count ? el("span", { class: "count" }, String(t.count)) : null,
         // An available update is worth seeing without opening the tab.
         t.dot ? el("span", { class: "count" }, "●") : null))),
-    ...body.filter(Boolean),
+    // Flattened before spreading: a tab body is built as nested arrays — the
+    // Info tab's panel list is one element of it — and spreading without this
+    // hands replaceChildren an array, which it renders as the text
+    // "[object HTMLElement],[object HTMLElement]" in place of the panels.
+    ...body.flat(Infinity).filter(Boolean),
   ]
 }
 
@@ -1893,7 +2027,9 @@ function render() {
     view.name === "config" ? viewConfig(view.arg) :
     view.name === "session" ? viewSession(view.arg) :
     [el("div", { class: "empty" }, "not found")]
-  pane.replaceChildren(...kids.filter(Boolean))
+  // Flattened for the same reason el is: a view returns nested arrays, and
+  // replaceChildren would stringify an array into "[object HTMLElement]".
+  pane.replaceChildren(...kids.flat(Infinity).filter(Boolean))
 
   if (keepScroll) {
     const logs = pane.querySelector(".logs")
