@@ -18,6 +18,36 @@
 import fsp from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
+
+const run = promisify(execFile)
+
+/**
+ * Ask the desktop app to open a project.
+ *
+ * The app registers an `opencode://` protocol handler, but it understands only
+ * two links — `open-project?directory=` and `new-session?directory=&prompt=`.
+ * There is deliberately no "open this session" link here because the app has
+ * no such route: focusing one session is not something it can be asked to do.
+ */
+export async function openProject(worktree: string): Promise<string> {
+  if (!worktree || worktree === "/") throw new Error("This project has no worktree to open")
+
+  const url = `opencode://open-project?directory=${encodeURIComponent(toNative(worktree))}`
+  // Built entirely from an encoded component, but re-checked before it reaches
+  // a process argument so a malformed worktree can never smuggle in anything.
+  if (!/^opencode:\/\/open-project\?directory=[A-Za-z0-9%._~!$&'()*+,;=:@/-]+$/.test(url)) {
+    throw new Error(`Refusing to open a malformed link for ${worktree}`)
+  }
+
+  // No shell in any branch: arguments are passed as an array.
+  if (process.platform === "win32") await run("cmd", ["/c", "start", "", url], { windowsVerbatimArguments: false })
+  else if (process.platform === "darwin") await run("open", [url])
+  else await run("xdg-open", [url])
+
+  return url
+}
 
 /** Electron's user-data directory for the desktop app. */
 function userData(): string {

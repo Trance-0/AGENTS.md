@@ -73,6 +73,28 @@ function summarize(entry: IndexEntry) {
   }
 }
 
+/** How each session source is labelled on a card. */
+const SOURCE_LABEL: Record<string, string> = {
+  opencode: "opencode",
+  claude: "Claude Code",
+  codex: "Codex",
+  dsh: "dsh",
+}
+
+/**
+ * Split a panel control's `"<input>=<value>"` argument.
+ *
+ * The dashboard prefixes a control's `input` onto the value the user supplied,
+ * so a project id arrives joined to the new name. Only the first `=` separates
+ * them: a value may legitimately contain more (a remote URL with a query).
+ */
+function splitInput(input?: string): [string, string] {
+  if (!input) return ["", ""]
+  const at = input.indexOf("=")
+  if (at === -1) return [input.trim(), ""]
+  return [input.slice(0, at).trim(), input.slice(at + 1).trim()]
+}
+
 export const SessionManager: Plugin = async ({ client, directory }) => {
   await Registry.init()
 
@@ -103,11 +125,32 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
       const index = await Index.load()
       const counts = Index.stats(index)
       const device = await localDevice()
+
+      // The index only describes external transcripts, so its totals are not
+      // opencode's session count: opencode also holds natively created
+      // sessions this plugin never imported. Reporting both, separately
+      // labelled, is what stops the two numbers from looking like a mismatch.
+      let live = { sessions: 0, projects: 0, bySource: {} as Record<string, number> }
+      try {
+        const db = DB.open(true)
+        try {
+          live = DB.counts(db)
+        } finally {
+          db.close()
+        }
+      } catch {
+        // The database is unreadable (opencode mid-write, or not yet created).
+      }
+      const native = live.bySource.opencode ?? 0
+
       return [
-        { label: "indexed", value: counts.total, tone: "muted" },
+        { label: "sources", value: counts.total, tone: "muted" },
         { label: "imported", value: counts.imported, tone: counts.imported > 0 ? "ok" : "muted" },
         { label: "pending", value: counts.total - counts.imported, tone: counts.total > counts.imported ? "warn" : "muted" },
         { label: "conflicts", value: counts.conflicts, tone: counts.conflicts > 0 ? "error" : "muted" },
+        { label: "opencode sessions", value: live.sessions, tone: "ok" },
+        { label: "native", value: native, tone: "muted" },
+        { label: "projects", value: live.projects, tone: "muted" },
         { label: "device", value: device.id, tone: "muted" },
       ]
     },
@@ -156,7 +199,112 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
         }
       })
 
+      // Every project opencode knows about, with its sessions loaded on
+      // expand. This reads opencode's own tables, so natively created sessions
+      // appear next to imported ones instead of being invisible here.
+      let projects: DB.ProjectRow[] = []
+      try {
+        const db = DB.open(true)
+        try {
+          projects = DB.listProjects(db)
+        } finally {
+          db.close()
+        }
+      } catch {
+        // Unreadable database: fall back to the flat list below.
+      }
+
+      const mergeTargets = projects.map((project) => ({
+        value: project.id,
+        label: `${project.name} (${project.sessions})`,
+      }))
+
       return [
+        {
+          key: "projects",
+          type: "tree" as const,
+          title: "Projects",
+          description:
+            `${projects.length} projects across ${projects.reduce((n, p) => n + p.sessions, 0)} opencode sessions. ` +
+            "Expand a project to load its sessions; each card is labelled with the source it came from. " +
+            "Use the ⋯ menu to rename a project, add a directory, or merge it into another.",
+          items: [],
+          groups: projects.map((project) => ({
+            id: project.id,
+            title: project.name,
+            subtitle: project.directories.length > 1
+              ? `${project.worktree}  (+${project.directories.length - 1} more)`
+              : project.worktree,
+            count: project.sessions,
+            fields: [
+              ...Object.entries(project.bySource)
+                .sort((a, b) => b[1] - a[1])
+                .map(([source, n]) => ({ label: source, value: String(n) })),
+              ...(project.lastActivity
+                ? [{ label: "active", value: new Date(project.lastActivity).toISOString().slice(0, 10) }]
+                : []),
+            ],
+            menu: [
+              {
+                type: "button" as const,
+                action: "open-project",
+                label: "Open in opencode",
+                input: project.id,
+              },
+              {
+                type: "prompt" as const,
+                action: "rename-project",
+                label: "Rename project…",
+                input: project.id,
+                prompt: `New name for "${project.name}"`,
+                value: project.name,
+              },
+              {
+                type: "prompt" as const,
+                action: "add-directory",
+                label: "Add folder or remote URL…",
+                input: project.id,
+                prompt: "Local folder path or remote URL to associate with this project",
+                value: "",
+              },
+              {
+                type: "select" as const,
+                action: "merge-project",
+                label: "Merge into…",
+                input: project.id,
+                options: mergeTargets.filter((target) => target.value !== project.id),
+              },
+            ],
+          })),
+          empty: "No projects yet — import some sessions first.",
+          /**
+           * One project's sessions, fetched when the group is expanded.
+           *
+           * Clicking a card opens the transcript in this dashboard. The
+           * opencode desktop app cannot be asked to focus a specific session —
+           * its deep-link handler accepts only `open-project` and
+           * `new-session` — so there is nothing to redirect to yet.
+           */
+          async children(projectID: string) {
+            const db = DB.open(true)
+            try {
+              return DB.listSessions(db, projectID).map((session) => ({
+                title: session.title || "(untitled)",
+                subtitle: session.directory || undefined,
+                tone: session.source === "opencode" ? ("ok" as const) : ("muted" as const),
+                fields: [
+                  { label: "source", value: SOURCE_LABEL[session.source] ?? session.source },
+                  { label: "turns", value: String(session.turns) },
+                  { label: "updated", value: new Date(session.updated).toISOString().slice(0, 16).replace("T", " ") },
+                  ...(session.device ? [{ label: "device", value: session.device }] : []),
+                ],
+                link: { view: "session", arg: session.id },
+              }))
+            } finally {
+              db.close()
+            }
+          },
+        },
         {
           key: "sessions",
           title: "Indexed sessions",
@@ -182,6 +330,95 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
           const diff = Index.reconcile(index, scanned, device.id)
           await Index.save(index)
           return `scanned ${scanned.length}; ${diff.added.length} new, ${diff.grown.length} grown`
+        },
+      },
+
+      /**
+       * Project edits, driven by the ⋯ menu on the Projects panel.
+       *
+       * Each receives `"<projectID>=<value>"` (or a bare id) from the menu
+       * control. opencode reads the project list at startup, so every one of
+       * these ends by telling the user to restart before the change shows up
+       * in the app itself.
+       */
+      /**
+       * Hand a project to the desktop app.
+       *
+       * This opens the project, not a specific session: the app's deep-link
+       * handler accepts only `open-project` and `new-session`, so there is no
+       * way to focus one session from here. Session cards therefore open their
+       * transcript in this dashboard instead.
+       */
+      "open-project": {
+        label: "Open in opencode",
+        async run(input) {
+          const [projectID] = splitInput(input)
+          if (!projectID) throw new Error("Pick a project to open")
+
+          const db = DB.open(true)
+          let project: DB.ProjectRow | undefined
+          try {
+            project = DB.listProjects(db).find((entry) => entry.id === projectID)
+          } finally {
+            db.close()
+          }
+          if (!project) throw new Error(`Unknown project: ${projectID}`)
+
+          await Desktop.openProject(project.worktree)
+          log("info", `opened project ${project.name} in the desktop app`)
+          return `Opening ${project.name} in opencode.`
+        },
+      },
+
+      "rename-project": {
+        label: "Rename project",
+        async run(input) {
+          const [projectID, name] = splitInput(input)
+          if (!projectID || !name) throw new Error("Pick a project and enter a name")
+          const db = DB.open()
+          try {
+            DB.renameProject(db, projectID, name)
+          } finally {
+            db.close()
+          }
+          log("info", `renamed project ${projectID} to ${name}`)
+          return `Renamed to "${name}" — restart opencode to see it in the app.`
+        },
+      },
+
+      "add-directory": {
+        label: "Add folder",
+        async run(input) {
+          const [projectID, directory] = splitInput(input)
+          if (!projectID || !directory) throw new Error("Pick a project and enter a folder or URL")
+          const db = DB.open()
+          try {
+            DB.addProjectDirectory(db, projectID, directory)
+          } finally {
+            db.close()
+          }
+          log("info", `added directory ${directory} to ${projectID}`)
+          return `Added ${directory} — restart opencode to see it in the app.`
+        },
+      },
+
+      "merge-project": {
+        label: "Merge project",
+        async run(input) {
+          const [fromID, intoID] = splitInput(input)
+          if (!fromID || !intoID) throw new Error("Pick a project to merge into")
+          const db = DB.open()
+          let result: DB.MergeResult
+          try {
+            result = DB.mergeProjects(db, fromID, intoID)
+          } finally {
+            db.close()
+          }
+          log("info", `merged ${fromID} into ${intoID}`, { moved: result.moved })
+          return (
+            `Moved ${result.moved} sessions — backup at ${result.backup}. ` +
+            "Restart opencode to see the merge in the app."
+          )
         },
       },
     },
@@ -361,11 +598,17 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
               {
                 device: { id: device.id, hostname: device.hostname },
                 scanned: scanned.length,
-                added: diff.added.length,
-                grown: diff.grown.length,
-                rewritten: diff.rewritten.length,
-                unchanged: diff.unchanged.length,
-                missing: diff.missing.length,
+                // What this scan changed, kept separate from the index totals:
+                // spreading `counts` over these silently replaced `missing`
+                // with the index-wide figure, so the scan reported a number it
+                // had not just measured.
+                changed: {
+                  added: diff.added.length,
+                  grown: diff.grown.length,
+                  rewritten: diff.rewritten.length,
+                  unchanged: diff.unchanged.length,
+                  missing: diff.missing.length,
+                },
                 ...counts,
                 pending: [...diff.added, ...diff.grown, ...diff.rewritten].slice(0, 25),
               },

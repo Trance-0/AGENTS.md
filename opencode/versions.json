@@ -3,13 +3,14 @@
   "plugins": [
     {
       "id": "plugin-manager",
-      "version": "1.1.0",
-      "notes": "Version tab, version manifest and marketplace update checks."
+      "version": "1.1.2",
+      "promotedFrom": "1.1.0",
+      "notes": "Panel cards carry their own controls, so a listed item can be acted on where it is read."
     },
     {
       "id": "bark-notify",
-      "version": "1.0.0",
-      "notes": "Bark push notifications for opencode lifecycle events."
+      "version": "1.0.2",
+      "notes": "Subscribers are a list with per-row rename, mute, test and remove, and Add above the list."
     },
     {
       "id": "cpa-usage",
@@ -18,18 +19,21 @@
     },
     {
       "id": "session-manager",
-      "version": "1.1.0",
-      "notes": "Index and import Claude Code, Codex and dsh transcripts, and push them to PCP."
+      "version": "1.1.3",
+      "promotedFrom": "1.1.0",
+      "notes": "Projects tree listing every opencode session by source, with lazily loaded rows and project rename/merge."
     },
     {
       "id": "task-queue",
-      "version": "1.0.0",
-      "notes": "Durable task queue with automatic transport/quota retry."
+      "version": "1.0.3",
+      "promotedFrom": "1.0.0",
+      "notes": "Summary model can be tested from its setting, reporting the reply, latency and whether it parses."
     },
     {
       "id": "session-rename",
-      "version": "1.0.0",
-      "notes": "Retitle sessions from their transcript with a user-chosen model."
+      "version": "1.0.2",
+      "promotedFrom": "1.0.0",
+      "notes": "Rename model can be tested from its setting, checking the reply yields a usable title."
     }
   ]
 }

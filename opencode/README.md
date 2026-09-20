@@ -98,6 +98,55 @@ off-canvas drawer behind a hamburger button.
 files. **Plugin** pages carry four tabs — **Info**, **Logging**, **Settings**
 and **Version**. **Config** pages open the editor.
 
+Panel and version rows each span the full width rather than tiling two to a
+row: a task carries a title, a status, a model and its usage, and none of that
+fits legibly in half a column.
+
+The **Logging** tab filters by minimum severity — `all`, `info`, `warn`,
+`error`. It is a *minimum*, not an exact match, so selecting `warn` keeps
+errors visible; hiding them while looking for problems would be backwards.
+
+The **Version** tab shows the installed build alongside a **Published release**
+section carrying the notes from that release's GitHub body, when it published
+any, with a link to the release page. Those notes are the release's own — the
+manifest's `notes` describe the *installed* build, which for a beta is not the
+same thing.
+
+### Panel types
+
+A panel is either `cards` (the default) or `tree`.
+
+`cards` lays `items` out in a grid, optionally filtered by chips.
+
+`tree` renders `groups` as collapsible headers and asks the panel's `children`
+resolver for one group's rows the first time it is opened:
+
+```ts
+{
+  key: "projects",
+  type: "tree",
+  title: "Projects",
+  items: [],
+  groups: [{ id, title, subtitle?, count?, fields?, expanded?, menu? }],
+  async children(groupID) { return [ /* PanelItem[] */ ] },
+}
+```
+
+`children` is a server-side resolver, not data. `Registry.snapshot()` strips it
+before the payload is serialised, so it never reaches the browser and is only
+invoked by an explicit request for one group. That is the whole point of the
+type: a plugin listing hundreds of rows across dozens of groups would otherwise
+build all of them on every poll.
+
+A group's `menu` renders behind a `⋯` button as `button`, `prompt` or `select`
+entries, each running one of the plugin's actions with `input` set — the same
+convention as per-card `controls`. The menu is appended to `document.body` so a
+poll cannot destroy it mid-click, and the poll is suppressed while it is open.
+
+Open/closed state and loaded rows live at module scope in the client, keyed
+`"<plugin>:<panel>:<group>"`, because `render()` rebuilds the pane wholesale
+every five seconds.
+
 ### URLs
 
 Every page has its own address, so it can be bookmarked, reloaded, opened in a
@@ -109,6 +158,7 @@ second tab, or reached with back/forward:
 | `/plugin/<id>` | that plugin's Info tab |
 | `/plugin/<id>/<tab>` | `info`, `logging`, `settings` or `version` |
 | `/config/<file>` | the config editor for one file |
+| `/session/<id>` | one opencode session and the tail of its transcript |
 
 The server answers every non-`/api/` path with the same shell, which then
 routes on the URL — that is what lets a deep link survive a direct load rather
@@ -244,9 +294,27 @@ Each type also carries `level`, `sound`, `icon` and `group`. Levels are
 | `quit` | `passive` | (reserved) |
 
 Every field is editable from the dashboard's **Settings** tab; the **Info** tab
-renders each template with sample data. A per-subscriber override is set with
-`bark_profile` (the dashboard renders a flat field list, which a per-device
-matrix would not fit), and `bark_preview` renders a type without sending it.
+renders each template with sample data. `bark_preview` renders a type without
+sending it.
+
+### The subscriber list
+
+Devices are a list on the **Info** tab, one row each, managed in place:
+
+| Control | Effect |
+| --- | --- |
+| **Mute** / **Unmute** | Stops or resumes delivery to that device |
+| **Rename** | Changes the display name |
+| **Test** | Pushes one notification to *that device only* |
+| **Remove** | Deletes the device key |
+
+**Add subscriber** sits above the list, on the panel header, since adding is
+not an operation on any existing row.
+
+Only the last four characters of a device key are shown — enough to tell two
+phones apart, never enough to push to one. Which types a device is muted for
+stays on the **Settings** tab, as one collapsed section per device: that is a
+six-way matrix, which no list row can hold legibly.
 
 **Send test push** pushes every enabled type through its own template, so the
 test shows exactly what each notification will look like rather than one fixed
@@ -265,6 +333,86 @@ away applies when the queue is flushed.
 Indexes every coding-agent transcript on the device and imports it into
 opencode's own database, so past Claude Code / Codex / dsh work shows up in the
 session picker.
+
+### The Info tab
+
+Two panels.
+
+**Projects** is a tree of every project opencode knows about. Groups load up
+front; a project's sessions are fetched only when it is expanded, over
+`GET /api/plugins/session-manager/panel/projects/children?group=<projectID>`.
+A project with hundreds of sessions would otherwise be paid for on every
+five-second dashboard poll.
+
+This panel reads opencode's own `project` / `session` tables rather than the
+session index, so **natively created sessions appear alongside imported ones**.
+Each card is labelled with where it came from — `opencode`, `Claude Code`,
+`Codex` or `dsh` — taken from `metadata.imported.source`; a session with no such
+metadata was created by opencode itself.
+
+**Indexed sessions** is the older flat view: one card per indexed transcript,
+carrying both halves of the mapping — the source store, file, native id, device
+and directory on one side; the opencode session it was imported into on the
+other. An import can therefore be traced in either direction. Cards filter by
+`imported`, `pending`, `conflict` and `missing`.
+
+### Why the counts differ
+
+The status line reports two different populations, which is why they disagree:
+
+| Label | Counts |
+| --- | --- |
+| `sources` | external transcripts found on this device |
+| `imported` | how many of those were written into opencode |
+| `pending` | the remainder, not yet imported |
+| `opencode sessions` | **every** session opencode holds |
+| `native` | those opencode created itself, which this plugin never imported |
+
+So `opencode sessions` ≈ `imported` + `native`, and it exceeding `sources` is
+normal rather than a mismatch.
+
+### The project menu
+
+The `⋯` button on a project offers:
+
+- **Open in opencode** — hands the project to the desktop app.
+- **Rename project…** — changes the display name only; no session moves.
+- **Add folder or remote URL…** — registers another directory against the
+  project, which is what makes a second checkout of the same repository resolve
+  into the project you already have instead of splitting off a new one.
+- **Merge into…** — re-points every session onto another project and deletes
+  the emptied one. Directories are carried across so a later import cannot
+  recreate what was just merged away.
+
+opencode reads its project list at startup, so each of these ends by telling you
+to **restart opencode** before the change appears in the app itself. The
+dashboard reflects it immediately.
+
+Merging rewrites session rows and cannot be undone from the UI, so it copies the
+database to `opencode.db.<timestamp>.backup` first, via `VACUUM INTO` — a plain
+file copy would risk a torn file, since WAL mode keeps committed pages in the
+`-wal` sidecar.
+
+### Clicking a session opens the transcript, not the app
+
+A session card opens `/session/<id>` in this dashboard. It cannot focus that
+session inside opencode: the desktop app registers an `opencode://` handler but
+its parser accepts exactly two routes —
+
+```js
+if (url.hostname !== "open-project") return;   // ?directory=
+if (url.hostname !== "new-session") return;    // ?directory=&prompt=
+```
+
+— with no session-scoped variant. "Open in opencode" therefore opens the
+*project*; the session itself is rendered here rather than pretending to hand
+off.
+
+> **Deferred:** a shared, redirect-capable card is wanted by both this plugin
+> and `task-queue`. It is parked until the upstream deep-link work in
+> [anomalyco/opencode#45103](https://github.com/anomalyco/opencode/pull/45103)
+> lands, since that is what would make a session-scoped redirect possible;
+> building the abstraction first would only encode the current limitation.
 
 ### Sources
 
@@ -406,14 +554,45 @@ replaces a placeholder. Summaries are produced two ways:
    afterwards, so nothing touches the transcript being summarised. This is also
    the seam the planned auto-distribution work will reuse.
 
-   That scratch session is titled `task-queue summary`, and both session-wrapping
-   paths skip it by that title. Without the guard the queue feeds itself:
-   wrapping the scratch session queues a task, whose own summary opens another
-   scratch session, and so on until the queue is full of them.
+   That scratch session is titled `task-queue summary`. Every plugin that opens
+   one registers its title in `lib/scratch.ts`, and every consumer checks that
+   one set, so a scratch session is skipped everywhere rather than in whichever
+   consumer happened to be updated.
+
+   Both halves matter. Wrapping a scratch session queues a task, whose own
+   summary opens another scratch session — that loop once filled the queue with
+   177 entries. Renaming one starts a rename, which opens another scratch
+   session, which is what made rename sessions keep popping up. The set is
+   seeded with the shipped titles rather than relying only on registration,
+   since a consumer can run before its producer has been loaded.
 2. **The built-in parser** otherwise — and whenever the model is absent,
    misconfigured, slow, failing or answers unusably. Set the model to *none* to
    use it exclusively. It never leaves the process, so the queue works with no
    model configured at all.
+
+### Testing a model
+
+Every model selector carries a **Test this model** button beside it, from the
+shared picker in `lib/model-picker.ts` — task-queue's summariser and
+session-rename's titler use the same component.
+
+The fallback above is what makes a test necessary. A model that is missing,
+slow, or answers in prose instead of the requested shape all behave
+identically: the plugin silently falls back to the parser and the only symptom
+is work that is quietly never summarised. The test turns each into a distinct
+answer, reporting the reply verbatim, its latency, and whether it *parses* —
+which is the question that actually matters.
+
+The prompt is pre-filled with the real template rather than a greeting, since
+"is this model reachable" is not the question. Each plugin supplies its own
+acceptance check: a summariser must return `TITLE:`, a titler must return a
+bare title and nothing else. Note that session-rename's check is deliberately
+stricter than its own sanitiser, which clips a rambling reply rather than
+rejecting it — forgiving enough for a real rename, too forgiving to be a
+verdict.
+
+Results appear on the **Info** tab, because a toast cannot hold a multi-line
+reply and the reply is the point.
 
 Each card shows how long the session has been active, its context tokens
 (cache reads counted separately, since they are billed differently), cost when
@@ -430,6 +609,26 @@ A session the user starts by hand counts exactly like a queued task; otherwise
 the limit would constrain the queue while the editor ran unbounded beside it.
 Subagent sessions (those with a `parentID`) run inside their parent's turn and
 take no slot of their own.
+
+Finding those sessions takes a deliberate search. `session.status()` is
+**directory-scoped**, so it only answers for projects it is asked about, and
+asking only about directories the queue already tracks can never discover a
+session in a project it has never seen — which is why the active count read
+low while several sessions were plainly running. Recently-touched sessions from
+the database supply the additional directories to ask about, bounded to the
+last 30 minutes so the fan-out stays small.
+
+### Model fallbacks
+
+`modelFallbacks` is an ordered list of `providerID/modelID` routes tried when
+dispatching a queued session. A task's own `model` is attempted first, then
+each fallback in order, then opencode's configured default; the first accepted
+prompt ends the sequence.
+
+This matters for queued work specifically: a task may be dispatched long after
+it was created, by which time one provider can be down or rate-limited while
+another is healthy. Entries are separated by commas or new lines, deduplicated,
+and anything not shaped `provider/model` is rejected on save.
 
 ### Restart resume
 

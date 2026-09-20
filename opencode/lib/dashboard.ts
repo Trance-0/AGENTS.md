@@ -20,6 +20,7 @@ import { CONFIG_DIR } from "./paths.ts"
 import * as Registry from "./registry.ts"
 import * as ConfigFiles from "./config-files.ts"
 import * as Marketplace from "./marketplace.ts"
+import * as Sessions from "./session-store.ts"
 
 const PORT_MIN = 14100
 const PORT_MAX = 14120
@@ -65,6 +66,55 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
 
   if (url.pathname === "/api/plugins" && req.method === "GET") {
     return json(res, 200, { plugins: await Registry.snapshot() })
+  }
+
+  /**
+   * One opencode session: its metadata and the tail of its transcript.
+   *
+   * The dashboard cannot focus a session inside the opencode GUI — nothing in
+   * the plugin API reaches the editor's UI — so a session link opens the
+   * transcript here instead, which is what makes an imported session
+   * inspectable at all.
+   */
+  const session = url.pathname.match(/^\/api\/session\/([^/]+)$/)
+  if (session && req.method === "GET") {
+    const id = decodeURIComponent(session[1])
+    const row = Sessions.get(id)
+    if (!row) return json(res, 404, { error: `Unknown session: ${id}` })
+    return json(res, 200, {
+      session: {
+        id: row.id,
+        title: row.title,
+        directory: row.directory,
+        projectID: row.projectID,
+        messages: Sessions.messageCount(row.id),
+        tokens: Sessions.totalTokens(row),
+        cost: row.cost,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      },
+      turns: Sessions.recentTurns(id, 40),
+    })
+  }
+
+  /**
+   * Rows under one group of a tree panel, fetched when the group is expanded.
+   *
+   * Separate from the plugin snapshot on purpose: the snapshot is polled every
+   * few seconds, and a plugin listing hundreds of sessions across dozens of
+   * projects would pay for all of them on every tick.
+   */
+  const children = url.pathname.match(/^\/api\/plugins\/([^/]+)\/panel\/([^/]+)\/children$/)
+  if (children && req.method === "GET") {
+    const [, id, panelKey] = children
+    const groupID = url.searchParams.get("group")
+    if (!groupID) return json(res, 400, { error: "Missing group" })
+    try {
+      const items = await Registry.children(decodeURIComponent(id), decodeURIComponent(panelKey), groupID)
+      return json(res, 200, { items })
+    } catch (error) {
+      return json(res, 400, { error: error instanceof Error ? error.message : String(error) })
+    }
   }
 
   // ── versions and marketplace ───────────────────────────────────────────
@@ -405,7 +455,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
 .tagpill.stable{color:var(--ok);border-color:#26543a}
 .tagpill.beta{color:var(--warn);border-color:#5b4a26}
 .vnote{color:var(--muted);font-size:12.5px;margin:0 0 4px}
-.vgrid{display:grid;gap:9px;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));margin-top:6px}
+.vgrid{display:grid;gap:9px;grid-template-columns:minmax(0,1fr);margin-top:6px}
 .vcell{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:11px 13px}
 .vcell .k{color:var(--faint);font-size:11px;text-transform:uppercase;letter-spacing:.7px}
 .vcell .v{font-size:13.5px;margin-top:3px;word-break:break-word;
@@ -424,7 +474,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
 .chip.on{background:var(--panel2);border-color:var(--accent);color:var(--text)}
 .chip .n{color:var(--faint);margin-left:5px;font-variant-numeric:tabular-nums}
 
-.grid{display:grid;gap:9px;grid-template-columns:repeat(auto-fill,minmax(310px,1fr))}
+.grid{display:grid;gap:9px;grid-template-columns:minmax(0,1fr)}
 .item{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--faint);
   border-radius:9px;padding:11px 13px}
 .item.ok{border-left-color:var(--ok)}
@@ -440,6 +490,41 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
 .item .f.ok .v{color:var(--ok)} .item .f.warn .v{color:var(--warn)} .item .f.error .v{color:var(--err)}
 .item.link{cursor:pointer;text-align:left;width:100%;font:inherit;color:inherit}
 .item.link:hover{border-color:var(--accent)}
+/* ---- per-card controls ---- */
+.ctlrow{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;padding-top:9px;border-top:1px solid var(--line)}
+.btn.ctl{padding:3px 9px;font-size:11.5px;border-radius:6px}
+select.ctl{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;
+  padding:3px 7px;font:inherit;font-size:11.5px;max-width:190px}
+select.ctl:hover{border-color:var(--accent)}
+
+/* ---- tree panel: collapsible groups with lazily loaded rows ---- */
+.tree{display:flex;flex-direction:column;gap:8px}
+.treegroup{padding:0;overflow:visible}
+.treehead{display:flex;align-items:center;gap:10px;padding:9px 12px;flex-wrap:wrap}
+.treehead.open{border-bottom:1px solid var(--line)}
+.treetoggle{flex:1;min-width:0;display:flex;align-items:center;gap:8px;background:none;border:0;
+  color:var(--text);font:inherit;font-size:13.5px;font-weight:600;cursor:pointer;text-align:left;padding:0}
+.treetoggle:hover{color:var(--accent)}
+.treetoggle .tt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.treehead .fields{display:flex;flex-wrap:wrap;gap:6px 12px}
+.treehead .f{font-size:12px;color:var(--muted);display:flex;gap:5px;align-items:baseline}
+.treehead .f .k{color:var(--faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.6px}
+.treehead .f.ok .v{color:var(--ok)} .treehead .f.warn .v{color:var(--warn)}
+.treesub{color:var(--faint);font-size:11.5px;padding:0 12px 9px;word-break:break-all}
+.treebody{padding:10px 12px 12px}
+.dots{background:none;border:1px solid transparent;border-radius:6px;color:var(--muted);
+  cursor:pointer;font-size:16px;line-height:1;padding:2px 8px}
+.dots:hover{border-color:var(--line);color:var(--text);background:var(--panel2)}
+
+/* ---- three-dot menu (body-appended so a poll cannot destroy it) ---- */
+.menu{position:fixed;z-index:40;min-width:190px;background:var(--panel);border:1px solid var(--line);
+  border-radius:9px;padding:5px;box-shadow:0 10px 26px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:2px}
+.menuitem{background:none;border:0;border-radius:6px;color:var(--text);cursor:pointer;font:inherit;
+  font-size:12.5px;padding:7px 10px;text-align:left}
+.menuitem:hover{background:var(--panel2)}
+.menuitem.danger{color:var(--err)}
+.menusel{background:var(--panel2);border:1px solid var(--line);border-radius:6px;color:var(--text);
+  font:inherit;font-size:12.5px;margin:2px;padding:5px 7px}
 
 /* ---- logs ---- */
 .logs{background:#101014;border:1px solid var(--line);border-radius:9px;
@@ -537,7 +622,11 @@ let view = { name: "plugin", arg: "plugin-manager" }
 let editor = null   // { name, file, original, draft }
 let tab = "info"    // active tab on a plugin page
 const filters = {}  // panel key -> selected group, per plugin
+const logLevel = {} // plugin id -> minimum log level shown
 const sections = {} // "<plugin>:<group>" -> open, so a refresh keeps it open
+const expanded = {} // "<plugin>:<panel>:<group>" -> open, for tree panels
+const treeRows = {} // same key -> { loading, items, error }, filled on expand
+let openMenu = null // the open three-dot menu, appended to document.body
 
 /* -------------------------------- routing -------------------------------- */
 /**
@@ -559,11 +648,15 @@ function parseRoute(pathname) {
   if (parts[0] === "config" && parts[1]) {
     return { view: { name: "config", arg: parts.slice(1).join("/") }, tab: "info" }
   }
+  if (parts[0] === "session" && parts[1]) {
+    return { view: { name: "session", arg: parts[1] }, tab: "info" }
+  }
   return { view: { name: "plugin", arg: "plugin-manager" }, tab: "info" }
 }
 
 function routePath(v = view, t = tab) {
   if (v.name === "config") return "/config/" + encodeURIComponent(v.arg)
+  if (v.name === "session") return "/session/" + encodeURIComponent(v.arg)
   // The default tab is left off so the common URL stays short.
   return "/plugin/" + encodeURIComponent(v.arg) + (t && t !== "info" ? "/" + t : "")
 }
@@ -787,10 +880,14 @@ function toggleSwitch(p) {
     el("span", { class: "slider" }))
 }
 
-async function runAction(p, key, button) {
+async function runAction(p, key, button, value) {
   if (button) button.disabled = true
   try {
-    const r = await post("/api/plugins/" + encodeURIComponent(p.id) + "/action", { action: key })
+    const body = { action: key }
+    // Only sent when present, so an action that takes no input still receives
+    // undefined rather than an empty string it would have to special-case.
+    if (value !== undefined && value !== null) body.value = value
+    const r = await post("/api/plugins/" + encodeURIComponent(p.id) + "/action", body)
     toast(r.message || "done")
   } catch (err) { toast(err.message, true) }
   if (button) button.disabled = false
@@ -814,8 +911,54 @@ function ago(at) {
   return "updated " + Math.round(s / 3600) + "h ago"
 }
 
+/**
+ * Controls rendered on a panel card.
+ *
+ * Each runs one of the plugin's actions with the row's own input, so a card
+ * can be acted on where it is read instead of through a matching tool call.
+ * Clicks are stopped from bubbling so a control inside a linked card does not
+ * also navigate.
+ */
+function panelControls(p, it) {
+  if (!(it.controls || []).length) return null
+
+  return el("div", { class: "ctlrow", onclick: (e) => e.stopPropagation() },
+    it.controls.map((c) => {
+      if (c.type === "select") {
+        return el("select", {
+          class: "ctl",
+          title: c.label,
+          onchange: async (e) => {
+            const value = e.target.value
+            if (value === c.value) return
+            await runAction(p, c.action, null, (c.input ? c.input + "=" : "") + value)
+          },
+        }, c.options.map((o) => el("option", { value: o.value, selected: o.value === c.value }, o.label)))
+      }
+
+      if (c.type === "prompt") {
+        return el("button", {
+          class: "btn ctl",
+          onclick: async (e) => {
+            const value = prompt(c.prompt, c.value ?? "")
+            if (value === null) return
+            await runAction(p, c.action, e.target, (c.input ? c.input + "=" : "") + value)
+          },
+        }, c.label)
+      }
+
+      return el("button", {
+        class: "btn ctl" + (c.danger ? " danger" : ""),
+        onclick: async (e) => {
+          if (c.confirm && !confirm(c.confirm)) return
+          await runAction(p, c.action, e.target, c.input)
+        },
+      }, c.label)
+    }))
+}
+
 /** One panel item as a card: title, optional subtitle, and its fields. */
-function panelItem(it) {
+function panelItem(p, it) {
   // A linked card is a button so it is keyboard-reachable, not just clickable.
   const tag = it.link ? "button" : "div"
   return el(tag, {
@@ -829,11 +972,164 @@ function panelItem(it) {
           el("div", { class: "f " + (f.tone || "") },
             el("span", { class: "k" }, f.label),
             el("span", { class: "v" }, f.value))))
-      : null)
+      : null,
+    panelControls(p, it))
+}
+
+/**
+ * A three-dot menu for one tree group.
+ *
+ * Rendered into document.body rather than inside the header, because the
+ * header is rebuilt by every poll and is clipped by the card's overflow. The
+ * menu closes on any outside click, on Escape, and after running an entry.
+ */
+function groupMenu(p, panel, group, anchor) {
+  closeMenu()
+
+  const run = async (entry, value) => {
+    closeMenu()
+    if (entry.confirm && !confirm(entry.confirm)) return
+    const arg = value === undefined ? entry.input : (entry.input ? entry.input + "=" : "") + value
+    await runAction(p, entry.action, null, arg)
+  }
+
+  const menu = el("div", { class: "menu" },
+    (group.menu || []).map((entry) => {
+      if (entry.type === "prompt") {
+        return el("button", {
+          class: "menuitem" + (entry.danger ? " danger" : ""),
+          onclick: () => {
+            const value = prompt(entry.prompt, entry.value ?? "")
+            if (value === null) return
+            void run(entry, value)
+          },
+        }, entry.label)
+      }
+
+      if (entry.type === "select") {
+        return el("select", {
+          class: "menusel",
+          title: entry.label,
+          onchange: (e) => { if (e.target.value) void run(entry, e.target.value) },
+        },
+          el("option", { value: "" }, entry.label),
+          entry.options.map((o) => el("option", { value: o.value }, o.label)))
+      }
+
+      return el("button", {
+        class: "menuitem" + (entry.danger ? " danger" : ""),
+        onclick: () => void run(entry),
+      }, entry.label)
+    }))
+
+  // Positioned against the button, then nudged back inside the viewport.
+  const box = anchor.getBoundingClientRect()
+  menu.style.top = Math.round(box.bottom + 4) + "px"
+  menu.style.left = Math.round(box.left) + "px"
+  document.body.append(menu)
+  const own = menu.getBoundingClientRect()
+  if (own.right > window.innerWidth - 8) {
+    menu.style.left = Math.max(8, Math.round(window.innerWidth - own.width - 8)) + "px"
+  }
+
+  openMenu = menu
+  setTimeout(() => {
+    document.addEventListener("click", closeMenu, { once: true })
+    document.addEventListener("keydown", escMenu)
+  }, 0)
+}
+
+function closeMenu() {
+  if (!openMenu) return
+  openMenu.remove()
+  openMenu = null
+  document.removeEventListener("keydown", escMenu)
+}
+
+function escMenu(e) {
+  if (e.key === "Escape") closeMenu()
+}
+
+/**
+ * A tree panel: collapsible groups whose rows load on first expand.
+ *
+ * Open state and loaded rows both live at module scope, because the dashboard
+ * polls and rebuilds this subtree wholesale every few seconds.
+ */
+function treeView(p, panel) {
+  const groups = panel.groups || []
+  if (!groups.length) return el("div", { class: "empty" }, panel.empty || "Nothing to show.")
+
+  return el("div", { class: "tree" }, groups.map((g) => {
+    const key = p.id + ":" + panel.key + ":" + g.id
+    const open = expanded[key] === undefined ? g.expanded === true : expanded[key]
+    const cached = treeRows[key]
+
+    const head = el("div", { class: "treehead" + (open ? " open" : "") },
+      el("button", {
+        class: "treetoggle",
+        onclick: () => {
+          expanded[key] = !open
+          if (!open && !treeRows[key]) loadChildren(p, panel, g.id, key)
+          render()
+        },
+      },
+        el("span", { class: "caret" }, open ? "▾" : "▸"),
+        el("span", { class: "tt" }, g.title),
+        g.count !== undefined ? el("span", { class: "count" }, String(g.count)) : null),
+      g.fields && g.fields.length
+        ? el("div", { class: "fields" }, g.fields.map((f) =>
+            el("div", { class: "f " + (f.tone || "") },
+              el("span", { class: "k" }, f.label),
+              el("span", { class: "v" }, f.value))))
+        : null,
+      (g.menu || []).length
+        ? el("button", {
+            class: "dots",
+            title: "Project actions",
+            onclick: (e) => { e.stopPropagation(); groupMenu(p, panel, g, e.currentTarget) },
+          }, "⋯")
+        : null)
+
+    let body = null
+    if (open) {
+      if (!cached || cached.loading) body = el("div", { class: "empty" }, "loading…")
+      else if (cached.error) body = el("div", { class: "note err" }, cached.error)
+      else if (!cached.items.length) body = el("div", { class: "empty" }, "No sessions.")
+      else body = el("div", { class: "grid" }, cached.items.map((it) => panelItem(p, it)))
+    }
+
+    return el("div", { class: "card treegroup" + (g.tone ? " " + g.tone : "") },
+      head,
+      g.subtitle ? el("div", { class: "treesub" }, g.subtitle) : null,
+      body ? el("div", { class: "treebody" }, body) : null)
+  }))
+}
+
+/** Fetch one group's rows, then re-render if that group is still on screen. */
+function loadChildren(p, panel, groupID, key) {
+  treeRows[key] = { loading: true, items: [], error: null }
+  const path = "/api/plugins/" + encodeURIComponent(p.id) + "/panel/" + encodeURIComponent(panel.key) +
+    "/children?group=" + encodeURIComponent(groupID)
+  api(path)
+    .then((r) => { treeRows[key] = { loading: false, items: r.items || [], error: null } })
+    .catch((e) => { treeRows[key] = { loading: false, items: [], error: e.message } })
+    .then(() => { if (view.name === "plugin" && view.arg === p.id) render() })
 }
 
 function panelView(p, panel) {
   const key = p.id + ":" + panel.key
+  const act0 = panel.action ? p.actions.find((a) => a.key === panel.action) : null
+  if (panel.type === "tree") {
+    return el("section", { class: "panel" },
+      el("div", { class: "phead" },
+        el("h3", {}, panel.title),
+        el("span", { class: "when" }, panel.updatedAt !== undefined ? ago(panel.updatedAt) : ""),
+        act0 ? el("button", { class: "btn primary", onclick: (e) => runAction(p, act0.key, e.target) }, act0.label) : null),
+      panel.description ? el("p", { class: "pdesc" }, panel.description) : null,
+      treeView(p, panel))
+  }
+
   const active = filters[key] || panel.defaultFilter || "all"
   const items = active === "all" ? panel.items : panel.items.filter((it) => it.group === active)
 
@@ -858,7 +1154,7 @@ function panelView(p, panel) {
     panel.description ? el("p", { class: "pdesc" }, panel.description) : null,
     chips,
     items.length
-      ? el("div", { class: "grid" }, items.map(panelItem))
+      ? el("div", { class: "grid" }, items.map((it) => panelItem(p, it)))
       : el("div", { class: "empty" }, panel.empty || "Nothing to show."))
 }
 
@@ -903,6 +1199,30 @@ function versionView(p) {
         cell("Promoted from", v.promotedFrom || "—"),
         cell("Marketplace", mk.repository || "—"))),
 
+    // What the published release actually contains, pulled from its GitHub
+    // release body. Shown whenever a release exists, not only when an update is
+    // available, so the notes for the installed version stay readable too.
+    v.available
+      ? el("section", { class: "panel" },
+          el("div", { class: "phead" },
+            el("h3", {}, "Published release"),
+            el("span", { class: "when" }, v.releasedAt ? ago(Date.parse(v.releasedAt)) : "")),
+          el("div", { class: "vgrid" },
+            el("div", { class: "vcell" },
+              el("div", { class: "k" }, (v.releaseTagPublished || "v" + v.available) + (v.updateAvailable ? " — update available" : "")),
+              el("div", { class: "v", style: "white-space:pre-wrap;word-break:break-word;font-family:inherit" },
+                v.releaseNotes || "This release published no notes."),
+              mk.repository && v.releaseTagPublished
+                ? el("div", { style: "margin-top:9px" },
+                    el("a", {
+                      class: "btn",
+                      href: "https://github.com/" + mk.repository + "/releases/tag/" + v.releaseTagPublished,
+                      target: "_blank",
+                      rel: "noreferrer",
+                    }, "Open on GitHub"))
+                : null)))
+      : null,
+
     el("section", { class: "panel" },
       el("div", { class: "phead" }, el("h3", {}, "Versioning")),
       el("p", { class: "pdesc" },
@@ -926,22 +1246,54 @@ async function checkUpdates(button) {
   await load()
 }
 
+/**
+ * The Logging tab, filtered by level.
+ *
+ * A warning or an error is the reason anyone opens this tab, and both were
+ * buried in a run of routine info lines. The chips select a minimum severity
+ * rather than an exact one, so "warn" keeps errors visible — filtering them out
+ * while looking for problems would be precisely backwards.
+ */
+const LOG_RANK = { info: 0, warn: 1, error: 2 }
+
 function logView(p) {
-  if (!p.logs.length) {
-    return el("div", { class: "empty" }, "No activity recorded yet this session.")
+  const level = logLevel[p.id] || "all"
+  const lines = level === "all" ? p.logs : p.logs.filter((l) => LOG_RANK[l.level] >= LOG_RANK[level])
+
+  const counts = { all: p.logs.length, info: 0, warn: 0, error: 0 }
+  for (const l of p.logs) {
+    if (LOG_RANK[l.level] >= LOG_RANK.info) counts.info++
+    if (LOG_RANK[l.level] >= LOG_RANK.warn) counts.warn++
+    if (LOG_RANK[l.level] >= LOG_RANK.error) counts.error++
   }
+
+  const chips = el("div", { class: "chips" },
+    ["all", "info", "warn", "error"].map((g) =>
+      el("button", {
+        class: "chip" + (level === g ? " on" : ""),
+        onclick: () => { logLevel[p.id] = g; render() },
+      }, g, el("span", { class: "n" }, String(counts[g])))))
+
+  if (!p.logs.length) {
+    return el("div", {}, el("div", { class: "empty" }, "No activity recorded yet this session."))
+  }
+
   const fmt = (at) => {
     const d = new Date(at)
     return [d.getHours(), d.getMinutes(), d.getSeconds()]
       .map((n) => String(n).padStart(2, "0")).join(":")
   }
-  return el("div", { class: "logs" },
-    // Newest first: the interesting line is the most recent one.
-    [...p.logs].reverse().map((l) =>
-      el("div", { class: "logline " + l.level },
-        el("span", { class: "ts" }, fmt(l.at)),
-        el("span", { class: "lv" }, l.level),
-        el("span", { class: "msg" }, l.message))))
+
+  return el("div", {}, chips,
+    lines.length
+      ? el("div", { class: "logs" },
+          // Newest first: the interesting line is the most recent one.
+          [...lines].reverse().map((l) =>
+            el("div", { class: "logline " + l.level },
+              el("span", { class: "ts" }, fmt(l.at)),
+              el("span", { class: "lv" }, l.level),
+              el("span", { class: "msg" }, l.message))))
+      : el("div", { class: "empty" }, "Nothing at this level."))
 }
 
 /* -------------------------------- views --------------------------------- */
@@ -1064,6 +1416,65 @@ function backToConfig() {
 }
 
 /**
+ * One opencode session: metadata and the tail of its transcript.
+ *
+ * Reached from the session-manager's Info tab. The plugin API cannot focus a
+ * session inside the opencode GUI, so an imported transcript is shown here
+ * rather than pretending to hand off to the editor.
+ */
+let sessionCache = null // { id, session, turns }
+
+function viewSession(id) {
+  if (!sessionCache || sessionCache.id !== id) {
+    sessionCache = { id, session: null, turns: [], loading: true, error: null }
+    api("/api/session/" + encodeURIComponent(id))
+      .then((r) => {
+        sessionCache = { id, session: r.session, turns: r.turns, loading: false, error: null }
+        if (view.name === "session" && view.arg === id) render()
+      })
+      .catch((e) => {
+        sessionCache = { id, session: null, turns: [], loading: false, error: e.message }
+        if (view.name === "session" && view.arg === id) render()
+      })
+  }
+
+  const back = el("button", { class: "backlink", onclick: () => go("plugin", "session-manager") },
+    "← session manager")
+
+  if (sessionCache.loading) return [back, el("h2", {}, id), el("div", { class: "empty" }, "loading…")]
+  if (sessionCache.error) return [back, el("h2", {}, id), el("div", { class: "note err" }, sessionCache.error)]
+
+  const s = sessionCache.session
+  return [
+    back,
+    el("h2", {}, s.title || "(untitled)"),
+    el("p", { class: "lead" }, s.directory),
+    el("section", { class: "panel" },
+      el("div", { class: "phead" }, el("h3", {}, "Session")),
+      el("div", { class: "vgrid" },
+        vcell("id", s.id),
+        vcell("project", s.projectID),
+        vcell("messages", String(s.messages)),
+        vcell("tokens", String(s.tokens)),
+        vcell("updated", new Date(s.updatedAt).toISOString().slice(0, 16).replace("T", " ")))),
+    el("section", { class: "panel" },
+      el("div", { class: "phead" }, el("h3", {}, "Transcript"),
+        el("span", { class: "when" }, sessionCache.turns.length + " recent turns")),
+      sessionCache.turns.length
+        ? el("div", { class: "grid" }, sessionCache.turns.map((t) =>
+            el("div", { class: "item " + (t.role === "user" ? "ok" : "muted") },
+              el("div", { class: "t" }, t.role),
+              el("div", { class: "s", style: "white-space:pre-wrap;word-break:break-word;color:var(--muted)" },
+                t.text.length > 2000 ? t.text.slice(0, 2000) + "\n…" : t.text))))
+        : el("div", { class: "empty" }, "No text turns recorded.")),
+  ]
+}
+
+function vcell(k, v) {
+  return el("div", { class: "vcell" }, el("div", { class: "k" }, k), el("div", { class: "v" }, v))
+}
+
+/**
  * The raw JSON editor for one file, as a self-contained block.
  *
  * Shared by the standalone config page and the bottom of a plugin's Settings
@@ -1178,6 +1589,7 @@ function render() {
   const kids =
     view.name === "plugin" ? viewPlugin(view.arg) :
     view.name === "config" ? viewConfig(view.arg) :
+    view.name === "session" ? viewSession(view.arg) :
     [el("div", { class: "empty" }, "not found")]
   pane.replaceChildren(...kids.filter(Boolean))
 
@@ -1250,6 +1662,8 @@ setInterval(() => {
   if (view.name === "config") return
   if (editor && editor.draft !== editor.original) return
   if (document.querySelector(".modal")) return
+  // A refresh rebuilds the pane, which would close a menu mid-click.
+  if (openMenu) return
   void loadView()
 }, 5000)
 </script></body></html>`

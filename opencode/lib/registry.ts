@@ -85,14 +85,87 @@ export type PanelItem = {
    * `view` is a route name the dashboard knows; `arg` is its parameter.
    */
   link?: { view: string; arg?: string }
+  /**
+   * Controls rendered on the card itself.
+   *
+   * A panel that lists live things — queued tasks, subscribed devices — is
+   * only half useful if acting on a row means finding the matching tool call.
+   * Each control runs one of the plugin's actions with `input` set, so the
+   * action stays the single place the behaviour lives.
+   *
+   * `select` and `prompt` collect a value first; `button` runs immediately.
+   */
+  controls?: Array<
+    | { type: "button"; action: string; label: string; input?: string; danger?: boolean; confirm?: string }
+    | { type: "prompt"; action: string; label: string; input?: string; prompt: string; value?: string }
+    | {
+        type: "select"
+        action: string
+        label: string
+        input?: string
+        value: string
+        options: Array<{ value: string; label: string }>
+      }
+  >
+}
+
+/**
+ * One collapsible group in a `tree` panel.
+ *
+ * The group itself is cheap to build; its children are fetched only when the
+ * user expands it. A plugin that lists hundreds of sessions across dozens of
+ * projects would otherwise pay for every one of them on each dashboard poll.
+ */
+export type PanelGroup = {
+  /** Stable id, unique within the panel. Passed back to `children` on expand. */
+  id: string
+  title: string
+  subtitle?: string
+  /** Short key/value pairs rendered on the group header. */
+  fields?: Array<{ label: string; value: string; tone?: Tone }>
+  tone?: Tone
+  /** Children count, shown before anything is loaded. */
+  count?: number
+  /** Open on first paint instead of staying collapsed. */
+  expanded?: boolean
+  /** Menu entries for this group, rendered behind a three-dot button. */
+  menu?: Array<
+    | { type: "button"; action: string; label: string; input?: string; danger?: boolean; confirm?: string }
+    | { type: "prompt"; action: string; label: string; input?: string; prompt: string; value?: string }
+    | {
+        type: "select"
+        action: string
+        label: string
+        input?: string
+        value?: string
+        options: Array<{ value: string; label: string }>
+      }
+  >
 }
 
 /** A structured, card-rendered view shown on a plugin's Info tab. */
 export type Panel = {
-  /** Stable key, unique within the plugin. */
+  /** Stable key, unique within the panel. */
   key: string
   title: string
   description?: string
+  /**
+   * How the panel renders.
+   *
+   * `cards` (the default) lays `items` out in a grid. `tree` renders `groups`
+   * as collapsible headers and asks `children` for each group's rows the first
+   * time it is opened.
+   */
+  type?: "cards" | "tree"
+  /** Collapsible groups, for `type: "tree"`. */
+  groups?: PanelGroup[]
+  /**
+   * Rows under one group, resolved on expand.
+   *
+   * Kept off the snapshot on purpose: this is the lazy half of a tree panel and
+   * runs only in response to an explicit request for one group.
+   */
+  children?: (groupID: string) => Promise<PanelItem[]>
   items: PanelItem[]
   /** Shown when `items` is empty. */
   empty?: string
@@ -195,6 +268,24 @@ export function get(id: string): PluginDescriptor | undefined {
 }
 
 /**
+ * Resolve the rows under one group of a tree panel.
+ *
+ * Rebuilds the plugin's panels to reach the `children` resolver that `snapshot`
+ * strips, so the lazy half of a tree panel stays server-side.
+ */
+export async function children(id: string, panelKey: string, groupID: string): Promise<PanelItem[]> {
+  const plugin = get(id)
+  if (!plugin) throw new Error(`Unknown plugin: ${id}`)
+
+  const panels = (await plugin.panels?.()) ?? []
+  const panel = panels.find((entry) => entry.key === panelKey)
+  if (!panel) throw new Error(`Unknown panel: ${panelKey}`)
+  if (!panel.children) throw new Error(`Panel ${panelKey} has no children resolver`)
+
+  return panel.children(groupID)
+}
+
+/**
  * Whether a plugin's behaviour is active.
  *
  * Disabled plugins stay loaded — opencode cannot unload them — so each plugin
@@ -242,6 +333,19 @@ export type VersionInfo = {
   unreleased: boolean
   releaseTag: string
   downloadURL: string | null
+  /**
+   * The published release's own notes, from the GitHub release body.
+   *
+   * Distinct from `notes`, which is the one-line summary this repository's
+   * manifest carries for the *installed* build. This says what the version on
+   * offer actually contains, which is the question the Version tab is there to
+   * answer before anyone updates.
+   */
+  releaseNotes: string | null
+  /** When the offered release was published, as an ISO timestamp. */
+  releasedAt: string | null
+  /** Tag of the offered release; also its GitHub page. */
+  releaseTagPublished: string | null
 }
 
 /**
@@ -271,6 +375,9 @@ export async function snapshot() {
       unreleased: status?.unreleased ?? (parsed !== null && !Versions.isStable(parsed)),
       releaseTag: Versions.releaseTag(id, entry.version),
       downloadURL: status?.downloadURL ?? null,
+      releaseNotes: status?.notes ?? null,
+      releasedAt: status?.publishedAt ?? null,
+      releaseTagPublished: status?.tag ?? null,
     }
   }
 
@@ -286,14 +393,21 @@ export async function snapshot() {
       status: await plugin.status().catch((error) => [
         { label: "error", value: error instanceof Error ? error.message : String(error), tone: "error" as const },
       ]),
-      panels: await (plugin.panels?.().catch((error) => [
-        {
-          key: "error",
-          title: "Unavailable",
-          items: [],
-          empty: error instanceof Error ? error.message : String(error),
-        },
-      ]) ?? Promise.resolve([] as Panel[])),
+      // `children` is a server-side resolver, not data: it is dropped here so
+      // the snapshot stays serialisable and a tree panel's rows are fetched
+      // only when a group is actually expanded.
+      panels: (
+        await (plugin.panels?.().catch(
+          (error): Panel[] => [
+            {
+              key: "error",
+              title: "Unavailable",
+              items: [],
+              empty: error instanceof Error ? error.message : String(error),
+            },
+          ],
+        ) ?? Promise.resolve([] as Panel[]))
+      ).map(({ children, ...panel }) => panel),
       logs: Logs.read(plugin.id, 200),
       actions: Object.entries(plugin.actions ?? {}).map(([key, action]) => ({ key, label: action.label })),
     })),
