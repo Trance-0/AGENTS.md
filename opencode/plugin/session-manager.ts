@@ -27,6 +27,7 @@ import * as DB from "../lib/db.ts"
 import * as Identity from "../lib/project-identity.ts"
 import * as Desktop from "../lib/desktop.ts"
 import * as Registry from "../lib/registry.ts"
+import * as PCP from "../lib/pcp.ts"
 import { LARGE_FILE_BYTES, readTurns, scanAll } from "../lib/sources.ts"
 import { local as localDevice } from "../lib/device.ts"
 import type { IndexEntry } from "../lib/index-store.ts"
@@ -35,6 +36,23 @@ type Logger = (level: "debug" | "info" | "warn" | "error", message: string, extr
 
 /** Bound the number of turns copied from a single transcript. */
 const MAX_TURNS = 4000
+
+/**
+ * Cards rendered on the Info tab.
+ *
+ * The index holds hundreds of transcripts; rendering every one would make the
+ * page slow to paint and impossible to read. The filter chips narrow by state,
+ * and the tools remain the way to query the whole set.
+ */
+const PANEL_LIMIT = 60
+
+/** Card accent per index state, so the exceptional rows stand out. */
+const TONE = {
+  imported: "ok",
+  pending: "warn",
+  conflict: "error",
+  missing: "muted",
+} as const
 
 function summarize(entry: IndexEntry) {
   return {
@@ -69,10 +87,17 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
     title: "Session Manager",
     description: "Index Claude Code, Codex and dsh transcripts and import them into opencode.",
     async settings() {
-      return []
+      const config = await PCP.resolveConfig()
+      return [
+        { key: "baseURL", label: "PCP base URL", type: "string", value: config.baseURL, placeholder: "https://…" },
+        { key: "scopedToken", label: "PCP scoped token", type: "string", value: config.scopedToken, secret: true, placeholder: "pcp_…" },
+      ]
     },
-    async update(key) {
-      throw new Error(`session-manager has no editable settings (${key})`)
+    async update(key, value) {
+      if (key !== "baseURL" && key !== "scopedToken") throw new Error(`unknown setting: ${key}`)
+      const text = String(value).trim()
+      if (!text) throw new Error(`${key} cannot be empty`)
+      await PCP.saveConfig({ [key]: text })
     },
     async status() {
       const index = await Index.load()
@@ -84,6 +109,66 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
         { label: "pending", value: counts.total - counts.imported, tone: counts.total > counts.imported ? "warn" : "muted" },
         { label: "conflicts", value: counts.conflicts, tone: counts.conflicts > 0 ? "error" : "muted" },
         { label: "device", value: device.id, tone: "muted" },
+      ]
+    },
+    /**
+     * The Info tab: every indexed transcript paired with what it became.
+     *
+     * Without this the page was empty — the tab renders panels, and this plugin
+     * registered none. Each card carries both halves of the mapping: the source
+     * store, file and native id on one side, the opencode session it was
+     * imported into on the other, so an import can be traced in either
+     * direction. Imported rows link to that session's own page.
+     */
+    async panels() {
+      const index = await Index.load()
+      const entries = Object.values(index.entries).sort((a, b) => b.modified - a.modified)
+      const counts = Index.stats(index)
+
+      const items = entries.slice(0, PANEL_LIMIT).map((entry) => {
+        const imported = entry.imported
+        const group = entry.missing ? "missing" : entry.conflict ? "conflict" : imported ? "imported" : "pending"
+
+        return {
+          title: entry.title,
+          // The source file is the thing to go look at when an import is wrong.
+          subtitle: entry.file,
+          tone: TONE[group],
+          group,
+          fields: [
+            { label: "source", value: entry.kind },
+            { label: "source id", value: entry.nativeID },
+            { label: "device", value: entry.device },
+            { label: "directory", value: entry.directory || "—" },
+            { label: "modified", value: new Date(entry.modified).toISOString().slice(0, 16).replace("T", " ") },
+            { label: "size", value: `${Math.round(entry.size / 1024)} KB` },
+            ...(imported
+              ? [
+                  { label: "session", value: imported.sessionID, tone: "ok" as const },
+                  { label: "turns", value: String(imported.turns) },
+                ]
+              : [{ label: "session", value: "not imported", tone: "muted" as const }]),
+            ...(entry.conflict ? [{ label: "conflict", value: entry.conflict, tone: "warn" as const }] : []),
+          ],
+          // Opens the imported transcript; a source with no session has nothing
+          // to open yet, so it stays a plain card.
+          ...(imported ? { link: { view: "session", arg: imported.sessionID } } : {}),
+        }
+      })
+
+      return [
+        {
+          key: "sessions",
+          title: "Indexed sessions",
+          description:
+            `${counts.total} transcripts across ${Object.keys(counts.byKind).length} stores; ` +
+            `${counts.imported} imported into opencode. Imported rows open the session.`,
+          items,
+          empty: "No transcripts indexed yet — run Rescan stores.",
+          filters: ["imported", "pending", "conflict", "missing"],
+          updatedAt: index.updatedAt || null,
+          action: "scan",
+        },
       ]
     },
     actions: {
@@ -191,6 +276,64 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
       }
     } finally {
       db.close()
+    }
+  }
+
+  /**
+   * Push one indexed transcript to PCP, resuming from its remote cursor.
+   *
+   * The external key is what makes a retry idempotent: PCP returns the existing
+   * remote session for a key it has already seen, so only the turns after the
+   * cursor are uploaded. A source that shrank was rewritten under the same id,
+   * which the append-only remote cannot represent — that needs an explicit
+   * `force` replay rather than a silent partial upload.
+   */
+  async function pushOne(entry: IndexEntry, config: PCP.Config, force: boolean) {
+    const externalKey = `${entry.device}:${entry.kind}:${entry.nativeID}`
+    const turns = (await readTurns(entry, LARGE_FILE_BYTES)).slice(0, MAX_TURNS)
+    if (turns.length === 0) return { key: entry.key, externalKey, status: "empty" as const }
+
+    const previous = entry.pcp
+    if (previous && !force && turns.length < previous.turns) {
+      throw new Error(`${entry.key} was rewritten under the same id; push it again with force to replay it`)
+    }
+
+    const remote = await PCP.ensureSession(config, externalKey, entry.title, "exact")
+    const token = remote.access_token ?? previous?.accessToken
+    const start = force ? 0 : (previous?.turns ?? 0)
+
+    for (let offset = start; offset < turns.length; offset += PCP.MAX_MESSAGES_PER_REQUEST) {
+      await PCP.appendMessages(
+        config,
+        remote.session_id,
+        token ?? "",
+        turns.slice(offset, offset + PCP.MAX_MESSAGES_PER_REQUEST).map((turn) => ({
+          role: turn.role,
+          content: turn.text.slice(0, PCP.MAX_CONTENT_CHARS),
+          provider: entry.kind,
+          base_model: entry.model || undefined,
+          provider_timestamp: turn.time ? new Date(turn.time).toISOString() : undefined,
+        })),
+      )
+    }
+
+    entry.pcp = {
+      sessionID: remote.session_id,
+      accessToken: token,
+      turns: turns.length,
+      fingerprint: entry.fingerprint,
+      pushedAt: Date.now(),
+    }
+
+    const added = turns.length - start
+    if (added > 0) log("info", `pushed ${added} turns of ${entry.key} to ${remote.session_id}`)
+    return {
+      key: entry.key,
+      externalKey,
+      status: added > 0 ? ("pushed" as const) : ("up-to-date" as const),
+      sessionID: remote.session_id,
+      turns: turns.length,
+      added,
     }
   }
 
@@ -322,6 +465,96 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
           await Index.save(index)
 
           return { title: `${result.status}: ${entry.title}`, output: JSON.stringify(result, null, 2) }
+        },
+      }),
+
+      pcp_status: tool({
+        description: "Check PCP connectivity using the configured scoped token.",
+        args: {},
+        async execute() {
+          const config = await PCP.resolveConfig()
+          const result = await PCP.probe(config)
+          return { title: "PCP connected", output: JSON.stringify({ baseURL: config.baseURL, tree: result }, null, 2) }
+        },
+      }),
+
+      pcp_push: tool({
+        description: "Push one indexed external session to PCP. Retries are idempotent by device/kind/native session key.",
+        args: {
+          key: tool.schema.string().describe("Session key from session_list."),
+          force: tool.schema.boolean().optional().describe("Replay every turn into a fresh remote cursor."),
+        },
+        async execute(args) {
+          const config = await PCP.resolveConfig()
+          const index = await Index.load()
+          const entry = index.entries[args.key]
+          if (!entry) throw new Error(`Unknown session key: ${args.key}`)
+
+          const result = await pushOne(entry, config, args.force === true)
+          await Index.save(index)
+
+          return { title: `${result.status}: ${entry.title}`, output: JSON.stringify(result, null, 2) }
+        },
+      }),
+
+      pcp_sync: tool({
+        description: "Push every indexed session whose transcript has not yet reached PCP, resuming from each session's remote cursor.",
+        args: {
+          dryRun: tool.schema.boolean().optional().describe("Report the plan without uploading."),
+          limit: tool.schema.number().int().min(1).optional().describe("Max sessions to push this pass."),
+        },
+        async execute(args, context) {
+          const config = await PCP.resolveConfig()
+          const device = await localDevice()
+          const index = await Index.load()
+          Index.reconcile(index, await scanAll(), device.id)
+
+          const pending = Object.values(index.entries)
+            .filter((entry) => !entry.missing)
+            .filter((entry) => !entry.pcp || entry.pcp.fingerprint !== entry.fingerprint)
+            .sort((a, b) => b.modified - a.modified)
+          const planned = args.limit ? pending.slice(0, args.limit) : pending
+
+          if (args.dryRun) {
+            await Index.save(index)
+            return {
+              title: `${planned.length} sessions pending for PCP`,
+              output: JSON.stringify({ dryRun: true, pending: planned.length, sessions: planned.slice(0, 40).map(summarize) }, null, 2),
+            }
+          }
+
+          const tally = { pushed: 0, "up-to-date": 0, empty: 0, failed: 0 }
+          const results: Array<Record<string, unknown>> = []
+
+          for (const [position, entry] of planned.entries()) {
+            if (context.abort.aborted) break
+
+            context.metadata({
+              title: `Pushing ${position + 1}/${planned.length}: ${entry.title.slice(0, 60)}`,
+              metadata: { progress: position + 1, total: planned.length, ...tally },
+            })
+
+            try {
+              const result = await pushOne(entry, config, false)
+              tally[result.status] = (tally[result.status] ?? 0) + 1
+              results.push(result)
+            } catch (error) {
+              tally.failed++
+              const message = error instanceof Error ? error.message : String(error)
+              results.push({ key: entry.key, status: "failed", error: message })
+              log("warn", `PCP push failed for ${entry.key}: ${message}`)
+            }
+
+            // Persist incrementally so an interrupted run never re-uploads turns.
+            if (position % 20 === 19) await Index.save(index)
+          }
+
+          await Index.save(index)
+          log("info", "PCP sync complete", { ...tally })
+          return {
+            title: `Pushed ${tally.pushed} sessions to PCP`,
+            output: JSON.stringify({ planned: planned.length, ...tally, results: results.slice(0, 40) }, null, 2),
+          }
         },
       }),
 

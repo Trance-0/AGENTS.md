@@ -27,9 +27,30 @@ export type ImportState = {
   device?: string
 }
 
+/**
+ * State of this entry's upload to a PCP deployment.
+ *
+ * Kept separate from `imported` because the two destinations are independent:
+ * a transcript can be imported into the local opencode database, pushed to the
+ * remote store, or both, and each keeps its own append cursor.
+ */
+export type PushState = {
+  /** PCP session id this entry was pushed to. */
+  sessionID: string
+  /** Per-session access token minted by the manager API. */
+  accessToken?: string
+  /** Turns already uploaded; the resume point for the next push. */
+  turns: number
+  /** Fingerprint of the source file at the time of the push. */
+  fingerprint: string
+  pushedAt: number
+}
+
 export type IndexEntry = SourceSession & {
   /** Present once the session has been imported into opencode's database. */
   imported?: ImportState
+  /** Present once the session has been pushed to PCP. */
+  pcp?: PushState
   /** Set when the source changed after import and a decision is pending. */
   conflict?: "grown" | "rewritten"
   /** Set when the source file disappeared. */
@@ -103,9 +124,13 @@ export function reconcile(index: Index, scanned: SourceSession[], device?: strin
       continue
     }
 
-    // Refresh the descriptor but preserve import bookkeeping.
+    // Refresh the descriptor but preserve import and push bookkeeping.
     const imported = existing.imported
-    index.entries[session.key] = { ...session, ...(imported ? { imported } : {}) }
+    index.entries[session.key] = {
+      ...session,
+      ...(imported ? { imported } : {}),
+      ...(existing.pcp ? { pcp: existing.pcp } : {}),
+    }
     const entry = index.entries[session.key]
 
     if (!imported) {

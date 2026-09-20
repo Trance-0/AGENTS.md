@@ -27,6 +27,7 @@ export const STATE = {
   barkQueue: path.join(CONFIG_DIR, "bark-notify-queue.json"),
   cpaConfig: path.join(CONFIG_DIR, "cpa-usage.json"),
   taskQueue: path.join(CONFIG_DIR, "task-queue.json"),
+  pcpConfig: path.join(CONFIG_DIR, "pcp.json"),
 }
 
 /** External coding-agent session stores scanned by the session manager. */
