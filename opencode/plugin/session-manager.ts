@@ -28,31 +28,28 @@ import * as Identity from "../lib/project-identity.ts"
 import * as Desktop from "../lib/desktop.ts"
 import * as Registry from "../lib/registry.ts"
 import * as PCP from "../lib/pcp.ts"
+import * as Logs from "../lib/logs.ts"
 import { LARGE_FILE_BYTES, readTurns, scanAll } from "../lib/sources.ts"
 import { local as localDevice } from "../lib/device.ts"
 import type { IndexEntry } from "../lib/index-store.ts"
 
 type Logger = (level: "debug" | "info" | "warn" | "error", message: string, extra?: Record<string, unknown>) => void
 
+const PLUGIN_ID = "session-manager"
+
 /** Bound the number of turns copied from a single transcript. */
 const MAX_TURNS = 4000
 
 /**
- * Cards rendered on the Info tab.
+ * How long after opencode settles before the first background scan.
  *
- * The index holds hundreds of transcripts; rendering every one would make the
- * page slow to paint and impossible to read. The filter chips narrow by state,
- * and the tools remain the way to query the whole set.
+ * Startup is the busiest moment in the process, and an index sweep is never
+ * urgent, so it waits for the rush to pass.
  */
-const PANEL_LIMIT = 60
+const IDLE_SCAN_DELAY_MS = 20_000
 
-/** Card accent per index state, so the exceptional rows stand out. */
-const TONE = {
-  imported: "ok",
-  pending: "warn",
-  conflict: "error",
-  missing: "muted",
-} as const
+/** Minimum gap between background sweeps. */
+const RESCAN_INTERVAL_MS = 10 * 60 * 1000
 
 function summarize(entry: IndexEntry) {
   return {
@@ -98,9 +95,16 @@ function splitInput(input?: string): [string, string] {
 export const SessionManager: Plugin = async ({ client, directory }) => {
   await Registry.init()
 
+  /** Guards against two sweeps overlapping, and paces the periodic one. */
+  let sweeping = false
+  let lastSweep = 0
+
   const log: Logger = (level, message, extra) => {
+    // Both sinks: opencode's shared stream cannot be read back, so the
+    // dashboard's Logging tab needs its own copy or it stays empty.
+    Logs.log(PLUGIN_ID, extra ? `${message} ${JSON.stringify(extra)}` : message, level === "debug" ? "info" : level)
     client.app
-      .log({ body: { service: "session-manager", level, message, ...(extra ? { extra } : {}) } })
+      .log({ body: { service: PLUGIN_ID, level, message, ...(extra ? { extra } : {}) } })
       .catch(() => {})
   }
 
@@ -110,7 +114,22 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
     description: "Index Claude Code, Codex and dsh transcripts and import them into opencode.",
     async settings() {
       const config = await PCP.resolveConfig()
+      const index = await Index.load()
+      const counts = Index.stats(index)
+
       return [
+        // Indexing is maintenance, so it lives with the settings rather than
+        // on the Info tab, which is for reading.
+        {
+          key: "scan",
+          label: "Rescan stores",
+          type: "action",
+          action: "scan",
+          description:
+            `Re-reads the Claude Code, Codex and dsh stores. Runs on its own after a session finishes and ` +
+            `every ${RESCAN_INTERVAL_MS / 60000} minutes; this forces one now. ` +
+            `Currently ${counts.total} transcripts, ${counts.imported} imported.`,
+        },
         { key: "baseURL", label: "PCP base URL", type: "string", value: config.baseURL, placeholder: "https://…" },
         { key: "scopedToken", label: "PCP scoped token", type: "string", value: config.scopedToken, secret: true, placeholder: "pcp_…" },
       ]
@@ -155,50 +174,14 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
       ]
     },
     /**
-     * The Info tab: every indexed transcript paired with what it became.
+     * The Info tab: search, and the projects each session belongs to.
      *
-     * Without this the page was empty — the tab renders panels, and this plugin
-     * registered none. Each card carries both halves of the mapping: the source
-     * store, file and native id on one side, the opencode session it was
-     * imported into on the other, so an import can be traced in either
-     * direction. Imported rows link to that session's own page.
+     * Deliberately only those two. The flat list of every indexed transcript
+     * that used to sit here duplicated what the tree now shows per project,
+     * and was capped anyway — search is the better answer to "where is that
+     * session", and `session_list` still gives the raw index to a model.
      */
     async panels() {
-      const index = await Index.load()
-      const entries = Object.values(index.entries).sort((a, b) => b.modified - a.modified)
-      const counts = Index.stats(index)
-
-      const items = entries.slice(0, PANEL_LIMIT).map((entry) => {
-        const imported = entry.imported
-        const group = entry.missing ? "missing" : entry.conflict ? "conflict" : imported ? "imported" : "pending"
-
-        return {
-          title: entry.title,
-          // The source file is the thing to go look at when an import is wrong.
-          subtitle: entry.file,
-          tone: TONE[group],
-          group,
-          fields: [
-            { label: "source", value: entry.kind },
-            { label: "source id", value: entry.nativeID },
-            { label: "device", value: entry.device },
-            { label: "directory", value: entry.directory || "—" },
-            { label: "modified", value: new Date(entry.modified).toISOString().slice(0, 16).replace("T", " ") },
-            { label: "size", value: `${Math.round(entry.size / 1024)} KB` },
-            ...(imported
-              ? [
-                  { label: "session", value: imported.sessionID, tone: "ok" as const },
-                  { label: "turns", value: String(imported.turns) },
-                ]
-              : [{ label: "session", value: "not imported", tone: "muted" as const }]),
-            ...(entry.conflict ? [{ label: "conflict", value: entry.conflict, tone: "warn" as const }] : []),
-          ],
-          // Opens the imported transcript; a source with no session has nothing
-          // to open yet, so it stays a plain card.
-          ...(imported ? { link: { view: "session", arg: imported.sessionID } } : {}),
-        }
-      })
-
       // Every project opencode knows about, with its sessions loaded on
       // expand. This reads opencode's own tables, so natively created sessions
       // appear next to imported ones instead of being invisible here.
@@ -305,18 +288,6 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
             }
           },
         },
-        {
-          key: "sessions",
-          title: "Indexed sessions",
-          description:
-            `${counts.total} transcripts across ${Object.keys(counts.byKind).length} stores; ` +
-            `${counts.imported} imported into opencode. Imported rows open the session.`,
-          items,
-          empty: "No transcripts indexed yet — run Rescan stores.",
-          filters: ["imported", "pending", "conflict", "missing"],
-          updatedAt: index.updatedAt || null,
-          action: "scan",
-        },
       ]
     },
     /**
@@ -355,13 +326,10 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
       scan: {
         label: "Rescan stores",
         async run() {
-          if (!Registry.isEnabled("session-manager")) return "session-manager is disabled"
-          const device = await localDevice()
-          const index = await Index.load()
-          const scanned = await scanAll()
-          const diff = Index.reconcile(index, scanned, device.id)
-          await Index.save(index)
-          return `scanned ${scanned.length}; ${diff.added.length} new, ${diff.grown.length} grown`
+          if (!Registry.isEnabled(PLUGIN_ID)) return "session-manager is disabled"
+          const result = await sweep("manual")
+          if (!result) return "a scan is already running"
+          return `scanned ${result.scanned}; ${result.added.length} new, ${result.grown.length} grown`
         },
       },
 
@@ -606,7 +574,73 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
     }
   }
 
+  /**
+   * Fold the source stores into the index without importing anything.
+   *
+   * Scanning is stat-and-head only, so it is cheap enough to run while
+   * opencode is working; importing is not, and is left to an explicit request.
+   */
+  async function sweep(reason: string) {
+    if (!Registry.isEnabled(PLUGIN_ID)) return null
+    if (sweeping) return null
+
+    const now = Date.now()
+    if (now - lastSweep < RESCAN_INTERVAL_MS && reason !== "manual") return null
+
+    sweeping = true
+    try {
+      const device = await localDevice()
+      const index = await Index.load()
+      const scanned = await scanAll()
+      const diff = Index.reconcile(index, scanned, device.id)
+      await Index.save(index)
+      lastSweep = Date.now()
+
+      const changed = diff.added.length + diff.grown.length + diff.rewritten.length
+      // Only speak up when something moved; a quiet sweep every ten minutes
+      // would bury the lines that matter.
+      if (changed > 0 || reason === "manual") {
+        log(
+          "info",
+          `${reason} scan: ${scanned.length} transcripts, ${diff.added.length} new, ` +
+            `${diff.grown.length} grown, ${diff.rewritten.length} rewritten`,
+        )
+      }
+
+      const counts = Index.stats(index)
+      const pending = counts.total - counts.imported
+      if (pending > 0 && changed > 0) {
+        log("info", `${pending} transcripts are not yet imported — run session_sync_all to bring them in`)
+      }
+      return { scanned: scanned.length, ...diff }
+    } catch (error) {
+      log("warn", `scan failed: ${error instanceof Error ? error.message : String(error)}`)
+      return null
+    } finally {
+      sweeping = false
+    }
+  }
+
+  // One sweep shortly after startup, then on a slow timer. `unref` keeps the
+  // timer from holding opencode open.
+  const first = setTimeout(() => void sweep("startup"), IDLE_SCAN_DELAY_MS)
+  const repeat = setInterval(() => void sweep("periodic"), RESCAN_INTERVAL_MS)
+  if (typeof first.unref === "function") first.unref()
+  if (typeof repeat.unref === "function") repeat.unref()
+
+  log("info", `loaded — watching ${Object.keys(SOURCE_LABEL).length - 1} source stores, first scan in ${IDLE_SCAN_DELAY_MS / 1000}s`)
+
   return {
+    /**
+     * A finished session is the moment its transcript stops changing, which is
+     * exactly when re-indexing is worth doing — and when opencode is idle
+     * enough to afford it.
+     */
+    event: async ({ event }) => {
+      if (!Registry.isEnabled(PLUGIN_ID)) return
+      if (event.type !== "session.idle") return
+      await sweep("idle")
+    },
     tool: {
       session_scan: tool({
         description:

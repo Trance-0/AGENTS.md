@@ -106,6 +106,13 @@ The **Logging** tab filters by minimum severity — `all`, `info`, `warn`,
 `error`. It is a *minimum*, not an exact match, so selecting `warn` keeps
 errors visible; hiding them while looking for problems would be backwards.
 
+One renderer serves every plugin's Logging tab. On the **plugin manager** it
+merges all of them into a single time-ordered stream, each line tagged with the
+plugin that wrote it: the manager owns the others, and a misbehaving background
+job is easier to spot next to what else was happening than on a tab you would
+have to already suspect. Plugins append with `Logs.log(id, message, level)` as
+well as to opencode's own stream, because that stream cannot be read back.
+
 The **Version** tab shows the installed build alongside a **Published release**
 section carrying the notes from that release's GitHub body, when it published
 any, with a link to the release page. Those notes are the release's own — the
@@ -146,6 +153,30 @@ poll cannot destroy it mid-click, and the poll is suppressed while it is open.
 Open/closed state and loaded rows live at module scope in the client, keyed
 `"<plugin>:<panel>:<group>"`, because `render()` rebuilds the pane wholesale
 every five seconds.
+
+### Choosing a model
+
+A setting of type `model` is a model chooser with a throwaway chat window
+attached:
+
+```ts
+...(await ModelPicker.fields({
+  client, key: "model", label: "Rename model",
+  current: config.model, noneLabel: "none — renaming off",
+  description: "…", action: "chat-model",
+}))
+```
+
+One field, not two. It was previously a `select` plus a separate "test this
+model" action, which meant two controls for one concern and a reply that could
+only be read on another tab.
+
+The chat is collapsed until asked for, and each exchange runs in a scratch
+session the server deletes immediately afterwards. The transcript lives in
+memory on `globalThis` and is never written anywhere, so **nothing said while
+testing a model is saved** — it exists to judge the model, not to be kept.
+Because each exchange gets a fresh session, the transcript is replayed as
+context, which is what makes the conversation continuous without persisting it.
 
 ### Search
 
@@ -357,7 +388,10 @@ session picker.
 
 ### The Info tab
 
-Two panels.
+A search box and the project tree, and nothing else. The flat list of every
+indexed transcript that used to sit here duplicated what the tree shows per
+project and was capped at 60 rows anyway; search answers "where is that
+session" better, and `session_list` still hands the raw index to a model.
 
 **Projects** is a tree of every project opencode knows about. Groups load up
 front; a project's sessions are fetched only when it is expanded, over
@@ -371,11 +405,23 @@ Each card is labelled with where it came from — `opencode`, `Claude Code`,
 `Codex` or `dsh` — taken from `metadata.imported.source`; a session with no such
 metadata was created by opencode itself.
 
-**Indexed sessions** is the older flat view: one card per indexed transcript,
-carrying both halves of the mapping — the source store, file, native id, device
-and directory on one side; the opencode session it was imported into on the
-other. An import can therefore be traced in either direction. Cards filter by
-`imported`, `pending`, `conflict` and `missing`.
+### Indexing happens on its own
+
+The index no longer has to be refreshed by hand. A scan runs:
+
+- ~20 s after the plugin loads, once startup has settled;
+- whenever a session goes idle, which is when its transcript stops changing and
+  opencode is quiet enough to afford the work;
+- every 10 minutes otherwise.
+
+Scanning is `stat` plus a bounded head read, so it is cheap enough to run while
+opencode is working. *Importing* is not, and is still only done on request —
+a sweep that finds unimported transcripts says so in the log rather than
+deciding for you. Overlapping sweeps are refused, the periodic one is paced,
+and both timers are `unref`'d so they never hold opencode open.
+
+**Rescan stores** now lives on the Settings tab, with the manual run bypassing
+the pacing. It is maintenance, and the Info tab is for reading.
 
 ### Search
 

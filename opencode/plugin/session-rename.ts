@@ -21,6 +21,8 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
 import * as Rename from "../lib/rename.ts"
+import * as Scratch from "../lib/scratch.ts"
+import * as ModelPicker from "../lib/model-picker.ts"
 import * as Sessions from "../lib/session-store.ts"
 import * as Registry from "../lib/registry.ts"
 import * as Logs from "../lib/logs.ts"
@@ -93,6 +95,23 @@ export const SessionRename: Plugin = async ({ client }) => {
   }
 
   /**
+   * The configured template with a worked example filled in.
+   *
+   * Testing with a generic prompt would only prove the model is reachable; the
+   * question that matters is whether *this* template gets a usable title back
+   * from it, so the probe sends the real thing.
+   */
+  function probePrompt(config: Rename.Config): string {
+    return Rename.render(config.prompt, {
+      transcript: "User: the rename keeps firing on every turn\nAssistant: added a cooldown per session",
+      current_title: "New session - 2026-09-20T03:12:00.000Z",
+      directory: "D:/Documents/Github/AGENTS.md",
+      session_id: "ses_example",
+      max_length: String(config.maxLength),
+    })
+  }
+
+  /**
    * Rename one session, or explain why it was left alone.
    *
    * `force` is what the tool passes: asking for a rename by hand should not be
@@ -114,7 +133,9 @@ export const SessionRename: Plugin = async ({ client }) => {
 
     const row = Sessions.get(sessionID)
     if (!row) return outcome("session not found")
-    if (row.title === Rename.SCRATCH_TITLE) return outcome("scratch session")
+    // Any plugin's scratch session, not just this one's: renaming the queue's
+    // summary session would pop a rename session for it, and so on.
+    if (Scratch.isScratchTitle(row.title)) return outcome("scratch session")
     // Subagent sessions are an implementation detail of their parent's turn and
     // never appear in the picker, so naming them serves nobody.
     if (row.parentID) return outcome("subagent session", null, row.title)
@@ -181,14 +202,16 @@ export const SessionRename: Plugin = async ({ client }) => {
       const placeholders = Rename.TEMPLATE_KEYS.map((key) => `<${key}>`).join(", ")
 
       return [
-        {
+        // Picker and test button, shared with every plugin that selects a model.
+        ...(await ModelPicker.fields({
+          client: client as any,
           key: "model",
           label: "Rename model",
-          type: "select",
-          value: config.model,
-          options: await Rename.modelOptions(client as any, config.model),
+          current: config.model,
+          noneLabel: "none — renaming off",
           description: "Small model used to propose titles. With none selected the plugin disables itself.",
-        },
+          action: "chat-model",
+        })),
         {
           key: "prompt",
           label: "Rename prompt",
@@ -301,6 +324,12 @@ export const SessionRename: Plugin = async ({ client }) => {
     async panels() {
       const config = await Rename.load()
       return [
+        ...ModelPicker.panel({
+          pluginID: PLUGIN_ID,
+          title: "Rename model test",
+          action: "test-model",
+          prompt: probePrompt(config),
+        }),
         {
           key: "prompt",
           title: "Rendered prompt",
@@ -345,6 +374,67 @@ export const SessionRename: Plugin = async ({ client }) => {
           filters: ["renamed", "skipped"],
         },
       ]
+    },
+    actions: {
+      /**
+       * One message in the scratch conversation from the model picker.
+       *
+       * The transcript is held in memory and each exchange runs in a session
+       * the server deletes, so nothing said here is saved.
+       */
+      "chat-model": {
+        label: "Send to the rename model",
+        async run(input) {
+          const config = await Rename.load()
+          if (config.model === Rename.NO_MODEL) throw new Error("no model selected — renaming is off")
+
+          const result = await ModelPicker.say({
+            pluginID: PLUGIN_ID,
+            client: client as any,
+            model: config.model,
+            message: String(input ?? ""),
+          })
+          if (!result.ok) log(`rename model chat failed: ${result.error}`, "warn")
+          return result.ok ? `replied in ${(result.elapsedMs / 1000).toFixed(1)}s` : (result.error ?? "failed")
+        },
+      },
+
+      "test-model": {
+        label: "Test rename model",
+        async run(input) {
+          const config = await Rename.load()
+          if (config.model === Rename.NO_MODEL) {
+            throw new Error("no model selected — renaming is off")
+          }
+
+          const { probe, message } = await ModelPicker.test({
+            pluginID: PLUGIN_ID,
+            client: client as any,
+            model: config.model,
+            prompt: String(input ?? "").trim() || probePrompt(config),
+            // The sanitiser is deliberately forgiving — it clips an overlong
+            // reply rather than rejecting it, because a mediocre title still
+            // beats a placeholder. That makes it too weak to be a verdict: it
+            // accepts an apology as readily as a title. A test additionally
+            // requires the model to have answered with a title *and nothing
+            // else*, which is what the prompt asked for.
+            accepts: (reply) => {
+              const title = Rename.sanitizeTitle(reply, config.maxLength)
+              if (title === null) return false
+              const trimmed = reply.trim()
+              // More than one line, or prose far longer than the limit, means
+              // the model explained itself instead of answering.
+              if (trimmed.includes("\n")) return false
+              return trimmed.length <= config.maxLength * 1.2
+            },
+            expectation: "the reply was not a bare title of the requested length",
+          })
+
+          if (!probe.ok) log(`rename model test failed for ${probe.model}: ${probe.error}`, "warn")
+          else log(`rename model test: ${probe.model} replied in ${probe.elapsedMs}ms, usable=${probe.usable}`)
+          return message
+        },
+      },
     },
   })
 

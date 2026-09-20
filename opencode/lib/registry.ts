@@ -50,6 +50,23 @@ export type Field = Placement &
     | { key: string; label: string; type: "number"; value: number; description?: string; min?: number; max?: number }
     | { key: string; label: string; type: "select"; value: string; options: Array<{ value: string; label: string }>; description?: string }
     /**
+     * A model chooser with a throwaway chat window attached.
+     *
+     * Its own type rather than a `select` plus a separate test action: those
+     * were two fields editing one concern, and the reply could only be read on
+     * another tab. `chatAction` names the action the window sends through;
+     * nothing said in it is persisted.
+     */
+    | {
+        key: string
+        label: string
+        type: "model"
+        value: string
+        options: Array<{ value: string; label: string }>
+        description?: string
+        chatAction: string
+      }
+    /**
      * A button inside the settings list. Unlike a top-level action this sits
      * next to the fields it affects, which is what makes list management —
      * adding or removing a row — expressible as settings.

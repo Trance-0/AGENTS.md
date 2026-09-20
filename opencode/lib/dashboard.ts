@@ -21,6 +21,7 @@ import * as Registry from "./registry.ts"
 import * as ConfigFiles from "./config-files.ts"
 import * as Marketplace from "./marketplace.ts"
 import * as Sessions from "./session-store.ts"
+import * as ModelPicker from "./model-picker.ts"
 
 const PORT_MIN = 14100
 const PORT_MAX = 14120
@@ -133,6 +134,37 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     } catch (error) {
       return json(res, 400, { error: error instanceof Error ? error.message : String(error) })
     }
+  }
+
+  /**
+   * The scratch conversation used to try a model out.
+   *
+   * Held in memory by the model picker and never written anywhere: a test
+   * conversation exists to judge a model, not to be kept.
+   */
+  const chat = url.pathname.match(/^\/api\/plugins\/([^/]+)\/chat$/)
+  if (chat) {
+    const id = decodeURIComponent(chat[1])
+    if (req.method === "GET") return json(res, 200, { turns: ModelPicker.chat(id) })
+    if (req.method === "POST") {
+      const body = await readBody(req)
+      const plugin = Registry.get(id)
+      if (!plugin) return json(res, 404, { error: `Unknown plugin: ${id}` })
+      const action = plugin.actions?.[String(body.action ?? "")]
+      if (!action) return json(res, 400, { error: `Unknown action: ${body.action}` })
+      try {
+        await action.run(String(body.message ?? ""))
+        return json(res, 200, { turns: ModelPicker.chat(id) })
+      } catch (error) {
+        return json(res, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+    }
+  }
+
+  const chatClear = url.pathname.match(/^\/api\/plugins\/([^/]+)\/chat\/clear$/)
+  if (chatClear && req.method === "POST") {
+    ModelPicker.clearChat(decodeURIComponent(chatClear[1]))
+    return json(res, 200, { ok: true, turns: [] })
   }
 
   // ── versions and marketplace ───────────────────────────────────────────
@@ -534,6 +566,28 @@ select.ctl:hover{border-color:var(--accent)}
   cursor:pointer;font-size:16px;line-height:1;padding:2px 8px}
 .dots:hover{border-color:var(--line);color:var(--text);background:var(--panel2)}
 
+/* ---- model picker with its scratch chat ---- */
+.modelrow{align-items:flex-start}
+.modelbox{display:flex;flex-direction:column;gap:8px;min-width:0}
+.chatbar{display:flex}
+.chat{border:1px solid var(--line);border-radius:9px;background:var(--panel2);overflow:hidden}
+.chathead{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--line);
+  color:var(--faint);font-size:11.5px}
+.chathead span{flex:1}
+.chatlog{display:flex;flex-direction:column;gap:7px;padding:10px;max-height:320px;overflow-y:auto}
+.bubble{max-width:86%;border-radius:10px;padding:7px 10px;font-size:12.5px;line-height:1.45}
+.bubble.user{align-self:flex-end;background:var(--accent);color:#08080b}
+.bubble.assistant{align-self:flex-start;background:var(--panel);border:1px solid var(--line)}
+.bubble.err{border-color:var(--err);color:var(--err)}
+.bubble .who{font-size:10px;text-transform:uppercase;letter-spacing:.6px;opacity:.75;margin-bottom:3px;
+  display:flex;gap:7px}
+.bubble .ms{opacity:.8}
+.bubble .msg{white-space:pre-wrap;word-break:break-word}
+.chatrow{display:flex;gap:7px;padding:9px 10px;border-top:1px solid var(--line)}
+.chatin{flex:1;min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:7px;
+  color:var(--text);font:inherit;font-size:12.5px;padding:6px 9px}
+.chatin:focus{outline:none;border-color:var(--accent)}
+
 /* ---- search ---- */
 .searchrow{display:flex;gap:8px;align-items:center}
 .searchin{flex:1;min-width:0;background:var(--panel2);border:1px solid var(--line);border-radius:8px;
@@ -559,6 +613,9 @@ select.ctl:hover{border-color:var(--accent)}
 .logline .ts{color:var(--faint);font-variant-numeric:tabular-nums}
 .logline .lv{font-size:10px;text-transform:uppercase;letter-spacing:.6px;padding-top:1px}
 .logline .msg{white-space:pre-wrap;word-break:break-word;color:var(--muted)}
+/* The combined view adds a plugin column; without a plugin it stays 3-up. */
+.logline:has(.who){grid-template-columns:76px 52px 116px 1fr}
+.logline .who{color:var(--accent);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .logline.info .lv{color:var(--faint)}
 .logline.warn .lv{color:var(--warn)} .logline.warn .msg{color:#fde68a}
 .logline.error .lv{color:var(--err)} .logline.error .msg{color:var(--delfg)}
@@ -651,6 +708,8 @@ const sections = {} // "<plugin>:<group>" -> open, so a refresh keeps it open
 const expanded = {} // "<plugin>:<panel>:<group>" -> open, for tree panels
 const treeRows = {} // same key -> { loading, items, error }, filled on expand
 const searchState = {} // plugin id -> { query, items, loading, error }
+const chatOpen = {}    // "<plugin>:<field>" -> whether the chat window is open
+const chatState = {}   // same key -> { turns, sending }
 let openMenu = null // the open three-dot menu, appended to document.body
 
 /* -------------------------------- routing -------------------------------- */
@@ -808,6 +867,15 @@ function field(plugin, f) {
   } else if (f.type === "select") {
     input = el("select", { onchange: (e) => commit(e.target.value) },
       f.options.map((o) => el("option", { value: o.value, selected: o.value === f.value }, o.label)))
+  } else if (f.type === "model") {
+    // The picker and its chat live in one row, because choosing a model and
+    // checking it answers usefully are the same task.
+    return el("div", { class: "row modelrow" },
+      el("label", { title: f.description || "" }, f.label),
+      el("div", { class: "modelbox" },
+        el("select", { onchange: (e) => commit(e.target.value) },
+          f.options.map((o) => el("option", { value: o.value, selected: o.value === f.value }, o.label))),
+        chatWindow(plugin, f)))
   } else if (f.type === "number") {
     input = el("input", { type: "number", value: String(f.value), min: f.min, max: f.max,
       onchange: (e) => commit(Number(e.target.value)) })
@@ -842,6 +910,121 @@ function field(plugin, f) {
       onchange: (e) => commit(e.target.value) })
   }
   return el("div", { class: "row" }, el("label", { title: f.description || "" }, f.label), input)
+}
+
+/**
+ * A throwaway conversation with the selected model.
+ *
+ * Each exchange runs in a scratch session the server deletes afterwards, and
+ * the transcript lives only in memory, so nothing said here is saved. It is
+ * collapsed until asked for: most visits to a settings page are not about
+ * testing a model.
+ */
+function chatWindow(plugin, f) {
+  const key = plugin.id + ":" + f.key
+  const open = chatOpen[key] === true
+  const state = chatState[key] || { turns: [], sending: false }
+
+  if (!open) {
+    return el("div", { class: "chatbar" },
+      el("button", {
+        class: "btn",
+        type: "button",
+        disabled: !f.value,
+        title: f.value ? "" : "Select a model first",
+        onclick: () => { chatOpen[key] = true; loadChat(plugin, f); },
+      }, f.value ? "Test this model" : "Select a model to test"))
+  }
+
+  const box = el("input", {
+    type: "text",
+    class: "chatin",
+    placeholder: "Ask the model something…",
+    onkeydown: (e) => {
+      if (e.key !== "Enter" || e.shiftKey) return
+      e.preventDefault()
+      sendChat(plugin, f, e.target.value)
+      e.target.value = ""
+    },
+  })
+
+  const log = el("div", { class: "chatlog" },
+    state.turns.length
+      ? state.turns.map((t) =>
+          el("div", { class: "bubble " + t.role + (t.error ? " err" : "") },
+            el("div", { class: "who" },
+              t.role === "user" ? "you" : (f.value || "model"),
+              t.elapsedMs ? el("span", { class: "ms" }, (t.elapsedMs / 1000).toFixed(1) + "s") : null),
+            el("div", { class: "msg" }, t.error ? t.error : t.text)))
+      : el("div", { class: "empty" }, "Nothing sent yet. Messages here are never saved."),
+    state.sending ? el("div", { class: "bubble assistant" }, el("div", { class: "msg" }, "…")) : null)
+
+  return el("div", { class: "chat" },
+    el("div", { class: "chathead" },
+      el("span", {}, "Scratch conversation — not saved"),
+      el("button", {
+        class: "btn ctl",
+        type: "button",
+        onclick: () => { void clearChat(plugin, f) },
+      }, "Clear"),
+      el("button", {
+        class: "btn ctl",
+        type: "button",
+        onclick: () => { chatOpen[key] = false; render() },
+      }, "Close")),
+    log,
+    el("div", { class: "chatrow" },
+      box,
+      el("button", {
+        class: "btn primary",
+        type: "button",
+        disabled: state.sending,
+        onclick: () => {
+          const input = box.value
+          box.value = ""
+          sendChat(plugin, f, input)
+        },
+      }, state.sending ? "…" : "Send")))
+}
+
+/** Read the server's copy of the scratch transcript. */
+function loadChat(plugin, f) {
+  const key = plugin.id + ":" + f.key
+  api("/api/plugins/" + encodeURIComponent(plugin.id) + "/chat")
+    .then((r) => {
+      chatState[key] = { turns: r.turns || [], sending: false }
+      render()
+    })
+    .catch(() => { chatState[key] = { turns: [], sending: false }; render() })
+}
+
+function sendChat(plugin, f, message) {
+  const text = (message || "").trim()
+  if (!text) return
+
+  const key = plugin.id + ":" + f.key
+  const prior = (chatState[key] || { turns: [] }).turns
+  // Echo immediately: a model can take seconds and the message should not
+  // vanish while it thinks.
+  chatState[key] = { turns: [...prior, { role: "user", text, at: Date.now() }], sending: true }
+  render()
+
+  post("/api/plugins/" + encodeURIComponent(plugin.id) + "/chat", { action: f.chatAction, message: text })
+    .then((r) => { chatState[key] = { turns: r.turns || [], sending: false } })
+    .catch((e) => {
+      chatState[key] = {
+        turns: [...chatState[key].turns, { role: "assistant", text: "", at: Date.now(), error: e.message }],
+        sending: false,
+      }
+    })
+    .then(() => { if (view.name === "plugin" && view.arg === plugin.id) render() })
+}
+
+function clearChat(plugin, f) {
+  const key = plugin.id + ":" + f.key
+  return post("/api/plugins/" + encodeURIComponent(plugin.id) + "/chat/clear", {})
+    .then(() => { chatState[key] = { turns: [], sending: false }; render() })
+    .catch((e) => toast(e.message, true))
 }
 
 /** Whether a field's "when" condition is met by the plugin's current values. */
@@ -1342,12 +1525,26 @@ async function checkUpdates(button) {
  */
 const LOG_RANK = { info: 0, warn: 1, error: 2 }
 
+/**
+ * One plugin's Logging tab, or — on the manager — every plugin's at once.
+ *
+ * The manager owns the other plugins, so its own tab is the place to watch
+ * them together: a background sweep that misbehaves is easier to spot next to
+ * what else was happening than on a tab you have to already suspect.
+ */
 function logView(p) {
-  const level = logLevel[p.id] || "all"
-  const lines = level === "all" ? p.logs : p.logs.filter((l) => LOG_RANK[l.level] >= LOG_RANK[level])
+  const combined = p.id === "plugin-manager"
+  const source = combined
+    ? DATA.plugins
+        .flatMap((x) => x.logs.map((l) => ({ ...l, plugin: x.title })))
+        .sort((a, b) => a.at - b.at)
+    : p.logs
 
-  const counts = { all: p.logs.length, info: 0, warn: 0, error: 0 }
-  for (const l of p.logs) {
+  const level = logLevel[p.id] || "all"
+  const lines = level === "all" ? source : source.filter((l) => LOG_RANK[l.level] >= LOG_RANK[level])
+
+  const counts = { all: source.length, info: 0, warn: 0, error: 0 }
+  for (const l of source) {
     if (LOG_RANK[l.level] >= LOG_RANK.info) counts.info++
     if (LOG_RANK[l.level] >= LOG_RANK.warn) counts.warn++
     if (LOG_RANK[l.level] >= LOG_RANK.error) counts.error++
@@ -1360,7 +1557,7 @@ function logView(p) {
         onclick: () => { logLevel[p.id] = g; render() },
       }, g, el("span", { class: "n" }, String(counts[g])))))
 
-  if (!p.logs.length) {
+  if (!source.length) {
     return el("div", {}, el("div", { class: "empty" }, "No activity recorded yet this session."))
   }
 
@@ -1378,6 +1575,8 @@ function logView(p) {
             el("div", { class: "logline " + l.level },
               el("span", { class: "ts" }, fmt(l.at)),
               el("span", { class: "lv" }, l.level),
+              // Only the combined view needs to say which plugin spoke.
+              l.plugin ? el("span", { class: "who" }, l.plugin) : null,
               el("span", { class: "msg" }, l.message))))
       : el("div", { class: "empty" }, "Nothing at this level."))
 }

@@ -33,6 +33,10 @@ import * as Retry from "../lib/retry.ts"
 import * as RetryConfig from "../lib/retry-config.ts"
 import * as Runner from "../lib/task-runner.ts"
 import * as Summarize from "../lib/summarize.ts"
+import * as Scratch from "../lib/scratch.ts"
+import * as ModelPicker from "../lib/model-picker.ts"
+import * as Sessions from "../lib/session-store.ts"
+import * as Health from "../lib/health.ts"
 import { checkQuota } from "../lib/cpa.ts"
 import { STATE } from "../lib/paths.ts"
 
@@ -76,37 +80,65 @@ function formatCost(cost: number): string | null {
 /** Default continuation sent when a turn is resumed after an interruption. */
 const RESUME_PROMPT = Runner.RESUME_PROMPT
 
+/**
+ * How far out a paused task is scheduled.
+ *
+ * Pausing is expressed as a very distant `nextAttemptAt` rather than a new
+ * status, so every existing rule — ordering, the due check, restart recovery —
+ * keeps working unchanged. "Continue" simply clears it.
+ */
+const PAUSE_MS = 10 * 365 * 24 * 60 * 60 * 1000
+
+/** Importance choices offered on a task card. */
+const IMPORTANCE_OPTIONS = [1, 2, 3, 4, 5].map((n) => ({
+  value: String(n),
+  label: `importance ${n}${n === 5 ? " (highest)" : n === 1 ? " (lowest)" : ""}`,
+}))
+
+/**
+ * Default prompt for the summary-model test.
+ *
+ * Shaped like the real summarising prompt — a transcript in, `TITLE:` and
+ * `SUMMARY:` out — because a model can be perfectly reachable and still be
+ * useless here by answering in prose. Testing with a generic "hello" would
+ * prove connectivity and nothing else.
+ */
+const PROBE_PROMPT =
+  "Reply with exactly two lines and nothing else:\n" +
+  "TITLE: an imperative title of at most 8 words\n" +
+  "SUMMARY: one sentence\n\n" +
+  "Transcript:\n" +
+  "User: the retry keeps firing on every dropped socket\n" +
+  "Assistant: added exponential backoff with jitter and an attempt cap"
+
+/** A summariser's reply is only useful if the parser can read a title out of it. */
+const ACCEPTS_SUMMARY = (reply: string) => /^\s*TITLE:/im.test(reply)
+
+/** A card control sends `action=<task id>` or `<field>=<task id>=<value>`. */
+function splitControl(input: string | undefined): { id: string; value: string } {
+  const raw = (input ?? "").trim()
+  if (!raw) throw new Error("no task specified")
+  const at = raw.indexOf("=")
+  return at < 0 ? { id: raw, value: "" } : { id: raw.slice(0, at), value: raw.slice(at + 1) }
+}
+
 export const TaskQueue: Plugin = async ({ client, project, directory }) => {
   await Registry.init()
 
-  /**
-   * Models offered for summarising, newest listing each time the panel opens.
-   *
-   * "none" is always first so the parser-only default is one click away, and
-   * the configured model is always present even if the provider is currently
-   * unreachable — a dropdown that silently drops the saved value would look
-   * like the setting had been lost.
-   */
-  async function summaryModelOptions(current: string) {
-    const options = [{ value: Summarize.NO_MODEL, label: "none — use the built-in parser" }]
-    const seen = new Set<string>()
+  /** Resolve the task a card control names, or fail loudly. */
+  async function requireTask(input: string | undefined): Promise<Tasks.Task> {
+    const { id } = splitControl(input)
+    const task = await Tasks.getTask(id)
+    if (!task) throw new Error(`unknown task: ${id}`)
+    return task
+  }
 
-    try {
-      const response = await client.config.providers()
-      for (const provider of (response.data?.providers ?? []) as any[]) {
-        for (const model of Object.values(provider?.models ?? {}) as any[]) {
-          const id = `${provider.id}/${model.id}`
-          if (seen.has(id)) continue
-          seen.add(id)
-          options.push({ value: id, label: `${provider.name ?? provider.id} · ${model.name ?? model.id}` })
-        }
-      }
-    } catch {
-      // Fall through to whatever is configured.
-    }
-
-    if (current && !seen.has(current)) options.push({ value: current, label: `${current} (not currently available)` })
-    return options
+  /** Resolve a control that carries both a task and a new value. */
+  async function parseControl(input: string | undefined): Promise<{ task: Tasks.Task; value: string }> {
+    const { id, value } = splitControl(input)
+    const task = await Tasks.getTask(id)
+    if (!task) throw new Error(`unknown task: ${id}`)
+    return { task, value }
   }
 
   const log = (message: string, level: Logs.Level = "info") => {
@@ -131,11 +163,15 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
 
     // Count existing auto-retries for this session so a persistently failing
     // endpoint cannot queue an unbounded chain of attempts.
-    const existing = (await Tasks.listTasks()).filter(
-      (task) => task.sessionID === sessionID && task.origin === "auto-retry",
-    )
-    const active = existing.find((task) => task.status === "pending" || task.status === "running")
-    if (active) return "retry already queued"
+    const all = await Tasks.listTasks()
+    const existing = all.filter((task) => task.sessionID === sessionID && task.origin === "auto-retry")
+
+    // Any live task for this session already represents it, whatever created
+    // it. Checking only auto-retries let a wrapped session collect a second,
+    // third task; they then disagreed about the same session's state, which is
+    // how one session showed as pending, running and done simultaneously.
+    const active = all.find((task) => task.sessionID === sessionID && !Tasks.TERMINAL.includes(task.status))
+    if (active) return `already tracked (${active.status})`
 
     const attempts = existing.reduce((max, task) => Math.max(max, task.attempts ?? 0), 0)
     if (attempts >= config.maxAttempts) return `attempt limit reached (${config.maxAttempts})`
@@ -219,16 +255,48 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
           max: 86400,
           description: "Wait after a rate-limit refusal when no reset time is known.",
         },
-        {
+        // Picker and its test button, shared with every other plugin that
+        // selects a model for a background job.
+        ...(await ModelPicker.fields({
+          client: client as any,
           key: "retry.summaryModel",
           label: "Summary model",
-          type: "select",
-          value: config.summaryModel,
-          options: await summaryModelOptions(config.summaryModel),
+          current: config.summaryModel,
+          noneLabel: "none — use the built-in parser",
           description:
             "Model used to title and summarise tasks. Leave as 'none' to use the built-in parser; " +
             "any model failure falls back to it anyway.",
-        },
+          action: "chat-summary-model",
+        })),
+        // ── fallback routes, one picker per slot ────────────────────────
+        //
+        // Each row selects from what the server actually offers, so a typo in
+        // a model id is impossible rather than merely unlikely. There is no
+        // parallel free-text field: two controls editing one value means the
+        // stale one silently overwrites whatever the other just set.
+        ...(await Promise.all(
+          // One slot past the end, so there is always an empty row to add into.
+          Array.from({ length: config.modelFallbacks.length + 1 }, async (_, index) => {
+            const current = config.modelFallbacks[index] ?? ""
+            return {
+              group: "Fallback routes",
+              expanded: config.modelFallbacks.length === 0,
+              key: `retry.modelFallbacks.${index}`,
+              label: index === 0 ? "First fallback" : `Fallback ${index + 1}`,
+              type: "select" as const,
+              value: current,
+              options: await ModelPicker.options(
+                client as any,
+                current,
+                index < config.modelFallbacks.length ? "(remove this fallback)" : "(none — add a fallback)",
+              ),
+              description:
+                index < config.modelFallbacks.length
+                  ? "Tried when every earlier route fails. Select the blank entry to remove it."
+                  : "Adds another route to the end of the list.",
+            }
+          }),
+        )),
         {
           key: "retry.enabled",
           label: "Auto-retry",
@@ -275,6 +343,30 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
     async update(key, value) {
       if (!key.startsWith("retry.")) throw new Error(`unknown setting: ${key}`)
       const field = key.slice(6) as keyof RetryConfig.RetryConfig
+      const config = await RetryConfig.load()
+
+      // An indexed fallback (`modelFallbacks.0`) is a position within a setting
+      // rather than a setting of its own, so it is handled before the check
+      // that every key names a known field.
+      const slot = /^modelFallbacks\.(\d+)$/.exec(field)
+      if (slot) {
+        const index = Number(slot[1])
+        const model = String(value ?? "").trim()
+        if (model && !model.includes("/")) {
+          throw new Error("a fallback must be 'providerID/modelID'")
+        }
+
+        // Selecting the blank entry removes that position rather than leaving a
+        // hole, so the order stays meaningful and the "add" row is always last.
+        const next = [...config.modelFallbacks]
+        if (!model) next.splice(index, 1)
+        else if (index < next.length) next[index] = model
+        else next.push(model)
+
+        await RetryConfig.save({ modelFallbacks: [...new Set(next.filter(Boolean))] })
+        return
+      }
+
       if (!(field in RetryConfig.DEFAULTS)) throw new Error(`unknown setting: ${key}`)
 
       if (field === "enabled" || field === "requireQuota" || field === "autoWrapSessions" || field === "resumeOnRestart") {
@@ -312,6 +404,7 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
       const tokens = live.reduce((sum, task) => sum + (task.stats?.tokens ?? 0), 0)
       const cost = live.reduce((sum, task) => sum + (task.stats?.cost ?? 0), 0)
       const totals = { tokens, costLabel: formatCost(cost) }
+      const problems = Health.summary()
 
       return [
         {
@@ -331,6 +424,9 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
         { label: "scheduler", value: Runner.isRunning() ? "on" : "off", tone: Runner.isRunning() ? "ok" : "warn" },
         ...(totals.tokens > 0 ? [{ label: "tokens", value: formatTokens(totals.tokens), tone: "muted" as const }] : []),
         ...(totals.costLabel ? [{ label: "cost", value: totals.costLabel, tone: "muted" as const }] : []),
+        // One line saying whether anything is wrong, so the status row answers
+        // "is it stuck, or just busy?" without opening the Info tab.
+        ...(problems ? [{ label: "problem", value: problems, tone: "error" as const }] : []),
       ]
     },
     async panels() {
@@ -343,7 +439,60 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
       const config = await RetryConfig.load()
       const now = Date.now()
 
+      // Offered on every card's model picker. "" means "whatever the session
+      // already uses", which is the right default for an adopted session.
+      const models = await ModelPicker.options(client as any, "", "(session default)")
+      const modelOptions = [
+        { value: "", label: "(session default)" },
+        ...models.filter((option) => option.value !== ModelPicker.NONE),
+      ]
+
+      const conditions = Health.current(now)
+
       return [
+        // What is currently wrong comes first: when a queue has stalled this is
+        // the question being asked, and it should not need hunting for.
+        ...(conditions.length > 0
+          ? [
+              {
+                key: "health",
+                title: "Current problems",
+                description: "Conditions stop being listed once they stop recurring.",
+                items: conditions.map((condition) => {
+                  const countdown = Health.formatCountdown(condition.retryAt, now)
+                  return {
+                    title: condition.detail,
+                    subtitle:
+                      condition.count > 1
+                        ? `${condition.source} · seen ${condition.count} times since ${new Date(condition.firstAt).toLocaleTimeString()}`
+                        : condition.source,
+                    tone: condition.severity === "error" ? ("error" as const) : ("warn" as const),
+                    fields: [
+                      { label: "kind", value: condition.kind },
+                      { label: "subject", value: condition.subject },
+                      ...(countdown
+                        ? [
+                            {
+                              label: "retries",
+                              value: `${countdown} (${new Date(condition.retryAt!).toLocaleTimeString()})`,
+                              tone: "warn" as const,
+                            },
+                          ]
+                        : []),
+                    ],
+                  }
+                }),
+              },
+            ]
+          : []),
+        // Shown above the queue while a test result is fresh: it is the answer
+        // to a question just asked, so it belongs where the eye already is.
+        ...ModelPicker.panel({
+          pluginID: "task-queue",
+          title: "Summary model test",
+          action: "test-summary-model",
+          prompt: PROBE_PROMPT,
+        }),
         {
           key: "queue",
           title: "Queue",
@@ -384,8 +533,17 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
                 ...(stats && stats.messages > 0 ? [{ label: "messages", value: String(stats.messages) }] : []),
                 { label: "importance", value: String(task.importance) },
                 ...(task.attempts > 0 ? [{ label: "attempt", value: String(task.attempts), tone: "warn" as const }] : []),
+                // A rate-limited task is waiting for a specific moment, so the
+                // clock time is shown next to the countdown: "4m 10s" alone
+                // does not say whether that is worth waiting for.
                 ...(waiting
-                  ? [{ label: "runs in", value: formatIn(at! - now), tone: "warn" as const }]
+                  ? [
+                      {
+                        label: task.outcome === "rate-limit" ? "limit resets" : "runs in",
+                        value: `${formatIn(at! - now)} (${new Date(at!).toLocaleTimeString()})`,
+                        tone: "warn" as const,
+                      },
+                    ]
                   : []),
                 ...(task.outcome && task.outcome !== "completed"
                   ? [{ label: "last", value: task.outcome, tone: task.outcome === "rate-limit" ? "warn" as const : "error" as const }]
@@ -394,12 +552,87 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
                 ...(task.model ? [{ label: "model", value: task.model }] : []),
                 ...(task.error ? [{ label: "error", value: task.error.slice(0, 120), tone: "error" as const }] : []),
               ],
+              // Acting on a task belongs where the task is read. Which control
+              // applies depends on what the task is doing: a finished task can
+              // only be re-run, and a paused one only continued.
+              controls: [
+                ...(task.status === "running"
+                  ? [{ type: "button" as const, action: "task-pause", label: "Pause", input: task.id }]
+                  : waiting
+                    ? [{ type: "button" as const, action: "task-continue", label: "Continue", input: task.id }]
+                    : [{ type: "button" as const, action: "task-start", label: "Start", input: task.id }]),
+                {
+                  type: "select" as const,
+                  action: "task-importance",
+                  label: "Importance",
+                  input: task.id,
+                  value: String(task.importance),
+                  options: IMPORTANCE_OPTIONS,
+                },
+                {
+                  type: "select" as const,
+                  action: "task-model",
+                  label: "Model",
+                  input: task.id,
+                  value: task.model ?? "",
+                  options: modelOptions,
+                },
+                {
+                  type: "button" as const,
+                  action: "task-delete",
+                  label: "Delete",
+                  input: task.id,
+                  danger: true,
+                  confirm: `Delete "${task.title}" from the queue?`,
+                },
+              ],
             }
           }),
         },
       ]
     },
     actions: {
+      /** One message in the picker's scratch conversation; nothing is saved. */
+      "chat-summary-model": {
+        label: "Send to the summary model",
+        async run(input) {
+          const config = await RetryConfig.load()
+          if (config.summaryModel === Summarize.NO_MODEL) {
+            throw new Error("no summary model selected — the built-in parser needs no test")
+          }
+          const result = await ModelPicker.say({
+            pluginID: "task-queue",
+            client: client as any,
+            model: config.summaryModel,
+            message: String(input ?? ""),
+          })
+          return result.ok ? `replied in ${(result.elapsedMs / 1000).toFixed(1)}s` : (result.error ?? "failed")
+        },
+      },
+
+      "test-summary-model": {
+        label: "Test summary model",
+        async run(input) {
+          const config = await RetryConfig.load()
+          if (config.summaryModel === Summarize.NO_MODEL) {
+            throw new Error("no summary model selected — the built-in parser needs no test")
+          }
+
+          const { probe, message } = await ModelPicker.test({
+            pluginID: "task-queue",
+            client: client as any,
+            model: config.summaryModel,
+            prompt: String(input ?? "").trim() || PROBE_PROMPT,
+            directory: directory ?? null,
+            accepts: ACCEPTS_SUMMARY,
+            expectation: "not in the expected TITLE/SUMMARY shape",
+          })
+
+          if (!probe.ok) log(`summary model test failed for ${probe.model}: ${probe.error}`, "warn")
+          else log(`summary model test: ${probe.model} replied in ${probe.elapsedMs}ms, usable=${probe.usable}`)
+          return message
+        },
+      },
       run: {
         label: "Fill free slots",
         async run() {
@@ -428,6 +661,84 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
         async run() {
           const removed = await Tasks.clearTerminal()
           return removed === 0 ? "nothing to clear" : `cleared ${removed} finished task(s)`
+        },
+      },
+      purge: {
+        label: "Purge orphans",
+        async run() {
+          // A task whose session is not in the database can never run again:
+          // nothing will ever report it busy or idle.
+          const removed = await Tasks.purge((task) => {
+            const info = Sessions.get(task.sessionID)
+            return !info || Scratch.isScratchTitle(info.title) || !!info.parentID
+          })
+          return removed === 0 ? "no orphaned tasks" : `purged ${removed} orphaned task(s)`
+        },
+      },
+
+      /* ── per-card controls ──────────────────────────────────────────── */
+
+      "task-start": {
+        label: "Start",
+        async run(input) {
+          const task = await requireTask(input)
+          if (task.status === "running") return `${task.title} is already running`
+          // Clearing the backoff is the point of starting by hand: the user is
+          // overriding whatever wait the scheduler had decided on.
+          await Tasks.update(task.id, { status: "pending", nextAttemptAt: null, error: null })
+          const { started } = await Runner.tick()
+          return started > 0 ? `started ${task.title}` : `${task.title} queued (no free slot)`
+        },
+      },
+      "task-pause": {
+        label: "Pause",
+        async run(input) {
+          const task = await requireTask(input)
+          if (Tasks.TERMINAL.includes(task.status)) return `${task.title} has already finished`
+          // Far enough out that no tick will pick it up; "continue" clears it.
+          await Tasks.update(task.id, {
+            status: "pending",
+            nextAttemptAt: new Date(Date.now() + PAUSE_MS).toISOString(),
+            error: null,
+          })
+          return `paused ${task.title}`
+        },
+      },
+      "task-continue": {
+        label: "Continue",
+        async run(input) {
+          const task = await requireTask(input)
+          await Tasks.update(task.id, { status: "pending", nextAttemptAt: null, error: null })
+          const { started } = await Runner.tick()
+          return started > 0 ? `resumed ${task.title}` : `${task.title} is due now (no free slot)`
+        },
+      },
+      "task-model": {
+        label: "Model",
+        async run(input) {
+          const { task, value } = await parseControl(input)
+          await Tasks.update(task.id, { model: value || null })
+          return value ? `${task.title} → ${value}` : `${task.title} uses the session default`
+        },
+      },
+      "task-importance": {
+        label: "Importance",
+        async run(input) {
+          const { task, value } = await parseControl(input)
+          const importance = Number(value)
+          if (!Number.isInteger(importance) || importance < 1 || importance > 5) {
+            throw new Error("importance must be an integer 1–5")
+          }
+          await Tasks.update(task.id, { importance })
+          return `${task.title} → importance ${importance}`
+        },
+      },
+      "task-delete": {
+        label: "Delete",
+        async run(input) {
+          const task = await requireTask(input)
+          await Tasks.deleteTask(task.id)
+          return `deleted ${task.title}`
         },
       },
     },
@@ -465,7 +776,7 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
         // The queue's own scratch sessions must never be wrapped: wrapping one
         // queues a task, whose summary opens another scratch session, which
         // wraps again — an unbounded loop that floods the queue.
-        if (info.title === Summarize.SCRATCH_TITLE) return
+        if (Scratch.isScratchTitle(info.title)) return
 
         const { task, created } = await Tasks.wrapSession({
           sessionID: info.id,
