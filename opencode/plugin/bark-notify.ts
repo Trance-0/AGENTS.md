@@ -11,14 +11,114 @@ import type { Plugin } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
 import * as Bark from "../lib/bark.ts"
 import * as Registry from "../lib/registry.ts"
+import * as Scratch from "../lib/scratch.ts"
+import * as Logs from "../lib/logs.ts"
 import { STATE } from "../lib/paths.ts"
+
+const PLUGIN_ID = "bark-notify"
+
+/** Events worth a log line even when there is nobody to notify. */
+const LIFECYCLE = new Set(["session.idle", "session.error", "permission.updated"])
+
+/** Shared across instances, so the startup line is written once per process. */
+const LOADED_KEY = Symbol.for("@dsh/opencode-bark-notify-loaded")
+
+/**
+ * Title of the throwaway session a compact summary runs in.
+ *
+ * Registered centrally so the task queue does not adopt it and session-rename
+ * does not retitle it — see `scratch.ts` for what happens otherwise.
+ */
+const SCRATCH_TITLE = Scratch.register("bark-notify: compacting")
+
+/** A summary must never hold up a notification. */
+const SUMMARY_TIMEOUT_MS = 15_000
 
 export const BarkNotify: Plugin = async ({ client }) => {
   const state = await Bark.loadState()
   await Registry.init()
 
-  const log = (message: string) => {
-    client.app.log({ body: { service: "bark-notify", level: "info", message } }).catch(() => {})
+  const log = (message: string, level: Logs.Level = "info") => {
+    // Both sinks: opencode's own stream cannot be read back, so the dashboard's
+    // Logging tab needs its own copy or it stays empty.
+    Logs.log(PLUGIN_ID, message, level)
+    client.app.log({ body: { service: PLUGIN_ID, level, message } }).catch(() => {})
+  }
+
+  /**
+   * Models offered for compacting, read from opencode's own provider list.
+   *
+   * The configured model is always present even when its provider is currently
+   * unreachable, so a dropdown never silently discards a saved value.
+   */
+  async function summaryModelOptions(current: string) {
+    const options = [{ value: "", label: "(none — truncate instead)" }]
+    const seen = new Set<string>()
+
+    try {
+      const response = await client.config.providers()
+      for (const provider of ((response as any)?.data?.providers ?? []) as any[]) {
+        for (const model of Object.values(provider?.models ?? {}) as any[]) {
+          const id = `${provider.id}/${model.id}`
+          if (seen.has(id)) continue
+          seen.add(id)
+          options.push({ value: id, label: `${provider.name ?? provider.id} · ${model.name ?? model.id}` })
+        }
+      }
+    } catch {
+      // Fall through to whatever is configured.
+    }
+
+    if (current && !seen.has(current)) options.push({ value: current, label: `${current} (not currently available)` })
+    return options
+  }
+
+  /**
+   * Compact a rendered body with a model, in a scratch session deleted after.
+   *
+   * Returning null on any failure is deliberate: `parseBody` then falls back to
+   * truncation, so a notification is never lost to a summariser problem.
+   */
+  const summarizer: Bark.Summarizer = async ({ text, parsing, kind }) => {
+    const model = parsing.model || (await Bark.loadState()).defaultModel
+    const [providerID, ...rest] = model.split("/")
+    const modelID = rest.join("/")
+    if (!providerID || !modelID) return null
+
+    let sessionID: string | null = null
+    try {
+      const created = await client.session.create({ body: { title: SCRATCH_TITLE } } as any)
+      sessionID = (created as any)?.data?.id ?? null
+      if (!sessionID) return null
+
+      const instruction =
+        `Compress this ${kind} notification to at most ${parsing.maxChars} characters. ` +
+        "Reply with the compressed text only: no preamble, quotes, or Markdown. " +
+        "Keep concrete identifiers (file paths, error codes, commands) over prose." +
+        (parsing.prompt ? `\n\nAlso: ${parsing.prompt}` : "") +
+        `\n\n${text}`
+
+      const response = await Promise.race([
+        client.session.prompt({
+          path: { id: sessionID },
+          body: { model: { providerID, modelID }, parts: [{ type: "text", text: instruction }] },
+        } as any),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), SUMMARY_TIMEOUT_MS)),
+      ])
+      if (!response || (response as any).error) return null
+
+      const parts = (response as any)?.data?.parts ?? []
+      const reply = (Array.isArray(parts) ? parts : [])
+        .filter((part: any) => part?.type === "text" && typeof part.text === "string")
+        .map((part: any) => part.text)
+        .join("\n")
+        .trim()
+      return reply === "" ? null : reply
+    } catch {
+      return null
+    } finally {
+      if (sessionID) await client.session.delete({ path: { id: sessionID } } as any).catch(() => {})
+    }
   }
 
   /** Collapse whitespace and truncate, so a push stays readable on a lock screen. */
@@ -106,14 +206,17 @@ export const BarkNotify: Plugin = async ({ client }) => {
     title: "Bark Notify",
     description: "Push opencode lifecycle events to your phone via Bark.",
     /**
-     * Settings are grouped per notification type: the toggle, then the
-     * message templates, then the Bark presentation. Subscriber-specific
-     * overrides are edited with `bark_profile`, since the dashboard renders a
-     * flat field list and a per-device matrix would not fit it.
+     * One collapsed section per notification type, then one per subscriber.
+     *
+     * Six types times eleven fields is unreadable as a flat list, so each type
+     * owns a `group` the dashboard renders collapsed. Subscribers get the same
+     * treatment, which is what lets the device list be managed here — added,
+     * renamed, muted per type, removed — instead of only through `bark_device`.
      */
     async settings() {
       const fresh = await Bark.loadState()
       const placeholders = Bark.TEMPLATE_KEYS.map((key) => `<${key}>`).join(", ")
+      const modelOptions = await summaryModelOptions(fresh.defaultModel)
 
       return [
         {
@@ -127,62 +230,134 @@ export const BarkNotify: Plugin = async ({ client }) => {
           ],
           description: "In away mode notifications are queued instead of pushed.",
         },
+        {
+          key: "defaultModel",
+          label: "Default summarizer model",
+          type: "select" as const,
+          value: fresh.defaultModel,
+          options: modelOptions,
+          description: "Used by any type set to LLM compact that has no model of its own.",
+        },
+
+        // ── one collapsed section per notification type ──────────────────
         ...Bark.TYPE_IDS.flatMap((id) => {
           const type = fresh.types[id]
+          const group = `${id} notification`
+          const modeKey = `types.${id}.parsing.mode`
           return [
             {
+              group,
               key: `types.${id}.enabled`,
-              label: `${id} — enabled`,
+              label: "Enabled",
               type: "boolean" as const,
               value: type.enabled !== false,
               description: `Send ${id} notifications.`,
             },
             {
+              group,
               key: `types.${id}.title`,
-              label: `${id} — title`,
+              label: "Title template",
               type: "string" as const,
               value: type.title,
               placeholder: "✅ <session_title>",
-              description: `Title template. Placeholders: ${placeholders}`,
+              description: `Placeholders: ${placeholders}`,
             },
             {
+              group,
               key: `types.${id}.body`,
-              label: `${id} — body`,
+              label: "Body template",
               type: "string" as const,
               value: type.body,
+              multiline: true,
               placeholder: "<complete_summary>",
-              description: "Body template. An empty placeholder drops its line.",
+              description: "An empty known placeholder drops its line.",
             },
             {
+              group,
+              key: modeKey,
+              label: "Info parsing",
+              type: "select" as const,
+              value: type.parsing.mode,
+              options: [
+                { value: "template", label: "template — render the script only" },
+                { value: "llm", label: "LLM compact — summarize to fit" },
+              ],
+              description: "How the body text is produced before it is pushed.",
+            },
+            {
+              group,
+              key: `types.${id}.parsing.stripMarkdown`,
+              label: "Remove Markdown",
+              type: "boolean" as const,
+              value: type.parsing.stripMarkdown,
+              description: "Strip Markdown syntax; Bark renders none of it.",
+            },
+            {
+              group,
+              key: `types.${id}.parsing.maxChars`,
+              label: "Max characters",
+              type: "number" as const,
+              value: type.parsing.maxChars,
+              min: 20,
+              max: 2000,
+              description: "Budget for the body. Longer text is summarized, or truncated if that fails.",
+            },
+            {
+              group,
+              key: `types.${id}.parsing.model`,
+              label: "Summarizer model",
+              type: "select" as const,
+              value: type.parsing.model,
+              options: [{ value: "", label: "(use the default model)" }, ...modelOptions.slice(1)],
+              // Only meaningful in llm mode, so it stays hidden otherwise.
+              when: { key: modeKey, equals: ["llm"] },
+              description: "Overrides the default model for this type only.",
+            },
+            {
+              group,
+              key: `types.${id}.parsing.prompt`,
+              label: "Summarizer prompt",
+              type: "string" as const,
+              value: type.parsing.prompt,
+              multiline: true,
+              when: { key: modeKey, equals: ["llm"] },
+              placeholder: "Keep the file paths and the error code.",
+              description: "Extra instruction appended to the summarizer's prompt.",
+            },
+            {
+              group,
               key: `types.${id}.level`,
-              label: `${id} — level`,
+              label: "Interruption level",
               type: "select" as const,
               value: type.level,
               options: Bark.LEVELS.map((level) => ({
                 value: level,
                 label: level === "passive" ? "passive — silent" : level,
               })),
-              description: "Bark interruption level. passive pushes without a sound or banner.",
+              description: "passive pushes without a sound or banner.",
             },
             {
+              group,
               key: `types.${id}.sound`,
-              label: `${id} — sound`,
+              label: "Sound",
               type: "string" as const,
               value: type.sound,
               placeholder: "(app default)",
               description: "Bark sound name; empty uses the app default.",
             },
             {
+              group,
               key: `types.${id}.icon`,
-              label: `${id} — icon`,
+              label: "Icon",
               type: "string" as const,
               value: type.icon,
               placeholder: "https://…/icon.png",
               description: "HTTPS URL of a custom push icon.",
             },
             {
+              group,
               key: `types.${id}.group`,
-              label: `${id} — group`,
+              label: "Bark group",
               type: "string" as const,
               value: type.group,
               placeholder: "opencode",
@@ -190,6 +365,12 @@ export const BarkNotify: Plugin = async ({ client }) => {
             },
           ]
         }),
+
+        // Subscribers are managed entirely on the Info tab's Subscribers
+        // table — added, renamed, tested, removed, and muted per type — where
+        // every device and every switch is visible at once. A collapsed
+        // section per device hid exactly the comparison the table makes
+        // trivial: which devices receive a given notification.
       ]
     },
     async update(key, value) {
@@ -201,7 +382,40 @@ export const BarkNotify: Plugin = async ({ client }) => {
         fresh.mode = value
         await Bark.saveState(fresh)
         Object.assign(state, fresh)
-        if (value === "work" && wasAway) await Bark.flushQueue(fresh)
+        if (value === "work" && wasAway) await Bark.flushQueue(fresh, summarizer)
+        return
+      }
+
+      if (key === "defaultModel") {
+        fresh.defaultModel = String(value ?? "")
+        await Bark.saveState(fresh)
+        Object.assign(state, fresh)
+        return
+      }
+
+      // Parsing lives one level deeper than the presentation fields, so it is
+      // matched first — `types.error.parsing.mode` would otherwise be read as
+      // a presentation field called "parsing".
+      const parsing = /^types\.([^.]+)\.parsing\.([^.]+)$/.exec(key)
+      if (parsing) {
+        const id = parsing[1] as Bark.TypeID
+        const field = parsing[2]
+        if (!Bark.TYPE_IDS.includes(id)) throw new Error(`unknown type: ${id}`)
+        const target = fresh.types[id].parsing
+
+        if (field === "mode") {
+          if (!Bark.PARSE_MODES.includes(value as Bark.ParseMode)) throw new Error(`unknown parse mode: ${String(value)}`)
+          target.mode = value as Bark.ParseMode
+        } else if (field === "stripMarkdown") target.stripMarkdown = value === true
+        else if (field === "maxChars") {
+          const chars = Number(value)
+          if (!Number.isFinite(chars)) throw new Error("maxChars must be a number")
+          target.maxChars = Math.min(2000, Math.max(20, Math.round(chars)))
+        } else if (field === "model" || field === "prompt") target[field] = String(value ?? "")
+        else throw new Error(`unknown parsing field: ${field}`)
+
+        await Bark.saveState(fresh)
+        Object.assign(state, fresh)
         return
       }
 
@@ -219,6 +433,46 @@ export const BarkNotify: Plugin = async ({ client }) => {
         } else if (field === "title" || field === "body" || field === "sound" || field === "icon" || field === "group") {
           type[field] = String(value ?? "")
         } else throw new Error(`unknown field: ${field}`)
+
+        await Bark.saveState(fresh)
+        Object.assign(state, fresh)
+        return
+      }
+
+      // A device key may contain dots, so the type suffix is matched from the
+      // end rather than splitting the key on every separator.
+      const perType = /^subscribers\.(.+)\.types\.([^.]+)$/.exec(key)
+      if (perType) {
+        const subscriber = fresh.subscribers.find((entry) => entry.key === perType[1])
+        if (!subscriber) throw new Error("subscriber not found")
+        const id = perType[2] as Bark.TypeID
+        if (!Bark.TYPE_IDS.includes(id)) throw new Error(`unknown type: ${id}`)
+
+        subscriber.profiles ??= {}
+        const profile = (subscriber.profiles[id] ??= {})
+        if (value === true) {
+          // Inheriting is the default state, so an enabled type drops the
+          // override rather than storing a redundant `enabled: true`.
+          delete profile.enabled
+          if (Object.keys(profile).length === 0) delete subscriber.profiles[id]
+        } else profile.enabled = false
+
+        await Bark.saveState(fresh)
+        Object.assign(state, fresh)
+        return
+      }
+
+      const subscriberField = /^subscribers\.(.+)\.(enabled|label)$/.exec(key)
+      if (subscriberField) {
+        const subscriber = fresh.subscribers.find((entry) => entry.key === subscriberField[1])
+        if (!subscriber) throw new Error("subscriber not found")
+
+        if (subscriberField[2] === "enabled") subscriber.enabled = value === true
+        else {
+          const label = String(value ?? "").trim()
+          if (!label) throw new Error("label cannot be empty")
+          subscriber.label = label
+        }
 
         await Bark.saveState(fresh)
         Object.assign(state, fresh)
@@ -267,17 +521,77 @@ export const BarkNotify: Plugin = async ({ client }) => {
         {
           key: "subscribers",
           title: "Subscribers",
-          description: "Device keys are never shown. Per-type overrides are edited with the bark_profile tool.",
-          empty: "No subscribers yet — add one with the bark_device tool.",
+          // A table rather than cards: every device carries the same six
+          // switches, and the only useful question — which devices get
+          // `approval`? — is answered by reading one column down the page.
+          type: "table" as const,
+          columns: [
+            { label: "key" },
+            { label: "on" },
+            ...Bark.TYPE_IDS.map((id) => ({ label: id })),
+          ],
+          description:
+            "One row per device. The type columns mute a notification on that device alone; " +
+            "device keys are never shown, only the last four characters.",
+          empty: "No subscribers yet — use Add subscriber above.",
+          // Adding is not an operation on any row, so it sits on the header.
+          action: "add-subscriber",
           items: fresh.subscribers.map((subscriber) => {
             const overrides = Object.keys(subscriber.profiles ?? {})
+            const muted = overrides.filter((id) => subscriber.profiles?.[id as Bark.TypeID]?.enabled === false)
+
             return {
               title: subscriber.label,
-              subtitle: overrides.length ? `overrides: ${overrides.join(", ")}` : "inherits every type default",
+              subtitle: muted.length ? `muted: ${muted.join(", ")}` : "inherits every type default",
               tone: subscriber.enabled ? ("ok" as const) : ("muted" as const),
               fields: [
-                { label: "enabled", value: subscriber.enabled ? "yes" : "no" },
-                { label: "muted types", value: String(overrides.filter((id) => subscriber.profiles[id as Bark.TypeID]?.enabled === false).length) },
+                // Enough of the key to identify the device, never enough to push to it.
+                { label: "key", value: "…" + subscriber.key.slice(-4) },
+              ],
+              controls: [
+                // Delivery for the whole device, then one switch per type. Each
+                // names the column it belongs in, so the table lays them out
+                // under their headings instead of as a row of buttons.
+                {
+                  type: "toggle" as const,
+                  action: "set-subscriber-enabled",
+                  label: `Deliver to ${subscriber.label}`,
+                  column: "on",
+                  input: subscriber.key,
+                  value: subscriber.enabled,
+                },
+                ...Bark.TYPE_IDS.map((id) => ({
+                  type: "toggle" as const,
+                  action: "set-subscriber-type",
+                  label: `${subscriber.label} receives ${id}`,
+                  column: id,
+                  input: `${subscriber.key}:${id}`,
+                  value: subscriber.profiles?.[id]?.enabled !== false,
+                })),
+                {
+                  type: "prompt" as const,
+                  action: "rename-subscriber",
+                  label: "Rename",
+                  // The action needs both the device and its new name, so the
+                  // key is carried in `input` and the name is appended.
+                  input: subscriber.key,
+                  prompt: `New name for ${subscriber.label}:`,
+                  value: subscriber.label,
+                },
+                {
+                  type: "button" as const,
+                  action: "test-subscriber",
+                  label: "Test",
+                  input: subscriber.key,
+                },
+                {
+                  type: "button" as const,
+                  action: "remove-subscriber",
+                  label: "Remove",
+                  input: subscriber.key,
+                  danger: true,
+                  confirm: `Remove ${subscriber.label}? Its device key is deleted from the configuration.`,
+                },
               ],
             }
           }),
@@ -296,16 +610,162 @@ export const BarkNotify: Plugin = async ({ client }) => {
 
           const lines: string[] = []
           for (const id of enabled) {
-            const results = await Bark.deliverEvent(fresh, id, sampleContext(id))
+            const results = await Bark.deliverEvent(fresh, id, sampleContext(id), summarizer)
             lines.push(`${id}: ${Bark.summarize(results)}`)
           }
           return lines.join("; ")
         },
       },
+      "add-subscriber": {
+        label: "Add subscriber",
+        async run(input) {
+          const raw = String(input ?? "").trim()
+          if (!raw) throw new Error("device key cannot be empty")
+          // The Bark app shows a full URL; accept it and keep only the key.
+          const key = raw.replace(/^https?:\/\/[^/]+\//, "").replace(/\/.*$/, "").trim()
+          if (!key) throw new Error("device key cannot be empty")
+
+          const fresh = await Bark.loadState()
+          if (fresh.subscribers.some((entry) => entry.key === key)) throw new Error("that device is already added")
+
+          fresh.subscribers.push({ key, label: `设备 ${key.slice(0, 6)}`, enabled: true, profiles: {} })
+          await Bark.saveState(fresh)
+          Object.assign(state, fresh)
+          log(`added subscriber ${key.slice(0, 6)}…`)
+          return `已添加设备 ${key.slice(0, 6)}…`
+        },
+      },
+      "remove-subscriber": {
+        label: "Remove subscriber",
+        // Reached from the subscriber's own row, which supplies the key. The
+        // Settings button row passes no argument, so a copy there is dead.
+        hidden: true,
+        async run(input) {
+          const key = String(input ?? "").trim()
+          const fresh = await Bark.loadState()
+          const before = fresh.subscribers.length
+          fresh.subscribers = fresh.subscribers.filter((entry) => entry.key !== key)
+          if (fresh.subscribers.length === before) throw new Error("subscriber not found")
+
+          await Bark.saveState(fresh)
+          Object.assign(state, fresh)
+          log(`removed subscriber ${key.slice(0, 6)}…`)
+          return `已删除设备 ${key.slice(0, 6)}…`
+        },
+      },
+      "set-subscriber-enabled": {
+        label: "Deliver to a subscriber",
+        hidden: true,
+        /**
+         * A table toggle sends `<key>=<true|false>`.
+         *
+         * The requested state is sent rather than toggled here, so two rapid
+         * clicks cannot leave the switch and the config disagreeing about
+         * which one won.
+         */
+        async run(input) {
+          const raw = String(input ?? "")
+          const split = raw.lastIndexOf("=")
+          if (split < 0) throw new Error("expected <device key>=<true|false>")
+
+          const key = raw.slice(0, split).trim()
+          const enabled = raw.slice(split + 1).trim() === "true"
+
+          const fresh = await Bark.loadState()
+          const subscriber = fresh.subscribers.find((entry) => entry.key === key)
+          if (!subscriber) throw new Error("subscriber not found")
+
+          subscriber.enabled = enabled
+          await Bark.saveState(fresh)
+          Object.assign(state, fresh)
+          log(`${enabled ? "enabled" : "muted"} subscriber ${subscriber.label}`)
+          return enabled ? `已启用 ${subscriber.label}` : `已静音 ${subscriber.label}`
+        },
+      },
+      "set-subscriber-type": {
+        label: "Mute one type on one subscriber",
+        hidden: true,
+        /** A column toggle sends `<key>:<type>=<true|false>`. */
+        async run(input) {
+          const raw = String(input ?? "")
+          const split = raw.lastIndexOf("=")
+          if (split < 0) throw new Error("expected <device key>:<type>=<true|false>")
+
+          const target = raw.slice(0, split)
+          const enabled = raw.slice(split + 1).trim() === "true"
+          // A device key may contain ':', so the type is taken from the end.
+          const colon = target.lastIndexOf(":")
+          if (colon < 0) throw new Error("expected <device key>:<type>")
+
+          const key = target.slice(0, colon).trim()
+          const id = target.slice(colon + 1).trim() as Bark.TypeID
+          if (!Bark.TYPE_IDS.includes(id)) throw new Error(`unknown type: ${id}`)
+
+          const fresh = await Bark.loadState()
+          const subscriber = fresh.subscribers.find((entry) => entry.key === key)
+          if (!subscriber) throw new Error("subscriber not found")
+
+          subscriber.profiles ??= {}
+          const profile = (subscriber.profiles[id] ??= {})
+          if (enabled) delete profile.enabled
+          else profile.enabled = false
+          // An override that says nothing is noise in the config file.
+          if (Object.keys(profile).length === 0) delete subscriber.profiles[id]
+
+          await Bark.saveState(fresh)
+          Object.assign(state, fresh)
+          return `${subscriber.label}: ${id} ${enabled ? "启用" : "静音"}`
+        },
+      },
+      "rename-subscriber": {
+        label: "Rename subscriber",
+        hidden: true,
+        /**
+         * A row control carries its device in `input` and appends the value the
+         * prompt collected, as `<key>=<label>`. A device key never contains
+         * `=`, so the first one separates the two.
+         */
+        async run(input) {
+          const raw = String(input ?? "")
+          const split = raw.indexOf("=")
+          if (split < 0) throw new Error("rename needs a device key and a name")
+
+          const key = raw.slice(0, split).trim()
+          const label = raw.slice(split + 1).trim()
+          if (!label) throw new Error("name cannot be empty")
+
+          const fresh = await Bark.loadState()
+          const subscriber = fresh.subscribers.find((entry) => entry.key === key)
+          if (!subscriber) throw new Error("subscriber not found")
+
+          const previous = subscriber.label
+          subscriber.label = label
+          await Bark.saveState(fresh)
+          Object.assign(state, fresh)
+          log(`renamed subscriber "${previous}" → "${label}"`)
+          return `已重命名为 ${label}`
+        },
+      },
+      "test-subscriber": {
+        label: "Send a test push to one subscriber",
+        hidden: true,
+        async run(input) {
+          const key = String(input ?? "").trim()
+          const fresh = await Bark.loadState()
+          const subscriber = fresh.subscribers.find((entry) => entry.key === key)
+          if (!subscriber) throw new Error("subscriber not found")
+
+          // Deliver to this device alone, so a test proves one phone works
+          // rather than pushing to every device to check one of them.
+          const only: Bark.State = { ...fresh, subscribers: [{ ...subscriber, enabled: true }] }
+          const results = await Bark.deliverEvent(only, "taskDone", sampleContext("taskDone"), summarizer)
+          return `${subscriber.label}: ${Bark.summarize(results)}`
+        },
+      },
       flush: {
         label: "Flush queue",
         async run() {
-          const flushed = await Bark.flushQueue(await Bark.loadState())
+          const flushed = await Bark.flushQueue(await Bark.loadState(), summarizer)
           return flushed.length === 0 ? "没有待发通知" : `已补发 ${flushed.length} 条通知`
         },
       },
@@ -329,29 +789,57 @@ export const BarkNotify: Plugin = async ({ client }) => {
     }
   }
 
+  // Announce once per process, not once per project instance, or 40+ copies of
+  // the same line bury everything else.
+  if (!(globalThis as Record<symbol, unknown>)[LOADED_KEY]) {
+    ;(globalThis as Record<symbol, unknown>)[LOADED_KEY] = true
+    const enabled = Bark.TYPE_IDS.filter((id) => state.types[id]?.enabled !== false)
+    log(
+      `loaded — ${state.subscribers.length} subscriber(s), ` +
+        `${enabled.length}/${Bark.TYPE_IDS.length} types enabled, mode=${state.mode}`,
+    )
+    if (state.subscribers.length === 0) log("no subscribers configured — nothing will be pushed", "warn")
+  }
+
   return {
     /** Map opencode lifecycle events onto Bark notification types. */
     event: async ({ event }) => {
       // opencode cannot unload a plugin, so a disabled plugin stays loaded and
       // simply stops acting. This is what makes the dashboard toggle immediate.
-      if (!Registry.isEnabled("bark-notify")) return
-      if (state.subscribers.length === 0) return
+      if (!Registry.isEnabled(PLUGIN_ID)) return
+
+      const properties = (event as any).properties ?? {}
+
+      // Logged before the subscriber check, so the tab shows the lifecycle
+      // even on a machine with no devices configured — "nothing happened" and
+      // "nothing could happen" look identical otherwise.
+      if (event.type === "session.created" || event.type === "session.updated") {
+        log(`${event.type} ${properties.sessionID ?? ""}`.trim())
+        return
+      }
+
+      if (state.subscribers.length === 0) {
+        if (LIFECYCLE.has(event.type)) log(`${event.type} ignored — no subscribers configured`)
+        return
+      }
 
       // Re-read so a template edited from the dashboard applies to this push.
       const fresh = await Bark.loadState()
-      const properties = (event as any).properties ?? {}
 
       if (event.type === "session.idle") {
-        await Bark.emit(fresh, "taskDone", await contextFor(properties.sessionID, { event: event.type }))
+        log(`session.idle ${properties.sessionID ?? ""} — sending taskDone`.trim())
+        await Bark.emit(fresh, "taskDone", await contextFor(properties.sessionID, { event: event.type }), summarizer)
         return
       }
       if (event.type === "session.error") {
         const error = properties.error
         const detail = error?.data?.message || error?.name || "未知错误"
+        log(`session.error ${properties.sessionID ?? ""}: ${detail}`.trim(), "warn")
         await Bark.emit(
           fresh,
           "error",
           await contextFor(properties.sessionID, { event: event.type, request_error: summarizeText(detail, 300) }),
+          summarizer,
         )
         return
       }
@@ -361,6 +849,7 @@ export const BarkNotify: Plugin = async ({ client }) => {
       // session title alone cannot tell the two apart.
       if (event.type === "permission.updated") {
         const pattern = Array.isArray(properties.pattern) ? properties.pattern.join(", ") : properties.pattern
+        log(`permission.updated — ${String(properties.type ?? "permission")} awaiting approval`)
         await Bark.emit(
           fresh,
           "approval",
@@ -370,11 +859,12 @@ export const BarkNotify: Plugin = async ({ client }) => {
             permission_type: String(properties.type ?? ""),
             permission_pattern: summarizeText(pattern ?? "", 120),
           }),
+          summarizer,
         )
         return
       }
       if (event.type === "server.connected") {
-        await Bark.emit(fresh, "start", { event: event.type, time: new Date().toLocaleString() })
+        await Bark.emit(fresh, "start", { event: event.type, time: new Date().toLocaleString() }, summarizer)
       }
     },
 
@@ -415,7 +905,7 @@ export const BarkNotify: Plugin = async ({ client }) => {
           await Bark.saveState(state)
 
           if (args.mode === "work" && wasAway) {
-            const flushed = await Bark.flushQueue(state)
+            const flushed = await Bark.flushQueue(state, summarizer)
             log(`switched to work, flushed ${flushed.length}`)
             return {
               title: "已切换到工作模式",
@@ -565,7 +1055,7 @@ export const BarkNotify: Plugin = async ({ client }) => {
         description: "Immediately deliver all queued (away-mode) notifications.",
         args: {},
         async execute() {
-          const flushed = await Bark.flushQueue(state)
+          const flushed = await Bark.flushQueue(state, summarizer)
           return {
             title: flushed.length === 0 ? "没有待发通知" : `已补发 ${flushed.length} 条通知`,
             output: JSON.stringify({ flushed: flushed.length, state: await snapshot() }, null, 2),

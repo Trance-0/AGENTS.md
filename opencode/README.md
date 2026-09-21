@@ -102,6 +102,13 @@ Panel and version rows each span the full width rather than tiling two to a
 row: a task carries a title, a status, a model and its usage, and none of that
 fits legibly in half a column.
 
+A panel renders as **cards**, a **tree**, or a **table**. Cards suit items that
+differ from one another; a table suits a homogeneous list, because the shared
+fields become columns that can be compared down the page instead of labels
+repeated on every card. A table row may carry switches bound to a column, which
+is what lets a matrix — devices against notification types — be one grid rather
+than one collapsed section per row.
+
 The **Logging** tab filters by minimum severity — `all`, `info`, `warn`,
 `error`. It is a *minimum*, not an exact match, so selecting `warn` keeps
 errors visible; hiding them while looking for problems would be backwards.
@@ -112,6 +119,25 @@ plugin that wrote it: the manager owns the others, and a misbehaving background
 job is easier to spot next to what else was happening than on a tab you would
 have to already suspect. Plugins append with `Logs.log(id, message, level)` as
 well as to opencode's own stream, because that stream cannot be read back.
+
+Every plugin announces itself once per process with the configuration that
+decides its behaviour — the model it will use, how many subscribers it has,
+whether a key is missing — so a plugin that is loaded but inert says so instead
+of looking identical to one that is working. The line is guarded on
+`globalThis`, since opencode instantiates a plugin once per project and 40+
+copies of the same announcement would bury everything else.
+
+### Appearance
+
+The dashboard's **Settings** tab has an *Appearance* section: `dark`, `light`
+or `system` (which follows `prefers-color-scheme`), plus an accent for each
+palette. The mode is written onto `<html>` server-side, so the right palette is
+painted on the first frame rather than flashing the wrong one; the theme is
+re-read per request, so a change needs only a reload.
+
+Accents are a fixed named set rather than a free-form colour, each pre-checked
+against both palettes. An arbitrary hex value very easily produces text that
+cannot be read against its own background.
 
 The **Version** tab shows the installed build alongside a **Published release**
 section carrying the notes from that release's GitHub body, when it published
@@ -154,7 +180,13 @@ off the Settings tab's button row. Those buttons take no argument, so an action
 that needs one — a project to rename, a session to open — either does nothing
 or acts on the wrong thing when rendered there. `hidden` does not restrict the
 action itself; it only stops it being offered where it cannot be given what it
-needs. The menu is appended to `document.body` so a
+needs.
+
+The rule of thumb: an action belongs on the button row only if it operates on
+the plugin as a whole. `Send test push` and `Flush queue` qualify; `Rename
+subscriber` does not, and lives on the subscriber's own row. Adding a record
+belongs on the panel header, via `Panel.action`, since it acts on the list
+rather than on any row in it. The menu is appended to `document.body` so a
 poll cannot destroy it mid-click, and the poll is suppressed while it is open.
 
 Open/closed state and loaded rows live at module scope in the client, keyed
@@ -205,6 +237,19 @@ question the user asked rather than state to be polled. Searching runs on
 submit, not on keystroke, because a full-text scan is far too expensive to fire
 per character. `render()` restores the caret and the in-progress value, so a
 poll landing mid-word neither steals focus nor reverts what was typed.
+
+A result carrying `hits` renders as a **search card** rather than a plain item:
+
+- **Header** — title, directory and the usual fields; opens the session.
+- **Body** — each matching message, role-tagged, with the terms highlighted and
+  a **Fork here** button.
+- **Footer** — tokens, cost and model, plus a count of matches not shown.
+
+Highlight offsets are computed server-side and sent as `ranges`. The server has
+already parsed the query — quoting, escaping, case-folding — so re-finding the
+terms in the browser would be a second implementation of those rules, free to
+disagree with the one that selected the rows. Marks are built as text nodes, so
+a transcript containing markup is displayed rather than interpreted.
 
 ### URLs
 
@@ -356,24 +401,34 @@ Every field is editable from the dashboard's **Settings** tab; the **Info** tab
 renders each template with sample data. `bark_preview` renders a type without
 sending it.
 
-### The subscriber list
+### The subscriber table
 
-Devices are a list on the **Info** tab, one row each, managed in place:
+Devices are a table on the **Info** tab — one row per device, one column per
+notification type:
 
-| Control | Effect |
-| --- | --- |
-| **Mute** / **Unmute** | Stops or resumes delivery to that device |
-| **Rename** | Changes the display name |
-| **Test** | Pushes one notification to *that device only* |
-| **Remove** | Deletes the device key |
+| name | key | on | taskDone | question | approval | error | start | quit |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 我的 iPhone | …zDzB | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| iPad | …ipad | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
+| MacBook | …0mac | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-**Add subscriber** sits above the list, on the panel header, since adding is
-not an operation on any existing row.
+Every switch is visible at once, so *"which devices get `approval`?"* is
+answered by reading one column down the page. The same information as collapsed
+per-device sections, except those hid exactly that comparison: finding it meant
+opening every device in turn and remembering what each one said.
 
-Only the last four characters of a device key are shown — enough to tell two
-phones apart, never enough to push to one. Which types a device is muted for
-stays on the **Settings** tab, as one collapsed section per device: that is a
-six-way matrix, which no list row can hold legibly.
+`on` controls the whole device; the type columns mute one notification on that
+device alone. **Rename**, **Test** and **Remove** sit at the end of the row, and
+**Add subscriber** on the panel header — adding is not an operation on any
+existing row.
+
+Only the last four characters of a device key are shown: enough to tell two
+phones apart, never enough to push to one. **Test** pushes to that row's device
+alone, since testing one phone by pushing to all of them proves nothing.
+
+Toggles send the state being *requested* rather than flipping the stored value,
+so two rapid clicks cannot leave the switch and the config disagreeing. A
+failed write reverts the switch.
 
 **Send test push** pushes every enabled type through its own template, so the
 test shows exactly what each notification will look like rather than one fixed
@@ -411,6 +466,28 @@ session index, so **natively created sessions appear alongside imported ones**.
 Each card is labelled with where it came from — `opencode`, `Claude Code`,
 `Codex` or `dsh` — taken from `metadata.imported.source`; a session with no such
 metadata was created by opencode itself.
+
+### Searching transcripts
+
+Search scans the text of every message in every session, native and imported
+alike, so it finds work by what was *discussed* — which for an imported
+transcript is the only way, since its title is just the first prompt.
+
+Terms are ANDed across the session, not within one message: a session that
+discussed two things in separate turns is still the session being looked for.
+`"quoted phrases"` match as a unit, which is usually the difference between 5
+results and 60.
+
+Each result lists its matching messages inline, highlighted, rather than only
+naming the session. Finding *where* something was decided is normally the real
+question, and a bare list of sessions leaves it two navigations away. Five
+messages are shown per session; the header reports the true total, so a session
+that mentions a term thirty times does not bury the ones below it.
+
+**Fork here** branches a new session containing everything up to that message,
+through opencode's own fork endpoint — so the branch is a first-class session
+rather than a transcript this plugin reassembled. That makes "continue from the
+point this went wrong, without the turns that followed" a single click.
 
 ### Indexing happens on its own
 
@@ -742,6 +819,35 @@ it was created, by which time one provider can be down or rate-limited while
 another is healthy. Entries are separated by commas or new lines, deduplicated,
 and anything not shaped `provider/model` is rejected on save.
 
+### Scheduling a task
+
+`task_create` takes an optional `nextAttemptAt` (ISO 8601). The task is queued
+immediately but is not dispatched before that time, so a resume can be parked on
+a quota reset or left to run overnight; the scheduler arms its timer for the
+soonest such moment. A scheduled task is ordinary `pending` work, so it survives
+a restart like anything else in the queue. The session's directory and project
+are read from the database and stored on the task, since the scheduler holds one
+client bound to one project and a prompt without a directory resolves against
+the wrong one.
+
+`sessionID` is optional. Omit it and the task creates a fresh session the first
+time it runs — titled from the task, in the task's directory — and records the
+new id, so a scheduled *new* session is expressible and not only a resume. The
+task then behaves like any other: it holds a slot while its turn runs.
+
+`bypassPermissions` answers the permission prompts such a session would
+otherwise raise. An unattended run has nobody to approve an edit or a command,
+so for a flagged task the plugin replies `always` the moment
+`permission.updated` arrives, which approves that request and every later one
+of its kind. It is per-task, so it never widens what an interactive session
+may do.
+
+Work can also be queued while opencode is not running, by writing
+`task-queue-seed.json` (an array of tasks in the store's own shape). The seed is
+merged once at startup and renamed to `.applied`. It exists because the store is
+rewritten by whichever process is running, so a task placed there by an older
+build — or while the process is down — would otherwise be dropped or stripped.
+
 ### Restart resume
 
 A task marked `running` belongs to a process that no longer exists, so on
@@ -888,7 +994,7 @@ All state lives under `~/.config/opencode/`:
 | `session-index.json` | session-manager |
 | `bark-notify.json`, `bark-notify-queue.json` | bark-notify |
 | `cpa-usage.json` | cpa-usage |
-| `task-queue.json`, `task-queue-retry.json` | task-queue |
+| `task-queue.json`, `task-queue-retry.json`, `task-queue-seed.json` | task-queue |
 | `session-rename.json` | session-rename |
 | `plugin-manager.json` | which plugins are enabled |
 | `marketplace.json`, `marketplace-cache.json` | marketplace source and the last update check |

@@ -11,6 +11,7 @@ import { tool } from "@opencode-ai/plugin"
 import * as CPA from "../lib/cpa.ts"
 import * as Registry from "../lib/registry.ts"
 import * as Logs from "../lib/logs.ts"
+import * as Health from "../lib/health.ts"
 import { STATE } from "../lib/paths.ts"
 
 const COLOUR = { red: "\u001b[31m", yellow: "\u001b[33m", green: "\u001b[32m", reset: "\u001b[0m" }
@@ -56,15 +57,76 @@ function formatWindow(window: CPA.Window | null): string {
   return `${Math.round(window.remainingPercent)}%(${formatReset(window.resetsAt)})`
 }
 
+/**
+ * Shorten an auth-file name to something that fits a field label.
+ *
+ * The names are long and mostly boilerplate — `codex-894e959b-user@host-team.json`
+ * — so the provider prefix, hash and extension are dropped, leaving the part
+ * that actually distinguishes one account from another.
+ */
+function accountLabel(name: string): string {
+  const trimmed = name.replace(/\.json$/i, "").replace(/^(codex|claude|antigravity)-/i, "")
+  const withoutHash = trimmed.replace(/^[0-9a-f]{6,}-/i, "")
+  return withoutHash.length > 28 ? withoutHash.slice(0, 27) + "…" : withoutHash
+}
+
 /** `Claude Opus 5 40%(23:55)/98%(09/23 23:55)`, coloured by the worse window. */
 function formatUsage(usage: CPA.ModelUsage, colour: boolean): string {
-  const body = `${usage.model} ${formatWindow(usage.fiveHour)}/${formatWindow(usage.weekly)}${
+  // A pooled figure is easy to misread as one account's, so say how many.
+  const pooled = usage.accounts.length > 1 ? ` [${usage.accounts.length} accounts]` : ""
+  const body = `${usage.model} ${formatWindow(usage.fiveHour)}/${formatWindow(usage.weekly)}${pooled}${
     usage.error ? ` [${usage.error}]` : ""
   }`
   if (!colour) return body
   const key = tone(usage)
   return key === "reset" ? body : `${COLOUR[key]}${body}${COLOUR.reset}`
 }
+
+/**
+ * Publish exhausted quota as a health condition.
+ *
+ * A model reading 0% is the single most common reason work stalls, and the
+ * number alone does not say when it comes back. Reporting it here means the
+ * task queue's "current problems" list says so too, with the reset time the
+ * provider gave us rather than a guess.
+ */
+function reportQuota(models: CPA.ModelUsage[]): void {
+  // Quota is per provider, not per model, so one condition per provider.
+  const worst = new Map<string, CPA.ModelUsage>()
+  for (const usage of models) {
+    if (!usage.provider) continue
+    const current = worst.get(usage.provider)
+    if (!current || (tone(usage) === "red" && tone(current) !== "red")) worst.set(usage.provider, usage)
+  }
+
+  for (const [provider, usage] of worst) {
+    const key = `cpa-usage:quota:${provider}`
+    const empty = [usage.fiveHour, usage.weekly].filter(
+      (window) => window && window.remainingPercent !== null && window.remainingPercent <= 0,
+    )
+
+    if (empty.length === 0) {
+      // Capacity is back; the condition is no longer true.
+      Health.clear(key)
+      continue
+    }
+
+    const resets = empty.map((window) => window!.resetsAt).filter((at): at is number => at !== null)
+    const pooled = usage.accounts.length > 1 ? ` across ${usage.accounts.length} accounts` : ""
+    Health.report({
+      key,
+      kind: "quota",
+      severity: "warn",
+      source: "cpa-usage",
+      subject: provider,
+      detail: `${provider} usage limit exceeded${pooled}`,
+      ...(resets.length > 0 ? { retryAt: Math.min(...resets) } : {}),
+    })
+  }
+}
+
+/** Shared across instances, so the startup line is written once per process. */
+const LOADED_KEY = Symbol.for("@dsh/opencode-cpa-usage-loaded")
 
 export const CpaUsage: Plugin = async () => {
   await Registry.init()
@@ -130,7 +192,33 @@ export const CpaUsage: Plugin = async () => {
       const cache = CPA.cachedUsage()
       const config = await CPA.resolveConfig()
 
+      const conditions = Health.bySource("cpa-usage")
+
       return [
+        ...(conditions.length > 0
+          ? [
+              {
+                key: "health",
+                title: "Current problems",
+                description: "Cleared automatically once quota returns.",
+                type: "alerts" as const,
+                items: conditions.map((condition) => {
+                  const countdown = Health.formatCountdown(condition.retryAt)
+                  return {
+                    title: condition.detail,
+                    subtitle: countdown ? `Recovers ${countdown}.` : undefined,
+                    tone: condition.severity === "error" ? ("error" as const) : ("warn" as const),
+                    fields: [
+                      { label: "provider", value: condition.subject },
+                      ...(condition.retryAt
+                        ? [{ label: "resets", value: new Date(condition.retryAt).toLocaleString() }]
+                        : []),
+                    ],
+                  }
+                }),
+              },
+            ]
+          : []),
         {
           key: "models",
           title: "Model usage",
@@ -148,6 +236,17 @@ export const CpaUsage: Plugin = async () => {
             fields: [
               { label: "5h", value: formatWindow(usage.fiveHour), tone: windowTone(usage.fiveHour) },
               { label: "weekly", value: formatWindow(usage.weekly), tone: windowTone(usage.weekly) },
+              // Pooled figures hide which account is actually short, so each
+              // one is listed when several are being summed.
+              ...(usage.accounts.length > 1
+                ? usage.accounts.map((entry) => ({
+                    label: accountLabel(entry.account),
+                    value: entry.error
+                      ? entry.error
+                      : `${formatWindow(entry.fiveHour)} / ${formatWindow(entry.weekly)}`,
+                    tone: entry.error ? ("error" as const) : windowTone(entry.fiveHour),
+                  }))
+                : []),
               ...(usage.error ? [{ label: "error", value: usage.error, tone: "error" as const }] : []),
             ],
           })),
@@ -167,6 +266,7 @@ export const CpaUsage: Plugin = async () => {
           try {
             const usage = await CPA.modelUsage(config)
             const low = usage.filter((entry) => tone(entry) === "red").length
+            reportQuota(usage)
             Logs.log("cpa-usage", `updated usage for ${usage.length} models${low > 0 ? `, ${low} low` : ""}`)
             return `Updated ${usage.length} models${low > 0 ? `, ${low} low on quota` : ""}.`
           } catch (error) {
@@ -178,6 +278,19 @@ export const CpaUsage: Plugin = async () => {
       },
     },
   })
+
+  // Once per process, not once per project instance.
+  if (!(globalThis as Record<symbol, unknown>)[LOADED_KEY]) {
+    ;(globalThis as Record<symbol, unknown>)[LOADED_KEY] = true
+    const config = await CPA.resolveConfig()
+    Logs.log(
+      "cpa-usage",
+      `loaded — endpoint ${config.baseURL || "unset"}, ` +
+        `api key ${config.apiKey ? "configured" : "missing"}, ` +
+        `management key ${config.managementKey ? "configured" : "missing"}`,
+      config.apiKey ? "info" : "warn",
+    )
+  }
 
   return {
     tool: {

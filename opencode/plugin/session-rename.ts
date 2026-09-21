@@ -30,6 +30,9 @@ import { isPlaceholderTitle } from "../lib/summarize.ts"
 
 const PLUGIN_ID = "session-rename"
 
+/** Shared across instances, so the startup line is written once per process. */
+const LOADED_KEY = Symbol.for("@dsh/opencode-session-rename-loaded")
+
 /** Why a session was passed over, or the title it was given. */
 type Outcome = { sessionID: string; at: number; from: string; to: string | null; reason: string }
 
@@ -439,6 +442,19 @@ export const SessionRename: Plugin = async ({ client }) => {
       },
     },
   })
+
+  // Once per process, not once per project instance.
+  if (!(globalThis as Record<symbol, unknown>)[LOADED_KEY]) {
+    ;(globalThis as Record<symbol, unknown>)[LOADED_KEY] = true
+    const config = await Rename.load()
+    log(
+      config.model === Rename.NO_MODEL
+        ? "loaded — no model selected, renaming is off"
+        : `loaded — model ${config.model}, mode ${config.mode}, ` +
+          `min ${config.minMessages} messages, cooldown ${config.cooldownSeconds}s`,
+      config.model === Rename.NO_MODEL ? "warn" : "info",
+    )
+  }
 
   return {
     event: async ({ event }) => {

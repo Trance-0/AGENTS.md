@@ -95,6 +95,14 @@ export type PanelItem = {
   fields?: Array<{ label: string; value: string; tone?: Tone }>
   /** Colours the card's accent. */
   tone?: Tone
+  /**
+   * How many times this item stands for, shown as `×4` on an alert.
+   *
+   * A condition seen forty times is one problem, not forty, so the alerts view
+   * collapses repeats into a single block and puts the tally here rather than
+   * repeating the same sentence down the page.
+   */
+  count?: number
   /** Used by the dashboard's filter chips; free-form, e.g. a task status. */
   group?: string
   /**
@@ -178,8 +186,13 @@ export type Panel = {
    * which is what a homogeneous list wants: the same fields on every row line
    * up into columns and can be compared down the page, where cards force the
    * eye to re-find each label.
+   *
+   * `alerts` states each item as a bordered block with a heading, a sentence
+   * and its metrics — the shape a warning needs. A coloured pill or a tinted
+   * card is a label for a value; a problem is a statement, and has to read as
+   * one to be acted on.
    */
-  type?: "cards" | "tree" | "table"
+  type?: "cards" | "tree" | "table" | "alerts"
   /**
    * Column headers, for `type: "table"`.
    *

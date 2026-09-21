@@ -22,6 +22,7 @@ import * as ConfigFiles from "./config-files.ts"
 import * as Marketplace from "./marketplace.ts"
 import * as Sessions from "./session-store.ts"
 import * as ModelPicker from "./model-picker.ts"
+import * as Theme from "./theme.ts"
 
 const PORT_MIN = 14100
 const PORT_MAX = 14120
@@ -271,7 +272,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   // That is what makes `/plugin/task-queue/settings` survive a direct load or a
   // refresh instead of 404ing, so links into a specific page actually work.
   if (!url.pathname.startsWith("/api/")) {
-    const body = page()
+    // Read per request: a theme change then shows on reload, with no restart.
+    const body = page(await Theme.load())
     res.writeHead(200, {
       "content-type": "text/html; charset=utf-8",
       "content-length": Buffer.byteLength(body),
@@ -377,17 +379,40 @@ export function current(): string | null {
  * The sidebar collapses to an off-canvas drawer below 860px, which is also what
  * happens when the window is docked beside the opencode GUI.
  */
-function page(): string {
+function page(theme: Theme.Theme): string {
+  const dark = Theme.resolve(theme.darkAccent).dark
+  const light = Theme.resolve(theme.lightAccent).light
+
+  // The mode is an attribute on <html> rather than a class swap in JS, so the
+  // correct palette is painted on the first frame; deciding it client-side
+  // flashes the wrong one first.
   return String.raw`<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html data-mode="${theme.mode}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>opencode plugins</title>
 <style>
+/* Dark is the default palette; light overrides only what has to change. */
 :root{
   --bg:#141418; --panel:#1c1c22; --panel2:#232329; --line:#2e2e37;
   --text:#e8e8ec; --muted:#9a9aa6; --faint:#6b6b78;
-  --ok:#4ade80; --warn:#fbbf24; --err:#f87171; --accent:#7c9cff;
+  --ok:#4ade80; --warn:#fbbf24; --err:#f87171; --accent:${dark};
   --add:#1e3a24; --addfg:#86efac; --del:#3f1d1d; --delfg:#fca5a5;
   --sidebar:260px;
+}
+/* Explicit light, and system-light. The two selectors are separate because a
+   media query cannot be folded into an attribute selector. */
+html[data-mode="light"]{
+  --bg:#f6f7f9; --panel:#ffffff; --panel2:#eef0f4; --line:#d8dce3;
+  --text:#14161a; --muted:#4a5060; --faint:#767d8d;
+  --ok:#15803d; --warn:#a16207; --err:#b91c1c; --accent:${light};
+  --add:#dcfce7; --addfg:#14532d; --del:#fee2e2; --delfg:#7f1d1d;
+}
+@media (prefers-color-scheme: light){
+  html[data-mode="system"]{
+    --bg:#f6f7f9; --panel:#ffffff; --panel2:#eef0f4; --line:#d8dce3;
+    --text:#14161a; --muted:#4a5060; --faint:#767d8d;
+    --ok:#15803d; --warn:#a16207; --err:#b91c1c; --accent:${light};
+    --add:#dcfce7; --addfg:#14532d; --del:#fee2e2; --delfg:#7f1d1d;
+  }
 }
 *{box-sizing:border-box}
 html,body{height:100%}
@@ -541,6 +566,32 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
 .item.link{cursor:pointer;text-align:left;width:100%;font:inherit;color:inherit}
 .item.link:hover{border-color:var(--accent)}
 
+/* ---- search result cards: header, matched messages, totals ---- */
+.scard{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--faint);
+  border-radius:9px;overflow:hidden}
+.scard.ok{border-left-color:var(--ok)}
+.scard.muted{border-left-color:#3a3a45}
+.shead{display:block;width:100%;text-align:left;background:none;border:0;
+  padding:11px 13px;cursor:pointer;color:inherit;font:inherit}
+.shead:hover{background:var(--panel2)}
+.shead .t{font-size:13.5px;font-weight:600;word-break:break-word}
+.shead .s{color:var(--faint);font-size:11.5px;margin-top:2px;word-break:break-word}
+.sbody{border-top:1px solid var(--line);padding:4px 0}
+.smsg{padding:7px 13px;border-bottom:1px solid #22222a}
+.smsg:last-child{border-bottom:0}
+.smsg.user{background:#15151b}
+.smeta{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.smeta .srole{font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--faint)}
+.smsg.user .smeta .srole{color:var(--accent)}
+.smeta .swhen{font-size:10.5px;color:var(--faint);flex:1;font-variant-numeric:tabular-nums}
+.stext{font-size:12.5px;line-height:1.6;color:var(--muted);word-break:break-word}
+.stext mark{background:#4a3d16;color:#fde68a;border-radius:2px;padding:0 1px}
+.sfoot{border-top:1px solid var(--line);padding:8px 13px;display:flex;
+  flex-wrap:wrap;gap:6px 16px;background:#101014}
+.sfoot .f{display:flex;gap:5px;align-items:baseline;font-size:11.5px}
+.sfoot .k{color:var(--faint);font-size:10px;text-transform:uppercase;letter-spacing:.6px}
+.sfoot .v{color:var(--muted);font-variant-numeric:tabular-nums}
+
 /* ---- panels: table layout, one row per item ---- */
 .table{border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--panel)}
 .trow{display:grid;grid-template-columns:var(--tcols);align-items:center;
@@ -670,6 +721,24 @@ select.ctl:hover{border-color:var(--accent)}
 .note.warn{background:#2a2312;border:1px solid #5a4a1e;color:#fde68a}
 .note.err{background:#2a1515;border:1px solid #5b2626;color:var(--delfg)}
 .note.ok{background:#12231a;border:1px solid #1e4a2e;color:var(--addfg)}
+
+/* ---- alerts: a stated problem, not a coloured word ----
+   A warning has to read as a sentence with room for a heading, the detail and
+   a countdown. A pill is a label for a value and gives none of that, so the
+   Info tab states conditions in a bordered block instead. */
+.alerts{display:grid;gap:10px;margin-bottom:4px}
+.alert{display:flex;gap:11px;align-items:flex-start;border-radius:9px;
+  padding:11px 13px;border:1px solid;border-left-width:3px}
+.alert.warn{background:#2a2312;border-color:#5a4a1e;color:#fde68a}
+.alert.error{background:#2a1515;border-color:#5b2626;color:#fca5a5}
+.alert.ok{background:#12231a;border-color:#1e4a2e;color:var(--addfg)}
+.alert .ico{font-size:14px;line-height:1.35;flex:none}
+.alert .body{flex:1;min-width:0}
+.alert .atitle{font-weight:600;font-size:13px;word-break:break-word}
+.alert .adesc{margin-top:3px;font-size:12px;opacity:.85;word-break:break-word}
+.alert .ameta{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:7px;font-size:11.5px;opacity:.8}
+.alert .ameta b{font-weight:600;font-variant-numeric:tabular-nums}
+.alert .acount{flex:none;font-size:11px;opacity:.75;font-variant-numeric:tabular-nums}
 
 /* diff */
 .diffbox{border:1px solid var(--line);border-radius:9px;overflow:hidden;margin:12px 0;
@@ -1268,17 +1337,108 @@ function searchBox(p) {
         : null))
 }
 
+/**
+ * Text with the matched ranges marked.
+ *
+ * The ranges arrive from the server, which parsed the query and selected the
+ * rows; re-finding the terms here would be a second implementation of quoting
+ * and case-folding, free to disagree with the one that produced the result.
+ * Marks are built as text nodes, so a transcript containing markup is shown
+ * rather than interpreted.
+ */
+function highlight(text, ranges) {
+  if (!(ranges || []).length) return el("span", {}, text)
+
+  const out = []
+  let cursor = 0
+  for (const r of ranges) {
+    if (r.start > cursor) out.push(text.slice(cursor, r.start))
+    out.push(el("mark", {}, text.slice(r.start, r.end)))
+    cursor = r.end
+  }
+  if (cursor < text.length) out.push(text.slice(cursor))
+  return el("span", {}, out)
+}
+
+/**
+ * One search result: session header, matched messages, then its totals.
+ *
+ * A flat list of sessions answers "which session" but not "where in it", which
+ * is the question a search is usually really asking. Showing the matching
+ * messages inline — highlighted, each forkable — means the answer is on the
+ * page instead of two navigations away.
+ */
+function searchCard(p, it) {
+  const hits = it.hits || []
+  const shown = hits.length
+  const total = it.matchCount ?? shown
+
+  const body = shown
+    ? el("div", { class: "sbody" },
+        hits.map((h) =>
+          el("div", { class: "smsg " + (h.role === "user" ? "user" : "assistant") },
+            el("div", { class: "smeta" },
+              el("span", { class: "srole" }, h.role),
+              h.at ? el("span", { class: "swhen" }, new Date(h.at).toISOString().slice(0, 16).replace("T", " ")) : null,
+              // Forking needs the message, which only this row knows.
+              el("button", {
+                class: "btn ctl",
+                type: "button",
+                title: "Start a new session containing everything up to this message",
+                onclick: (e) => {
+                  e.stopPropagation()
+                  runAction(p, "fork-session", e.target, it.sessionID + "=" + h.messageID)
+                },
+              }, "Fork here")),
+            el("div", { class: "stext" }, highlight(h.snippet, h.ranges)))))
+    : null
+
+  // Only what the session actually records: a zero cost is usually "not
+  // priced", and printing $0.00 would assert something the row does not say.
+  const footer = []
+  if (it.tokens) footer.push(el("span", { class: "f" }, el("span", { class: "k" }, "tokens"), el("span", { class: "v" }, formatCount(it.tokens))))
+  if (it.cost) footer.push(el("span", { class: "f" }, el("span", { class: "k" }, "cost"), el("span", { class: "v" }, "$" + it.cost.toFixed(2))))
+  if (it.model) footer.push(el("span", { class: "f" }, el("span", { class: "k" }, "model"), el("span", { class: "v" }, it.model)))
+  if (total > shown) footer.push(el("span", { class: "f" }, el("span", { class: "k" }, "more"), el("span", { class: "v" }, String(total - shown) + " further matches")))
+
+  return el("div", { class: "scard " + (it.tone || "") },
+    el("button", {
+      class: "shead",
+      type: "button",
+      onclick: () => go("session", it.sessionID),
+    },
+      el("div", { class: "t" }, it.title),
+      it.subtitle ? el("div", { class: "s" }, it.subtitle) : null,
+      el("div", { class: "fields" }, (it.fields || []).map((f) =>
+        el("div", { class: "f " + (f.tone || "") },
+          el("span", { class: "k" }, f.label),
+          el("span", { class: "v" }, f.value))))),
+    body,
+    footer.length ? el("div", { class: "sfoot" }, footer) : null)
+}
+
+/** "18.1M", "8.0k" — a raw token count is unreadable at this scale. */
+function formatCount(n) {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M"
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "k"
+  return String(n)
+}
+
 /** Results of the active search, replacing the panels while one is running. */
 function searchResults(p, state) {
   if (state.loading) return el("div", { class: "empty" }, "searching…")
   if (state.error) return el("div", { class: "note err" }, state.error)
 
+  const matched = state.items.reduce((n, it) => n + (it.matchCount ?? 0), 0)
+
   return el("section", { class: "panel" },
     el("div", { class: "phead" },
-      el("h3", {}, state.items.length ? state.items.length + " results" : "No results"),
-      el("span", { class: "when" }, "for " + state.query)),
+      el("h3", {}, state.items.length ? state.items.length + " sessions" : "No results"),
+      el("span", { class: "when" },
+        matched ? matched + ' matching messages for "' + state.query + '"' : "for " + state.query)),
     state.items.length
-      ? el("div", { class: "grid" }, state.items.map((it) => panelItem(p, it)))
+      ? el("div", { class: "grid" }, state.items.map((it) =>
+          it.hits ? searchCard(p, it) : panelItem(p, it)))
       : el("div", { class: "empty" }, "Nothing matched " + state.query + "."))
 }
 
@@ -1475,8 +1635,36 @@ function panelView(p, panel) {
     items.length
       ? panel.type === "table"
         ? tableView(p, panel, items)
-        : el("div", { class: "grid" }, items.map((it) => panelItem(p, it)))
+        : panel.type === "alerts"
+          ? alertsView(p, items)
+          : el("div", { class: "grid" }, items.map((it) => panelItem(p, it)))
       : el("div", { class: "empty" }, panel.empty || "Nothing to show."))
+}
+
+/**
+ * A panel as alerts: each item stated as a bordered block.
+ *
+ * Used where the items are problems rather than data. A pill shows a value in
+ * a colour, which is enough for "queued: 3" and useless for "gpt-5.5 usage
+ * limit exceeded, retries at 01:11" — that needs a heading, a sentence and its
+ * own metrics, laid out so it reads as a statement instead of a label.
+ */
+function alertsView(p, items) {
+  const icon = { error: "✕", warn: "!", ok: "✓" }
+  return el("div", { class: "alerts" }, items.map((it) => {
+    const tone = it.tone === "error" ? "error" : it.tone === "ok" ? "ok" : "warn"
+    return el("div", { class: "alert " + tone },
+      el("span", { class: "ico" }, icon[tone]),
+      el("div", { class: "body" },
+        el("div", { class: "atitle" }, it.title),
+        it.subtitle ? el("div", { class: "adesc" }, it.subtitle) : null,
+        (it.fields || []).length
+          ? el("div", { class: "ameta" }, it.fields.map((f) =>
+              el("span", {}, f.label + ": ", el("b", {}, f.value))))
+          : null,
+        panelControls(p, it)),
+      it.count ? el("span", { class: "acount" }, "×" + it.count) : null)
+  }))
 }
 
 /**

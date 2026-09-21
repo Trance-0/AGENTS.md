@@ -22,13 +22,18 @@ import * as Dashboard from "../lib/dashboard.ts"
 import * as Versions from "../lib/versions.ts"
 import * as Marketplace from "../lib/marketplace.ts"
 import * as ConfigFiles from "../lib/config-files.ts"
+import * as Theme from "../lib/theme.ts"
+import * as Logs from "../lib/logs.ts"
 import { CONFIG_DIR, DB_PATH } from "../lib/paths.ts"
 
 export const PluginManager: Plugin = async ({ client }) => {
   await Registry.init()
 
-  const log = (message: string) => {
-    client.app.log({ body: { service: "plugin-manager", level: "info", message } }).catch(() => {})
+  const log = (message: string, level: Logs.Level = "info") => {
+    // Both sinks: opencode's own stream cannot be read back, so the dashboard's
+    // Logging tab needs its own copy or it stays empty.
+    Logs.log("plugin-manager", message, level)
+    client.app.log({ body: { service: "plugin-manager", level, message } }).catch(() => {})
   }
 
   // The manager describes itself too, so the dashboard lists every plugin.
@@ -41,8 +46,44 @@ export const PluginManager: Plugin = async ({ client }) => {
     // plugin's updates come from, so it is configured in one place.
     async settings() {
       const config = await Marketplace.config()
+      const theme = await Theme.load()
+      const accents = Theme.ACCENTS.map((entry) => ({ value: entry.value, label: entry.label }))
+
       return [
         {
+          group: "Appearance",
+          expanded: true,
+          key: "theme.mode",
+          label: "Colour scheme",
+          type: "select",
+          value: theme.mode,
+          options: [
+            { value: "dark", label: "Dark" },
+            { value: "light", label: "Light" },
+            { value: "system", label: "System — follow the OS" },
+          ],
+          description: "Applies on the next page load.",
+        },
+        {
+          group: "Appearance",
+          key: "theme.darkAccent",
+          label: "Accent (dark)",
+          type: "select",
+          value: theme.darkAccent,
+          options: accents,
+          description: "Highlight colour used while the dark palette is active.",
+        },
+        {
+          group: "Appearance",
+          key: "theme.lightAccent",
+          label: "Accent (light)",
+          type: "select",
+          value: theme.lightAccent,
+          options: accents,
+          description: "Highlight colour used while the light palette is active.",
+        },
+        {
+          group: "Marketplace",
           key: "marketplace.repository",
           label: "Marketplace repository",
           type: "string",
@@ -51,6 +92,7 @@ export const PluginManager: Plugin = async ({ client }) => {
           description: "GitHub repository whose plugin releases are offered. Any repo using the same tags works.",
         },
         {
+          group: "Marketplace",
           key: "marketplace.apiBase",
           label: "GitHub API base",
           type: "string",
@@ -59,6 +101,7 @@ export const PluginManager: Plugin = async ({ client }) => {
           description: "Change this to use a GitHub Enterprise host.",
         },
         {
+          group: "Marketplace",
           key: "marketplace.enabled",
           label: "Check for updates",
           type: "boolean",
@@ -68,6 +111,20 @@ export const PluginManager: Plugin = async ({ client }) => {
       ]
     },
     async update(key, value) {
+      if (key === "theme.mode") {
+        const mode = String(value)
+        if (mode !== "light" && mode !== "dark" && mode !== "system") throw new Error(`unknown colour scheme: ${mode}`)
+        await Theme.save({ mode })
+        log(`colour scheme set to ${mode}`)
+        return
+      }
+      if (key === "theme.darkAccent" || key === "theme.lightAccent") {
+        const name = String(value)
+        if (!Theme.ACCENTS.some((entry) => entry.value === name)) throw new Error(`unknown accent: ${name}`)
+        await Theme.save(key === "theme.darkAccent" ? { darkAccent: name } : { lightAccent: name })
+        log(`${key === "theme.darkAccent" ? "dark" : "light"} accent set to ${name}`)
+        return
+      }
       if (key === "marketplace.repository") return void (await Marketplace.setConfig({ repository: String(value) }))
       if (key === "marketplace.apiBase") return void (await Marketplace.setConfig({ apiBase: String(value) }))
       if (key === "marketplace.enabled") return void (await Marketplace.setConfig({ enabled: value === true }))
@@ -119,25 +176,19 @@ export const PluginManager: Plugin = async ({ client }) => {
         },
       ]
     },
-    actions: {
-      "check-updates": {
-        label: "Check for updates",
-        async run() {
-          const cache = await Marketplace.refresh()
-          if (cache.error) return `Update check failed: ${cache.error}`
-          const updates = (await Marketplace.status()).filter((entry) => entry.updateAvailable)
-          return updates.length
-            ? `${updates.length} update(s): ${updates.map((u) => `${u.pluginID} ${u.installed}→${u.available}`).join(", ")}`
-            : `No updates; ${cache.listings.length} release(s) published`
-        },
-      },
-    },
+    // No actions: checking for updates belongs to the Version tab, which has
+    // its own button and shows the result in place. A second copy on Settings
+    // reported the same thing into a toast that vanished.
   })
 
   // Start the dashboard. opencode instantiates plugins once per project, so the
   // first instance to bind the port hosts it and the rest quietly defer.
   const started = await Dashboard.start().catch(() => ({ url: null, hosted: false }))
-  if (started.hosted) log(`dashboard listening on ${started.url}`)
+  if (started.hosted) {
+    const theme = await Theme.load()
+    log(`dashboard listening on ${started.url} (${theme.mode} theme)`)
+    log(`hosting ${Registry.list().length} plugins from ${CONFIG_DIR}`)
+  }
 
   return {
     tool: {
