@@ -21,7 +21,7 @@
 import fsp from "node:fs/promises"
 import path from "node:path"
 import crypto from "node:crypto"
-import { STATE } from "./paths.ts"
+import { CONFIG_DIR, STATE } from "./paths.ts"
 
 /** `running` holds a concurrency slot; `pending` is waiting for one. */
 export type Status = "pending" | "running" | "done" | "failed"
@@ -30,6 +30,20 @@ export const STATUSES: Status[] = ["pending", "running", "done", "failed"]
 
 /** Statuses that will never run again, hidden by the panel's default filter. */
 export const TERMINAL: Status[] = ["done", "failed"]
+
+/**
+ * Prefix on the session id of a task that creates its session on first run.
+ *
+ * `task_create` accepts no session at all, and the dispatcher needs to tell
+ * "make one" from "resume this one". A placeholder keeps the field a plain
+ * string and stays unique, so two new-session tasks are never duplicates of
+ * each other.
+ */
+export const NEW_SESSION_PREFIX = "new:"
+
+export function isNewSession(sessionID: string): boolean {
+  return sessionID.startsWith(NEW_SESSION_PREFIX)
+}
 
 /**
  * Where a task came from.
@@ -68,7 +82,22 @@ export type Task = {
   summarySource: "model" | "parser" | null
   /** 1–5; higher runs first. */
   importance: number
+  /**
+   * The session this task runs in, or a `new:` placeholder when it has not been
+   * created yet.
+   *
+   * A task queued for a fresh session carries a unique placeholder rather than
+   * a real id, so it can never be mistaken for another task's session — or,
+   * before the first dispatch, for a duplicate of another new-session task.
+   */
   sessionID: string
+  /**
+   * Auto-approve every permission request in this task's session.
+   *
+   * A scheduled run has nobody to answer a prompt, so a task flagged this way
+   * replies "always" the moment a request arrives instead of stalling.
+   */
+  bypassPermissions: boolean
   /** opencode project id the session belongs to, for grouping in the panel. */
   projectID: string | null
   /** Directory the session runs in; also routes the prompt to the right server. */
@@ -88,6 +117,15 @@ export type Task = {
   nextAttemptAt: string | null
   /** How many times this task has been dispatched. */
   attempts: number
+  /**
+   * When the current run was dispatched, as an ISO timestamp.
+   *
+   * Distinct from `updatedAt`, which any bookkeeping write moves. The
+   * reconciler needs to know how long ago the *turn* started so it can leave a
+   * freshly dispatched task alone; refreshing its token stats every pass must
+   * not look like a new dispatch and keep re-arming that grace period forever.
+   */
+  startedAt: string | null
   /**
    * PID of the opencode process driving this task while it is running.
    *
@@ -116,6 +154,20 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
 }
 
 /**
+ * Store a directory the way opencode does: forward slashes, no trailing one.
+ *
+ * A wrapped session gets its directory from the `session.created` event, which
+ * on Windows carries a native path, while the session row and `session.status`
+ * both use forward slashes. Left mixed, the scheduler asks the directory-scoped
+ * status API about a path it has never heard of, and a queued resume is routed
+ * against the wrong key. Normalising here keeps one spelling everywhere.
+ */
+function normalizeDirectory(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null
+  return value.replace(/\\/g, "/").replace(/\/+$/, "")
+}
+
+/**
  * Normalise whatever is on disk into the current shape.
  *
  * Earlier versions wrote tasks without the scheduling fields, so those are
@@ -132,8 +184,9 @@ function normalise(parsed: unknown): Task[] {
       summarySource: entry?.summarySource === "model" || entry?.summarySource === "parser" ? entry.summarySource : null,
       importance: clampInt(entry?.importance, 1, 5, 3),
       sessionID: String(entry?.sessionID ?? ""),
+      bypassPermissions: entry?.bypassPermissions === true,
       projectID: entry?.projectID ?? null,
-      directory: entry?.directory ?? null,
+      directory: normalizeDirectory(entry?.directory),
       prompt: typeof entry?.prompt === "string" && entry.prompt ? entry.prompt : null,
       model: entry?.model ?? null,
       agent: entry?.agent ?? null,
@@ -142,6 +195,7 @@ function normalise(parsed: unknown): Task[] {
       outcome: entry?.outcome ?? null,
       nextAttemptAt: typeof entry?.nextAttemptAt === "string" ? entry.nextAttemptAt : null,
       attempts: clampInt(entry?.attempts, 0, Number.MAX_SAFE_INTEGER, 0),
+      startedAt: typeof entry?.startedAt === "string" ? entry.startedAt : null,
       ownerPID: typeof entry?.ownerPID === "number" ? entry.ownerPID : null,
       stats: entry?.stats && typeof entry.stats === "object" ? (entry.stats as Stats) : null,
       createdAt: String(entry?.createdAt ?? now),
@@ -307,7 +361,8 @@ export async function counts(now = Date.now()): Promise<Counts> {
  * ------------------------------------------------------------------ */
 
 export type CreateInput = {
-  sessionID: string
+  /** Omit to create a fresh session on first dispatch. */
+  sessionID?: string
   prompt?: string | null
   title?: string
   summary?: string | null
@@ -315,6 +370,8 @@ export type CreateInput = {
   importance?: number
   model?: string
   agent?: string
+  /** Auto-approve permission requests in this task's session. */
+  bypassPermissions?: boolean
   projectID?: string | null
   directory?: string | null
   origin?: Origin
@@ -326,15 +383,19 @@ export type CreateInput = {
 function build(input: CreateInput): Task {
   const now = new Date().toISOString()
   const prompt = input.prompt?.trim() || null
+  // No session named means a fresh one, parked under a unique placeholder until
+  // the dispatcher creates it.
+  const sessionID = input.sessionID?.trim() || `${NEW_SESSION_PREFIX}${crypto.randomUUID()}`
   return {
     id: crypto.randomUUID(),
-    title: input.title?.trim() || prompt?.slice(0, 60) || `session ${input.sessionID.slice(0, 12)}`,
+    title: input.title?.trim() || prompt?.slice(0, 60) || `session ${sessionID.slice(0, 12)}`,
     summary: input.summary?.trim() || null,
     summarySource: input.summarySource ?? null,
     importance: clampInt(input.importance, 1, 5, 3),
-    sessionID: input.sessionID,
+    sessionID,
+    bypassPermissions: input.bypassPermissions === true,
     projectID: input.projectID ?? null,
-    directory: input.directory ?? null,
+    directory: normalizeDirectory(input.directory),
     prompt,
     model: input.model?.trim() || null,
     agent: input.agent?.trim() || null,
@@ -344,6 +405,7 @@ function build(input: CreateInput): Task {
     nextAttemptAt: input.nextAttemptAt ?? null,
     attempts: clampInt(input.attempts, 0, Number.MAX_SAFE_INTEGER, 0),
     // A task created as running is being driven by this process.
+    startedAt: input.status === "running" ? now : null,
     ownerPID: input.status === "running" ? process.pid : null,
     stats: null,
     createdAt: now,
@@ -357,16 +419,46 @@ export async function createTask(input: CreateInput): Promise<Task> {
     throw new Error("importance 必须是 1–5 的整数")
   }
 
-  const sessionID = input.sessionID.trim()
-  if (!sessionID) throw new Error("sessionID 不能为空")
   // A queued task exists to replay a prompt; without one there is nothing to send.
   if (!input.prompt?.trim()) throw new Error("prompt 不能为空")
 
-  const task = build({ ...input, sessionID })
+  const task = build(input)
   await mutate((tasks) => {
     tasks.push(task)
   })
   return task
+}
+
+/** Tasks queued while opencode was not running, applied once at startup. */
+export const SEED_PATH = path.join(CONFIG_DIR, "task-queue-seed.json")
+
+/**
+ * Merge tasks written to the seed file, then retire it.
+ *
+ * A file is the only way to hand work to a process that is not up yet: the
+ * store is rewritten by whichever process is running, which would drop or strip
+ * anything it did not write. Applying the seed once at startup and renaming it
+ * keeps that bootstrap out of the steady state.
+ */
+export async function applySeed(): Promise<Task[]> {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(await fsp.readFile(SEED_PATH, "utf8"))
+  } catch {
+    return []
+  }
+
+  const incoming = normalise(parsed)
+  const applied = await mutate((tasks) => {
+    const known = new Set(tasks.map((task) => task.id))
+    const added = incoming.filter((task) => !known.has(task.id))
+    tasks.push(...added)
+    return added
+  })
+
+  // Retire it whether or not every entry was new; a seed is applied once.
+  await fsp.rename(SEED_PATH, `${SEED_PATH}.applied`).catch(() => {})
+  return applied
 }
 
 /**
@@ -375,7 +467,9 @@ export async function createTask(input: CreateInput): Promise<Task> {
  * Idempotent: every plugin instance observes the same `session.created` event,
  * so several of them race to wrap it.
  */
-export async function wrapSession(input: CreateInput): Promise<{ task: Task; created: boolean }> {
+export async function wrapSession(
+  input: CreateInput & { sessionID: string },
+): Promise<{ task: Task; created: boolean }> {
   return mutate((tasks) => {
     const existing = ordered(tasks).find(
       (task) => task.sessionID === input.sessionID && !TERMINAL.includes(task.status),
@@ -383,7 +477,7 @@ export async function wrapSession(input: CreateInput): Promise<{ task: Task; cre
     if (existing) {
       // Project metadata often arrives after the session itself.
       existing.projectID ??= input.projectID ?? null
-      existing.directory ??= input.directory ?? null
+      existing.directory ??= normalizeDirectory(input.directory)
 
       // A real title always beats a placeholder. opencode names a session
       // "New session - <timestamp>" until its first turn is summarised, so the
@@ -414,6 +508,8 @@ export type Patch = Partial<
     | "summary"
     | "summarySource"
     | "importance"
+    | "sessionID"
+    | "bypassPermissions"
     | "projectID"
     | "directory"
     | "prompt"
@@ -433,6 +529,9 @@ export async function update(id: string, patch: Patch): Promise<Task | null> {
     const task = tasks.find((entry) => entry.id === id)
     if (!task) return null
 
+    // Captured before the patch lands, so a state transition is still visible.
+    const was = task.status
+
     for (const key of [
       "status",
       "outcome",
@@ -440,6 +539,8 @@ export async function update(id: string, patch: Patch): Promise<Task | null> {
       "summary",
       "summarySource",
       "importance",
+      "sessionID",
+      "bypassPermissions",
       "projectID",
       "directory",
       "prompt",
@@ -454,8 +555,13 @@ export async function update(id: string, patch: Patch): Promise<Task | null> {
     if (patch.error === null) delete task.error
     else if (patch.error !== undefined) task.error = patch.error
 
-    // Ownership lasts exactly as long as the task is running.
-    if (patch.status !== undefined) task.ownerPID = patch.status === "running" ? process.pid : null
+    // Ownership lasts exactly as long as the task is running, and entering the
+    // running state is what starts the turn the grace period protects.
+    if (patch.status !== undefined) {
+      task.ownerPID = patch.status === "running" ? process.pid : null
+      if (patch.status === "running" && was !== "running") task.startedAt = new Date().toISOString()
+      else if (patch.status !== "running") task.startedAt = null
+    }
 
     task.updatedAt = new Date().toISOString()
     return task
@@ -464,6 +570,31 @@ export async function update(id: string, patch: Patch): Promise<Task | null> {
 
 export async function setStatus(id: string, status: Status, error?: string): Promise<Task | null> {
   return update(id, { status, error: error ?? null })
+}
+
+/**
+ * Re-queue a task by hand, clearing every trace of the run that stopped it.
+ *
+ * A restart is the user overruling the previous outcome, so the task has to
+ * stop *being* a failure rather than merely changing status. Clearing the
+ * status and the error but keeping `outcome` left the card still reporting
+ * "last: error" in red, and the panel's failed filter still counting it — the
+ * task looked failed after the user had restarted it.
+ *
+ * The failure is not lost: it was written to the log when it happened, which
+ * is where a past run belongs. The task row describes the run that is
+ * current, and after a restart that run has not happened yet.
+ */
+export async function restart(id: string): Promise<Task | null> {
+  return update(id, {
+    status: "pending",
+    // Overriding whatever backoff the scheduler had decided on is the point.
+    nextAttemptAt: null,
+    error: null,
+    outcome: null,
+    // Attempt counting continues: how many times this has been tried is a
+    // fact about the task, not a verdict on it.
+  })
 }
 
 /** Put a task back on the queue after `delayMs`, recording why. */
@@ -475,6 +606,7 @@ export async function scheduleRetry(id: string, delayMs: number, error?: string)
     task.attempts += 1
     task.nextAttemptAt = new Date(Date.now() + Math.max(0, delayMs)).toISOString()
     task.ownerPID = null
+    task.startedAt = null
     task.updatedAt = new Date().toISOString()
     if (error) task.error = error
     return task
@@ -543,6 +675,7 @@ export async function claimDue(maxConcurrent: number, now = Date.now()): Promise
       task.nextAttemptAt = null
       task.attempts += 1
       task.ownerPID = process.pid
+      task.startedAt = stamp
       task.updatedAt = stamp
       delete task.error
     }
@@ -588,6 +721,7 @@ export async function recoverInterrupted(resumePrompt: string): Promise<Task[]> 
       // Due immediately: the wait is over, the process just restarted.
       task.nextAttemptAt = null
       task.ownerPID = null
+      task.startedAt = null
       task.prompt ??= resumePrompt
       task.updatedAt = stamp
     }

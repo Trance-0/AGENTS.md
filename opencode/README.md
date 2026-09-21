@@ -922,6 +922,32 @@ stored: `waiting` is pending work whose retry delay has not yet elapsed, shown
 with a live countdown. `task_list` applies the same default and takes the same
 filters.
 
+Only a task that will actually run again counts as `waiting`. A terminal task
+can still carry the timestamp of a retry it never got, and treating that as
+waiting hid it from the `failed` chip — a failure vanishing from the one filter
+meant to show it.
+
+### Restarting clears the verdict
+
+**Start** and **Continue** re-queue a task through `Tasks.restart`, which drops
+the status, the error, the backoff **and the outcome** together. Clearing only
+the first three left the card still reporting `last: error` in red and the
+`failed` chip still counting it, so a task the user had restarted went on
+looking failed.
+
+A restart is the user overruling the previous run, so the task stops *being*
+that failure rather than merely changing status. The failure is not lost: the
+outcome and its error are written to the log first, which is where a past run
+belongs — the task row describes the run that is current, and after a restart
+that run has not happened yet.
+
+The attempt count is deliberately kept. How many times something has been tried
+is a fact about the task; the outcome was a verdict on it, and the verdict is
+what a restart overturns.
+
+Pausing is not a restart: it keeps the previous outcome, because pausing says
+"not now", not "that failure was wrong".
+
 ## session-rename: titles that track the work
 
 opencode names a session from its first prompt and never revisits it, so the

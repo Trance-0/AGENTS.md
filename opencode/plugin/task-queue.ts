@@ -161,6 +161,23 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
     if (kind === "permanent") return `not retryable (${kind})`
     if (kind === "unknown") return "not retryable (unknown error)"
 
+    // Retry only sessions that exist and will still exist.
+    //
+    // `session.error` carries an id and nothing else, and it fires for the
+    // throwaway sessions the plugins open to call a model — summarising a
+    // task, proposing a title, probing a model. When the endpoint is down
+    // every one of those errors, and each queued a retry bound to a session
+    // that its own `finally` block then deleted. The retry dispatched into
+    // nothing, failed with "Session not found", and the cycle repeated: 15
+    // dead tasks, none of them corresponding to real work.
+    //
+    // The title check cannot catch this on its own — by the time the retry
+    // runs the session is already gone — so existence is what decides.
+    const info = Sessions.get(sessionID)
+    if (!info) return "session does not exist (not retried)"
+    if (Scratch.isScratchTitle(info.title)) return "scratch session (not retried)"
+    if (info.parentID) return "subagent session (not retried)"
+
     // Count existing auto-retries for this session so a persistently failing
     // endpoint cannot queue an unbounded chain of attempts.
     const all = await Tasks.listTasks()
@@ -191,10 +208,14 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
     await Tasks.createTask({
       sessionID,
       prompt: RESUME_PROMPT,
-      title: `auto-retry: ${Retry.describe(error).slice(0, 48)}`,
+      // The session's own name says what the work is; the error text says only
+      // what went wrong this once, and is already on the card as `error`.
+      title: info.title || `auto-retry: ${Retry.describe(error).slice(0, 48)}`,
       // Retries outrank normal queued work: the session is mid-task.
       importance: 4,
       origin: "auto-retry",
+      projectID: info.projectID,
+      directory: info.directory,
       attempts: attempts + 1,
       nextAttemptAt: new Date(Date.now() + delay).toISOString(),
     })
@@ -439,13 +460,12 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
       const config = await RetryConfig.load()
       const now = Date.now()
 
-      // Offered on every card's model picker. "" means "whatever the session
-      // already uses", which is the right default for an adopted session.
-      const models = await ModelPicker.options(client as any, "", "(session default)")
-      const modelOptions = [
-        { value: "", label: "(session default)" },
-        ...models.filter((option) => option.value !== ModelPicker.NONE),
-      ]
+      // Every model the server offers, with no "none" entry: a task always
+      // runs on *some* model, so an empty choice is not a real state. Each
+      // card resolves its own current model below and preselects it.
+      const models = (await ModelPicker.options(client as any, "", "")).filter(
+        (option) => option.value !== ModelPicker.NONE,
+      )
 
       const conditions = Health.current(now)
 
@@ -458,24 +478,25 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
                 key: "health",
                 title: "Current problems",
                 description: "Conditions stop being listed once they stop recurring.",
+                type: "alerts" as const,
                 items: conditions.map((condition) => {
                   const countdown = Health.formatCountdown(condition.retryAt, now)
                   return {
                     title: condition.detail,
                     subtitle:
                       condition.count > 1
-                        ? `${condition.source} · seen ${condition.count} times since ${new Date(condition.firstAt).toLocaleTimeString()}`
-                        : condition.source,
+                        ? `First seen ${new Date(condition.firstAt).toLocaleTimeString()}, still recurring.`
+                        : undefined,
                     tone: condition.severity === "error" ? ("error" as const) : ("warn" as const),
+                    count: condition.count > 1 ? condition.count : undefined,
                     fields: [
-                      { label: "kind", value: condition.kind },
-                      { label: "subject", value: condition.subject },
+                      { label: "source", value: condition.source },
+                      { label: "affects", value: condition.subject },
                       ...(countdown
                         ? [
                             {
                               label: "retries",
                               value: `${countdown} (${new Date(condition.retryAt!).toLocaleTimeString()})`,
-                              tone: "warn" as const,
                             },
                           ]
                         : []),
@@ -507,13 +528,31 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
           action: "run",
           items: tasks.map((task) => {
             const at = task.nextAttemptAt ? Date.parse(task.nextAttemptAt) : null
-            const waiting = at !== null && Number.isFinite(at) && at > now
+            // Only a task that will actually run again is waiting. A terminal
+            // task can still carry the timestamp from the retry it never got,
+            // and treating that as "waiting" hid it from the failed filter —
+            // so a failure disappeared from the one chip meant to show it.
+            const waiting = !Tasks.TERMINAL.includes(task.status) && at !== null && Number.isFinite(at) && at > now
             // The chips people actually want are "what is live" and "what is
             // owed to me later", so pending splits across those two.
             const group = task.status === "running" ? "active" : waiting ? "waiting" : task.status
 
             const stats = task.stats
             const cost = stats ? formatCost(stats.cost) : null
+
+            // What this task would actually run on, in order of authority: an
+            // explicit override, the model the session is set to, then the one
+            // its last turn observably used. "(session default)" said none of
+            // this — it named a value the card could not show and the user
+            // could not verify.
+            const sessionModel = Sessions.get(task.sessionID)?.model ?? Sessions.lastUsedModel(task.sessionID)
+            const currentModel = task.model ?? sessionModel ?? ""
+            // A model the server no longer lists still has to appear, or the
+            // select would silently jump to something the task is not using.
+            const modelOptions =
+              currentModel && !models.some((option) => option.value === currentModel)
+                ? [{ value: currentModel, label: `${currentModel} (not currently available)` }, ...models]
+                : models
 
             return {
               title: task.title,
@@ -549,7 +588,11 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
                   ? [{ label: "last", value: task.outcome, tone: task.outcome === "rate-limit" ? "warn" as const : "error" as const }]
                   : []),
                 ...(task.origin !== "manual" ? [{ label: "origin", value: task.origin }] : []),
-                ...(task.model ? [{ label: "model", value: task.model }] : []),
+                // Named rather than left implicit, and marked when it is the
+                // session's own choice instead of an override set here.
+                ...(currentModel
+                  ? [{ label: task.model ? "model" : "session model", value: currentModel }]
+                  : []),
                 ...(task.error ? [{ label: "error", value: task.error.slice(0, 120), tone: "error" as const }] : []),
               ],
               // Acting on a task belongs where the task is read. Which control
@@ -574,7 +617,7 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
                   action: "task-model",
                   label: "Model",
                   input: task.id,
-                  value: task.model ?? "",
+                  value: currentModel,
                   options: modelOptions,
                 },
                 {
@@ -668,8 +711,10 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
         label: "Purge orphans",
         async run() {
           // A task whose session is not in the database can never run again:
-          // nothing will ever report it busy or idle.
+          // nothing will ever report it busy or idle. A new-session task has no
+          // session to be missing, so it is left alone.
           const removed = await Tasks.purge((task) => {
+            if (Tasks.isNewSession(task.sessionID)) return false
             const info = Sessions.get(task.sessionID)
             return !info || Scratch.isScratchTitle(info.title) || !!info.parentID
           })
@@ -684,9 +729,12 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
         async run(input) {
           const task = await requireTask(input)
           if (task.status === "running") return `${task.title} is already running`
-          // Clearing the backoff is the point of starting by hand: the user is
-          // overriding whatever wait the scheduler had decided on.
-          await Tasks.update(task.id, { status: "pending", nextAttemptAt: null, error: null })
+          // A restart overrules the previous run entirely — its backoff, its
+          // error and its outcome — so the task stops being classified by it.
+          if (task.outcome && task.outcome !== "completed") {
+            log(`restarting ${task.title} after ${task.outcome}: ${task.error ?? "no detail"}`, "warn")
+          }
+          await Tasks.restart(task.id)
           const { started } = await Runner.tick()
           return started > 0 ? `started ${task.title}` : `${task.title} queued (no free slot)`
         },
@@ -709,7 +757,10 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
         label: "Continue",
         async run(input) {
           const task = await requireTask(input)
-          await Tasks.update(task.id, { status: "pending", nextAttemptAt: null, error: null })
+          if (task.outcome && task.outcome !== "completed") {
+            log(`resuming ${task.title} after ${task.outcome}: ${task.error ?? "no detail"}`, "warn")
+          }
+          await Tasks.restart(task.id)
           const { started } = await Runner.tick()
           return started > 0 ? `resumed ${task.title}` : `${task.title} is due now (no free slot)`
         },
@@ -718,8 +769,13 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
         label: "Model",
         async run(input) {
           const { task, value } = await parseControl(input)
-          await Tasks.update(task.id, { model: value || null })
-          return value ? `${task.title} → ${value}` : `${task.title} uses the session default`
+          // Choosing the session's own model is the same as having no override,
+          // so it is stored as none rather than pinning a value that would then
+          // stop following the session.
+          const sessionModel = Sessions.get(task.sessionID)?.model ?? Sessions.lastUsedModel(task.sessionID)
+          const model = !value || value === sessionModel ? null : value
+          await Tasks.update(task.id, { model })
+          return model ? `${task.title} → ${model}` : `${task.title} follows the session (${sessionModel ?? "unset"})`
         },
       },
       "task-importance": {
@@ -807,6 +863,46 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
       }
 
       /**
+       * Answer permission prompts for tasks flagged to bypass them.
+       *
+       * A scheduled run has nobody watching, so an unanswered request would
+       * stall the turn indefinitely. Replying "always" approves this request
+       * and every later one of the same kind, which is what "bypass all
+       * permissions" means for an unattended task.
+       */
+      if (event.type === "permission.updated") {
+        const sessionID = properties.sessionID
+        const permissionID = properties.id
+        if (typeof sessionID !== "string" || typeof permissionID !== "string") return
+
+        const task = await Tasks.findBySession(sessionID)
+        if (!task?.bypassPermissions) return
+
+        const directory = task.directory ?? Sessions.get(sessionID)?.directory ?? null
+        try {
+          const reply = await client.postSessionIdPermissionsPermissionId({
+            path: { id: sessionID, permissionID },
+            body: { response: "always" },
+            ...(directory ? { query: { directory } } : {}),
+          })
+          if (reply.error) {
+            log(
+              `could not auto-approve ${properties.type ?? "permission"} for ${task.title}: ${Retry.describe(reply.error)}`,
+              "warn",
+            )
+          } else {
+            log(`auto-approved ${properties.type ?? "permission"} for ${task.title}`)
+          }
+        } catch (failure) {
+          log(
+            `could not auto-approve ${properties.type ?? "permission"} for ${task.title}: ${Retry.describe(failure)}`,
+            "warn",
+          )
+        }
+        return
+      }
+
+      /**
        * A failed turn goes back to the queue rather than dying.
        *
        * The payload carries the error that ended the stream, which is what
@@ -843,18 +939,39 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
     tool: {
       task_create: tool({
         description:
-          "Queue a prompt to be delivered to an existing opencode session later. Use this to park work that is " +
-          "blocked on quota. `sessionID` is an opencode session id (ses_...); `importance` is 1–5 and higher runs first.",
+          "Queue a prompt to be delivered to an opencode session later. Omit `sessionID` to have the task create " +
+          "a fresh session when it runs; give one to continue an existing session. Use `nextAttemptAt` to schedule " +
+          "it for a future time, and `bypassPermissions` to auto-approve prompts in an unattended run.",
         args: {
-          sessionID: tool.schema.string().describe("opencode session id to continue (ses_...)."),
+          sessionID: tool.schema
+            .string()
+            .optional()
+            .describe("Existing opencode session id (ses_...) to continue. Omit to create a new session."),
           prompt: tool.schema.string().describe("The message to send when the task runs."),
-          title: tool.schema.string().optional().describe("Short label (defaults to the start of the prompt)."),
+          title: tool.schema.string().optional().describe("Short label, and the new session's title."),
           importance: tool.schema.number().int().min(1).max(5).optional().describe("1–5, default 3."),
           model: tool.schema.string().optional().describe("Optional model override as 'providerID/modelID'."),
           agent: tool.schema.string().optional().describe("Optional agent override."),
+          bypassPermissions: tool.schema
+            .boolean()
+            .optional()
+            .describe("Auto-approve every permission request in this task's session."),
+          nextAttemptAt: tool.schema
+            .string()
+            .optional()
+            .describe("ISO 8601 time before which the task must not run; omit to queue it as due now."),
         },
         async execute(args) {
-          const task = await Tasks.createTask(args)
+          // The scheduler holds one client bound to one project, so a task must
+          // name the directory its session lives in or the prompt is resolved
+          // against the wrong project. The session row is authoritative for
+          // both that and the project id, so the caller need not supply either.
+          const info = args.sessionID ? Sessions.get(args.sessionID) : null
+          const task = await Tasks.createTask({
+            ...args,
+            projectID: info?.projectID ?? null,
+            directory: info?.directory ?? null,
+          })
           return { title: `queued: ${task.title}`, output: JSON.stringify(task, null, 2) }
         },
       }),
@@ -910,10 +1027,11 @@ export const TaskQueue: Plugin = async ({ client, project, directory }) => {
           }
 
           // Re-queuing by hand means "run this now", not "keep waiting out the
-          // backoff that was set when it failed".
+          // backoff that was set when it failed" — and not "still count as the
+          // failure that was just overruled".
           const task =
             args.status === "pending"
-              ? await Tasks.update(args.id, { status: "pending", nextAttemptAt: null, error: null })
+              ? await Tasks.restart(args.id)
               : await Tasks.setStatus(args.id, args.status)
 
           if (!task) throw new Error(`Unknown task: ${args.id}`)
