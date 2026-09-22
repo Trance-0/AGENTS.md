@@ -46,7 +46,25 @@ export type SourceSession = {
   branch: string | null
   /** Identifier of the device whose store this session was read from. */
   device: string
+  /**
+   * Title derived from the transcript — in practice the first user message.
+   *
+   * This is what the plugin can always compute, for any source, from the
+   * transcript alone.
+   */
   title: string
+  /**
+   * The title the originating tool gave this session, when it keeps one.
+   *
+   * Codex names a thread with a short summary and stores it beside the
+   * transcript rather than inside it, so a search of the transcript can never
+   * find the name the user actually sees in Codex. Recorded here so both
+   * spellings of the same session are searchable.
+   *
+   * Null when the tool keeps no title of its own, which is the case for
+   * Claude Code and dsh.
+   */
+  sourceTitle: string | null
   model: string
   created: number
   modified: number
@@ -341,6 +359,52 @@ export function dshTurns(records: any[]): Turn[] {
 
 const HEAD_BYTES = 256 * 1024
 
+/**
+ * Codex's own thread names, read from the sidecar it keeps beside the store.
+ *
+ * Codex titles a thread with a short summary — "Debug slow Python extension
+ * load" — and writes it to `~/.codex/session_index.jsonl`, *not* into the
+ * transcript. The transcript's own first line is the raw prompt, so a session
+ * the user knows by its Codex name cannot be found by searching what the
+ * plugin imported. Reading this file is the only way to know both.
+ *
+ * Loaded once per scan and cached: `describe` runs per transcript, and there
+ * are hundreds. The file is only ever read — Codex owns it, and a session's
+ * name in Codex is not this plugin's to change.
+ */
+let codexTitleCache: { at: number; titles: Map<string, string> } | null = null
+
+/** How long a loaded sidecar is reused, so one scan reads it once. */
+const CODEX_TITLE_TTL_MS = 30_000
+
+function codexTitles(): Map<string, string> {
+  if (codexTitleCache && Date.now() - codexTitleCache.at < CODEX_TITLE_TTL_MS) return codexTitleCache.titles
+
+  const titles = new Map<string, string>()
+  try {
+    const text = fs.readFileSync(SOURCES.codexIndex, "utf8")
+    for (const line of text.split(/\r?\n/)) {
+      if (!line.trim()) continue
+      try {
+        const entry = JSON.parse(line)
+        // Last write wins: the file is append-only, so a renamed thread
+        // appears again later with its new name.
+        if (entry?.id && typeof entry.thread_name === "string" && entry.thread_name.trim()) {
+          titles.set(String(entry.id), entry.thread_name.trim())
+        }
+      } catch {
+        // One malformed line must not cost every other title.
+      }
+    }
+  } catch {
+    // No sidecar on this device, or Codex is mid-write. Titles are an
+    // enrichment, so their absence is not an error.
+  }
+
+  codexTitleCache = { at: Date.now(), titles }
+  return titles
+}
+
 async function describe(file: string, kind: SourceKind, device: string): Promise<SourceSession | null> {
   let stat: fs.Stats
   try {
@@ -382,6 +446,7 @@ async function describe(file: string, kind: SourceKind, device: string): Promise
     branch: summary.branch || null,
     device,
     title: summary.title || "(untitled)",
+    sourceTitle: kind === "codex" ? (codexTitles().get(nativeID) ?? null) : null,
     model: summary.model,
     created: summary.created || stat.birthtimeMs || stat.mtimeMs,
     modified: stat.mtimeMs,

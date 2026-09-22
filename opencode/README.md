@@ -127,6 +127,32 @@ of looking identical to one that is working. The line is guarded on
 `globalThis`, since opencode instantiates a plugin once per project and 40+
 copies of the same announcement would bury everything else.
 
+### Persistent logs
+
+Every line also goes to a file, one per plugin per day:
+
+```
+~/.local/share/opencode/plugin-logs/<plugin>/<plugin>-<YYYY-MM-DD>.log
+```
+
+A dropdown on the right of the filter row selects which day to read; the
+default, **Latest (live)**, is the in-memory tail and the only view that
+updates as the process runs. Days are listed as dates — `2026-09-21 (today)` —
+rather than filenames, since which file holds them is an implementation detail.
+
+The buffer alone was not enough: it dies with the process, which is exactly
+when a log matters most, because the run that ended badly is the one worth
+reading. Records follow the repository's logging convention — one per line,
+`<ISO timestamp> <LEVEL> <message>` — so the files stay greppable. A multi-line
+message has its continuations indented, which keeps "a record starts at column
+zero" true and lets `grep -v '^ '` separate records without parsing.
+
+Files older than 30 days are deleted on the first write of each day. Writes are
+best-effort: a full disk or a read-only data directory degrades to the buffer
+alone rather than breaking the plugin that was trying to log. Clearing the view
+empties the buffer only — an operator quietening a noisy tab should not destroy
+the record of what happened.
+
 ### Appearance
 
 The dashboard's **Settings** tab has an *Appearance* section: `dark`, `light`
@@ -493,10 +519,16 @@ point this went wrong, without the turns that followed" a single click.
 
 The index no longer has to be refreshed by hand. A scan runs:
 
-- ~20 s after the plugin loads, once startup has settled;
+- **on load**, so the index reflects what is on disk from the first moment.
+  It is deferred by a tick rather than run inline, because a plugin that blocks
+  its own construction delays opencode's startup;
 - whenever a session goes idle, which is when its transcript stops changing and
   opencode is quiet enough to afford the work;
 - every 10 minutes otherwise.
+
+Only the periodic sweep is paced. A scan on load, or one asked for by hand,
+runs regardless of when the last one happened — otherwise a second opencode
+window opened inside the interval would come up with a stale index.
 
 Scanning is `stat` plus a bounded head read, so it is cheap enough to run while
 opencode is working. *Importing* is not, and is still only done on request —
@@ -544,6 +576,31 @@ This is a plain scan rather than an FTS index. At the scale opencode reaches —
 ~23k parts, ~33 MB — the worst case (a term matching nothing, so `LIMIT` cannot
 short-circuit) answers in about 150 ms, and an index would mean maintaining a
 shadow table inside a database this plugin does not own.
+
+### Two titles per session
+
+A session can have two names, and both are kept.
+
+**The source title** is what the originating tool calls it. Codex titles a
+thread with a short summary — `Debug slow Python extension load` — and stores
+it in `~/.codex/session_index.jsonl`, *not* in the transcript. The transcript's
+first line is the raw prompt, so a session imported from its transcript alone
+was titled `debug on this computer vs code is spending unreasonable itme to
+load python extension` and could not be found by the only name its user knew.
+Claude Code and dsh keep no title of their own, so theirs is null.
+
+**The opencode title** starts as the source title and is free to change;
+`session-rename` rewrites it from the transcript.
+
+The source title is recorded on import (`metadata.imported.sourceTitle`) and
+never rewritten, so a renamed session can still be traced back to the name its
+tool gave it. The session card shows it only once the two have diverged —
+repeating an identical title is noise. `session_list` and `session_search`
+match against both.
+
+The Codex sidecar is **only ever read**. A session's name in Codex belongs to
+Codex; opencode has its own title and its own renamer, and writing back would
+make two tools fight over one field.
 
 ### Why the counts differ
 
@@ -1029,3 +1086,8 @@ All state lives under `~/.config/opencode/`:
 on first read. `cpa-usage` reads its API key from the `cpa` provider block in
 `opencode.json`, then Codex's `config.toml`, then `CPA_API_KEY`; it never writes
 the key back.
+
+Logs are the exception: they live under `~/.local/share/opencode/plugin-logs/`,
+beside the database rather than with the configuration. They are operational
+records, not settings, and must not travel when a config directory is copied to
+another machine — they carry timings, paths and hostnames.

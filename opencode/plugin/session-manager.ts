@@ -43,14 +43,6 @@ const SWEEP_KEY = Symbol.for("@dsh/opencode-session-manager-sweep")
 /** Bound the number of turns copied from a single transcript. */
 const MAX_TURNS = 4000
 
-/**
- * How long after opencode settles before the first background scan.
- *
- * Startup is the busiest moment in the process, and an index sweep is never
- * urgent, so it waits for the rush to pass.
- */
-const IDLE_SCAN_DELAY_MS = 20_000
-
 /** Minimum gap between background sweeps. */
 const RESCAN_INTERVAL_MS = 10 * 60 * 1000
 
@@ -60,6 +52,11 @@ function summarize(entry: IndexEntry) {
     kind: entry.kind,
     device: entry.device,
     title: entry.title,
+    // The name the originating tool shows, when it keeps one of its own.
+    // Codex titles a thread with a summary that never appears in the
+    // transcript, so without this the session is unfindable by the only name
+    // the user knows it by.
+    sourceTitle: entry.sourceTitle ?? null,
     directory: entry.directory,
     remote: entry.remote ?? null,
     branch: entry.branch ?? null,
@@ -291,6 +288,13 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
                 tone: session.source === "opencode" ? ("ok" as const) : ("muted" as const),
                 fields: [
                   { label: "source", value: SOURCE_LABEL[session.source] ?? session.source },
+                  // Shown only once it has diverged: opencode's title starts
+                  // as the source's, and repeating it would be noise. After
+                  // session-rename rewrites one, this is how the session can
+                  // still be recognised by the name its tool gave it.
+                  ...(session.sourceTitle && session.sourceTitle !== session.title
+                    ? [{ label: "source title", value: session.sourceTitle }]
+                    : []),
                   { label: "turns", value: String(session.turns) },
                   { label: "updated", value: new Date(session.updated).toISOString().slice(0, 16).replace("T", " ") },
                   ...(session.device ? [{ label: "device", value: session.device }] : []),
@@ -317,14 +321,16 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
         const db = DB.open(true)
         let hits: DB.SearchHit[]
         try {
-          hits = DB.search(db, query, { limit: 60 })
+          hits = DB.search(db, query, { limit: 60, matchesPerSession: 5 })
         } finally {
           db.close()
         }
 
         return hits.map((hit) => ({
           title: hit.title,
-          subtitle: hit.snippet || undefined,
+          // The header carries the session's identity; the matched messages
+          // below carry the evidence, so the snippet is not repeated here.
+          subtitle: hit.directory || undefined,
           tone: hit.source === "opencode" ? ("ok" as const) : ("muted" as const),
           fields: [
             { label: "project", value: hit.projectName },
@@ -333,6 +339,15 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
             { label: "updated", value: new Date(hit.updated).toISOString().slice(0, 16).replace("T", " ") },
           ],
           link: { view: "session", arg: hit.sessionID },
+
+          // The card body: each matching message, with the offsets to
+          // highlight and the message id a fork would start from.
+          sessionID: hit.sessionID,
+          matchCount: hit.matches,
+          hits: hit.hits,
+          tokens: hit.tokens,
+          cost: hit.cost,
+          model: hit.model,
         }))
       },
     },
@@ -344,6 +359,55 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
           const result = await sweep("manual")
           if (!result) return "a scan is already running"
           return `scanned ${result.scanned}; ${result.added.length} new, ${result.grown.length} grown`
+        },
+      },
+
+      /**
+       * Branch a new session from one message of an existing one.
+       *
+       * Finding the turn where something was decided is usually the point of
+       * searching; continuing from there, without the turns that came after,
+       * is what makes that useful. opencode's own fork endpoint does the copy,
+       * so the branch is a first-class session rather than a transcript this
+       * plugin reassembled.
+       */
+      "fork-session": {
+        label: "Fork from this message",
+        hidden: true,
+        async run(input) {
+          const [sessionID, messageID] = splitInput(input)
+          if (!sessionID || !messageID) throw new Error("Pick a message to fork from")
+
+          // The API is directory-scoped: a session in another project is only
+          // reachable when its own directory is named.
+          const db = DB.open(true)
+          let directory: string | null = null
+          try {
+            const row = db.prepare(`SELECT directory FROM "session" WHERE id = ?`).get(sessionID) as
+              | { directory: string | null }
+              | undefined
+            if (!row) throw new Error(`Unknown session: ${sessionID}`)
+            directory = row.directory ?? null
+          } finally {
+            db.close()
+          }
+
+          const response = await client.session.fork({
+            path: { id: sessionID },
+            body: { messageID },
+            ...(directory ? { query: { directory } } : {}),
+          })
+          if (response.error) {
+            const message =
+              typeof response.error === "string" ? response.error : JSON.stringify(response.error)
+            throw new Error(`Fork failed: ${message.slice(0, 200)}`)
+          }
+
+          const forked = (response.data as { id?: string; title?: string } | undefined) ?? {}
+          log("info", `forked ${sessionID} at ${messageID} → ${forked.id ?? "?"}`)
+          return forked.id
+            ? `Forked into ${forked.title || forked.id}. Open it from the opencode session picker.`
+            : "Forked."
         },
       },
 
@@ -502,7 +566,11 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
       const branched = Boolean(entry.imported)
       const result = DB.importSession(db, {
         target,
-        title: entry.title,
+        // The tool's own name when it has one: Codex writes a short summary
+        // like "Debug slow Python extension load", which is far better than
+        // the raw first prompt this otherwise falls back to. Both are kept —
+        // `sourceTitle` below preserves the original regardless.
+        title: entry.sourceTitle || entry.title,
         turns,
         created: entry.created,
         model: entry.model,
@@ -510,6 +578,7 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
         sourceID: entry.nativeID,
         device: entry.device,
         branch: entry.branch,
+        sourceTitle: entry.sourceTitle,
       })
       entry.imported = {
         sessionID: result.sessionID,
@@ -603,8 +672,13 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
     if (!Registry.isEnabled(PLUGIN_ID)) return null
     if (sweepState.running) return null
 
+    // A scan asked for by hand, or the one on load, runs regardless of when
+    // the last one happened; only the periodic sweep is paced. Without the
+    // `load` exemption a second opencode window starting inside the interval
+    // would come up with a stale index.
+    const forced = reason === "manual" || reason === "load"
     const now = Date.now()
-    if (now - sweepState.last < RESCAN_INTERVAL_MS && reason !== "manual") return null
+    if (!forced && now - sweepState.last < RESCAN_INTERVAL_MS) return null
 
     sweepState.running = true
     try {
@@ -645,12 +719,18 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
   // together. `unref` keeps the timers from holding opencode open.
   if (!sweepState.scheduled) {
     sweepState.scheduled = true
-    const first = setTimeout(() => void sweep("startup"), IDLE_SCAN_DELAY_MS)
+
+    // A scan on load, so the index reflects what is on disk from the first
+    // moment rather than after a wait. It is deferred by a tick — not run
+    // inline — because a plugin that blocks its own construction delays
+    // opencode's startup, and scanning is stat-and-head work that does not
+    // need to happen before the editor is usable.
+    const initial = setTimeout(() => void sweep("load"), 0)
     const repeat = setInterval(() => void sweep("periodic"), RESCAN_INTERVAL_MS)
-    if (typeof first.unref === "function") first.unref()
+    if (typeof initial.unref === "function") initial.unref()
     if (typeof repeat.unref === "function") repeat.unref()
 
-    log("info", `loaded — watching ${Object.keys(SOURCE_LABEL).length - 1} source stores, first scan in ${IDLE_SCAN_DELAY_MS / 1000}s`)
+    log("info", `loaded — watching ${Object.keys(SOURCE_LABEL).length - 1} source stores, scanning now`)
   }
 
   return {
@@ -781,8 +861,13 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
           const rows = Object.values(index.entries)
             .filter((entry) => (args.source ? entry.kind === args.source : true))
             .filter((entry) => (args.imported === undefined ? true : Boolean(entry.imported) === args.imported))
+            // Both titles are searched: a Codex session is known to its user
+            // by the name Codex shows, which is not the one derived from the
+            // transcript.
             .filter((entry) =>
-              needle ? `${entry.title} ${entry.directory}`.toLowerCase().includes(needle) : true,
+              needle
+                ? `${entry.title} ${entry.sourceTitle ?? ""} ${entry.directory}`.toLowerCase().includes(needle)
+                : true,
             )
             .sort((a, b) => b.modified - a.modified)
 

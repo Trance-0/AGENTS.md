@@ -144,6 +144,8 @@ export function importSession(
     /** Device whose store the transcript came from. */
     device: string
     branch?: string | null
+    /** Title the originating tool gave this session, when it keeps one. */
+    sourceTitle?: string | null
   },
 ): ImportedSession {
   const { target } = input
@@ -205,6 +207,11 @@ export function importSession(
           remote: target.remote,
           branch: input.branch ?? null,
           projectSource: target.source,
+          // The name the originating tool gave this session, kept so the
+          // session stays findable by the title its user knows. opencode's
+          // own title is free to change — session-rename rewrites it — and
+          // this is the unchanging reference it can be traced back to.
+          sourceTitle: input.sourceTitle ?? null,
           at: Date.now(),
         },
       }),
@@ -325,6 +332,13 @@ export type SessionRow = {
   source: SessionSource
   /** Device the transcript was recorded on; null for native sessions. */
   device: string | null
+  /**
+   * Title the originating tool gave this session, when it kept one.
+   *
+   * opencode's own `title` is free to change — session-rename rewrites it —
+   * so this is the unchanging name the session can still be recognised by.
+   */
+  sourceTitle: string | null
   created: number
   updated: number
   turns: number
@@ -391,6 +405,7 @@ export function listSessions(db: DatabaseSync, projectID: string, limit = 200): 
       `SELECT s.id AS id, s.title AS title, s.directory AS directory,
               ${SOURCE_SQL} AS source,
               json_extract(s.metadata,'$.imported.device') AS device,
+              json_extract(s.metadata,'$.imported.sourceTitle') AS sourceTitle,
               s.time_created AS created, s.time_updated AS updated,
               (SELECT COUNT(*) FROM "message" m WHERE m.session_id = s.id) AS turns
        FROM "session" s WHERE s.project_id = ?
@@ -417,6 +432,26 @@ function basename(value: string): string {
   return parts[parts.length - 1] ?? ""
 }
 
+/** One matching message inside a session. */
+export type SearchMatch = {
+  /** Message this text belongs to — what a fork is taken from. */
+  messageID: string
+  /** "user" or "assistant"; a match in either is worth showing. */
+  role: string
+  /** Text around the match, with the match roughly centred. */
+  snippet: string
+  /**
+   * Offsets of each term occurrence *within `snippet`*, for highlighting.
+   *
+   * Computed here rather than in the browser because the terms have already
+   * been parsed — quoting, escaping and case-folding all happened server-side,
+   * and re-deriving them client-side would be a second implementation of the
+   * same rules, free to disagree with the one that selected the rows.
+   */
+  ranges: Array<{ start: number; end: number }>
+  at: number
+}
+
 export type SearchHit = {
   sessionID: string
   title: string
@@ -429,6 +464,12 @@ export type SearchHit = {
   matches: number
   /** Text around the first match, for showing why the session matched. */
   snippet: string
+  /** The matching messages themselves, newest-relevant first. */
+  hits: SearchMatch[]
+  /** Totals for the card footer; null when the session records none. */
+  tokens: number
+  cost: number
+  model: string | null
 }
 
 export type SearchOptions = {
@@ -438,6 +479,14 @@ export type SearchOptions = {
   source?: SessionSource
   /** Max sessions returned (default 40). */
   limit?: number
+  /**
+   * Matching messages to return per session (default 5).
+   *
+   * A session that discusses a term throughout can match dozens of times;
+   * listing every one buries the sessions below it. The count is reported in
+   * full either way, so nothing is hidden — only deferred.
+   */
+  matchesPerSession?: number
 }
 
 /** `%` and `_` are LIKE wildcards; `\` escapes them via the ESCAPE clause. */
@@ -470,6 +519,65 @@ function snippetFor(text: string, term: string, width = 160): string {
   const end = Math.min(text.length, start + width)
   const body = text.slice(start, end).replace(/\s+/g, " ").trim()
   return (start > 0 ? "…" : "") + body + (end < text.length ? "…" : "")
+}
+
+/**
+ * A snippet around the first term, plus where every term falls inside it.
+ *
+ * Whitespace is collapsed for display, which shifts every offset after it, so
+ * the ranges are located in the *collapsed* text rather than the original —
+ * computing them before collapsing would highlight the wrong characters
+ * wherever a transcript contains a line break or run of spaces.
+ */
+function excerptWithRanges(
+  text: string,
+  terms: string[],
+  width = 220,
+): { snippet: string; ranges: Array<{ start: number; end: number }> } {
+  const lower = text.toLowerCase()
+
+  // Centre on the earliest term that actually occurs, so the reader lands on
+  // the match rather than the top of a long message.
+  let at = -1
+  let hitTerm = terms[0] ?? ""
+  for (const term of terms) {
+    const found = lower.indexOf(term.toLowerCase())
+    if (found !== -1 && (at === -1 || found < at)) {
+      at = found
+      hitTerm = term
+    }
+  }
+
+  const from = at === -1 ? 0 : Math.max(0, at - Math.floor((width - hitTerm.length) / 2))
+  const to = Math.min(text.length, from + width)
+  const body = text.slice(from, to).replace(/\s+/g, " ").trim()
+  const snippet = (from > 0 ? "…" : "") + body + (to < text.length ? "…" : "")
+
+  const haystack = snippet.toLowerCase()
+  const ranges: Array<{ start: number; end: number }> = []
+  for (const term of terms) {
+    const needle = term.toLowerCase()
+    if (!needle) continue
+    let cursor = 0
+    while (cursor <= haystack.length - needle.length) {
+      const found = haystack.indexOf(needle, cursor)
+      if (found === -1) break
+      ranges.push({ start: found, end: found + needle.length })
+      cursor = found + needle.length
+    }
+  }
+
+  // Terms can overlap ("code" inside "opencode"); merging keeps the rendered
+  // marks from nesting and double-counting the shared characters.
+  ranges.sort((a, b) => a.start - b.start)
+  const merged: Array<{ start: number; end: number }> = []
+  for (const range of ranges) {
+    const last = merged[merged.length - 1]
+    if (last && range.start <= last.end) last.end = Math.max(last.end, range.end)
+    else merged.push({ ...range })
+  }
+
+  return { snippet, ranges: merged }
 }
 
 /**
@@ -534,17 +642,67 @@ export function search(db: DatabaseSync, query: string, options: SearchOptions =
     source: string
   }>
 
-  // The snippet comes from the earliest part matching the first term, which is
-  // where a reader looks to judge whether this is the session they meant.
-  const excerpt = db.prepare(
-    `SELECT json_extract(data,'$.text') AS text FROM "part"
-     WHERE session_id = ? AND json_extract(data,'$.type') = 'text'
-       AND lower(json_extract(data,'$.text')) LIKE lower(?) ESCAPE '\\'
-     ORDER BY time_created LIMIT 1`,
+  // Every matching message, not just the first: a term discussed across
+  // several turns is several places worth looking, and a fork needs the
+  // message it starts from.
+  const perSession = Math.max(1, Math.min(options.matchesPerSession ?? 5, 50))
+  const matchConditions = terms.map(() => `lower(json_extract(p.data,'$.text')) LIKE lower(?) ESCAPE '\\'`)
+  const matchParams = terms.map((term) => `%${escapeLike(term)}%`)
+
+  const matching = db.prepare(
+    `SELECT p.message_id AS messageID,
+            json_extract(p.data,'$.text') AS text,
+            json_extract(m.data,'$.role') AS role,
+            p.time_created AS at
+     FROM "part" p
+     JOIN "message" m ON m.id = p.message_id
+     WHERE p.session_id = ?
+       AND json_extract(p.data,'$.type') = 'text'
+       AND ${matchConditions.join(" AND ")}
+     ORDER BY p.time_created
+     LIMIT ?`,
+  )
+
+  // Usage lives on the session row, so the footer costs one lookup per hit
+  // rather than a scan of its messages.
+  const usage = db.prepare(
+    `SELECT tokens_input, tokens_output, tokens_reasoning, cost, model FROM "session" WHERE id = ?`,
   )
 
   return rows.map((row) => {
-    const found = excerpt.get(row.sessionID, `%${escapeLike(terms[0])}%`) as { text: string } | undefined
+    const found = matching.all(row.sessionID, ...matchParams, perSession) as Array<{
+      messageID: string
+      text: string
+      role: string | null
+      at: number
+    }>
+
+    const hits: SearchMatch[] = found.map((match) => {
+      const { snippet, ranges } = excerptWithRanges(match.text ?? "", terms)
+      return {
+        messageID: match.messageID,
+        role: match.role === "assistant" ? "assistant" : "user",
+        snippet,
+        ranges,
+        at: match.at,
+      }
+    })
+
+    const totals = usage.get(row.sessionID) as
+      | { tokens_input: number; tokens_output: number; tokens_reasoning: number; cost: number; model: string | null }
+      | undefined
+
+    // `model` is stored as the JSON the session was last run with.
+    let model: string | null = null
+    if (totals?.model) {
+      try {
+        const parsed = JSON.parse(totals.model)
+        model = parsed?.providerID && parsed?.id ? `${parsed.providerID}/${parsed.id}` : (parsed?.id ?? null)
+      } catch {
+        model = totals.model
+      }
+    }
+
     return {
       sessionID: row.sessionID,
       title: row.title || "(untitled)",
@@ -554,7 +712,11 @@ export function search(db: DatabaseSync, query: string, options: SearchOptions =
       directory: row.directory ?? "",
       updated: row.updated,
       matches: row.matches,
-      snippet: found?.text ? snippetFor(found.text, terms[0]) : "",
+      snippet: hits[0]?.snippet ?? (found[0]?.text ? snippetFor(found[0].text, terms[0]) : ""),
+      hits,
+      tokens: (totals?.tokens_input ?? 0) + (totals?.tokens_output ?? 0) + (totals?.tokens_reasoning ?? 0),
+      cost: totals?.cost ?? 0,
+      model,
     }
   })
 }
