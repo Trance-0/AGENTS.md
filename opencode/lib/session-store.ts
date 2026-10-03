@@ -25,6 +25,14 @@ export type SessionRow = {
   parentID: string | null
   cost: number
   tokens: { input: number; output: number; reasoning: number; cacheRead: number; cacheWrite: number }
+  /**
+   * The model this session is set to use, as `providerID/modelID`.
+   *
+   * opencode stores it as a JSON blob on the session row and updates it as the
+   * user switches models, so this is what the next turn would actually run on —
+   * which is the only honest thing to show on a task card.
+   */
+  model: string | null
   createdAt: number
   updatedAt: number
 }
@@ -61,12 +69,34 @@ function toRow(raw: any): SessionRow {
       cacheRead: Number(raw.tokens_cache_read ?? 0),
       cacheWrite: Number(raw.tokens_cache_write ?? 0),
     },
+    model: parseModel(raw.model),
     createdAt: Number(raw.time_created ?? 0),
     updatedAt: Number(raw.time_updated ?? 0),
   }
 }
 
-const COLUMNS = `id, title, directory, project_id, parent_id, cost,
+/**
+ * Read `{"id":"claude-opus-5","providerID":"cpa"}` as `cpa/claude-opus-5`.
+ *
+ * The column is JSON rather than a plain string, and a session written by an
+ * older build may hold neither shape, so anything unrecognisable yields null
+ * and the caller falls back rather than showing a broken id.
+ */
+function parseModel(raw: unknown): string | null {
+  if (typeof raw !== "string" || !raw.trim()) return null
+  try {
+    const parsed = JSON.parse(raw)
+    const provider = String(parsed?.providerID ?? "").trim()
+    const model = String(parsed?.id ?? parsed?.modelID ?? "").trim()
+    if (provider && model) return `${provider}/${model}`
+    return model || null
+  } catch {
+    // Some rows store the bare id; treat it as already formatted.
+    return raw.includes("/") ? raw : null
+  }
+}
+
+const COLUMNS = `id, title, directory, project_id, parent_id, cost, model,
   tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write,
   time_created, time_updated`
 
@@ -141,6 +171,39 @@ export function messageCount(sessionID: string): number {
     return row?.c ?? 0
   } catch {
     return 0
+  } finally {
+    db.close()
+  }
+}
+
+/**
+ * The model the session's most recent assistant turn actually ran on.
+ *
+ * The session row records the model that is *selected*, which is usually the
+ * same thing but is empty on sessions written by older builds and on sessions
+ * that have never been switched. The last turn is the observed answer, so it
+ * backs up the row rather than replacing it.
+ */
+export function lastUsedModel(sessionID: string): string | null {
+  const db = open()
+  if (!db) return null
+  try {
+    const row = db
+      .prepare(
+        `SELECT json_extract(data, '$.providerID') AS provider,
+                json_extract(data, '$.modelID')    AS model
+           FROM "message"
+          WHERE session_id = ? AND json_extract(data, '$.role') = 'assistant'
+          ORDER BY time_created DESC LIMIT 1`,
+      )
+      .get(sessionID) as { provider?: string; model?: string } | undefined
+
+    const provider = String(row?.provider ?? "").trim()
+    const model = String(row?.model ?? "").trim()
+    if (!model) return null
+    return provider ? `${provider}/${model}` : model
+  } catch {
+    return null
   } finally {
     db.close()
   }

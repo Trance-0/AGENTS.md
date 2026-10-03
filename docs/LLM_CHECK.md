@@ -2,6 +2,9 @@
 
 ## Session archive verification round
 
+- Directory-sync correction: four source-selection modes, immutable session folders,
+  repeat-import/update tests and six-plugin release promotion requested by owner.
+
 - Added version 2 complete-record archive transfer and isolated A/B/C database tests.
 - Added generated-browser-script syntax verification and widget-local collapsible status.
 - Preserved pre-existing working-tree changes; no live-session test records were created.

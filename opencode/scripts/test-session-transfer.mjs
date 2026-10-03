@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { exportArchive, importArchive, mergeRecords } from '../lib/session-transfer.ts'
+import { exportArchive, importArchive, mergeRecords, publishDirectory, readDirectoryFile } from '../lib/session-transfer.ts'
 import { writeTarGz, readTarGz } from '../lib/archive.ts'
 
 const folder = await mkdtemp(path.join(os.tmpdir(), 'session-transfer-'))
@@ -94,6 +94,29 @@ try {
   await importArchive(realB, file, handle)
   assert.deepEqual(realA.prepare('SELECT * FROM session').all(), realB.prepare('SELECT * FROM session').all())
   assert.deepEqual(realA.prepare('SELECT * FROM part').all(), realB.prepare('SELECT * FROM part').all())
+  console.log('Testing per-session directory transfer without archives')
+  const syncDir = path.join(folder, 'sync')
+  await publishDirectory(realA, syncDir, 'device-A')
+  const { readdir } = await import('node:fs/promises')
+  async function walk(dir) {
+    const found = []
+    for (const item of await readdir(dir, { withFileTypes:true })) {
+      const file = path.join(dir, item.name)
+      if (item.isDirectory()) found.push(...await walk(file))
+      else found.push(file)
+    }
+    return found
+  }
+  const syncFiles = await walk(syncDir)
+  assert.ok(syncFiles.some(f => f.includes(path.join('imported','rs'))))
+  assert.ok(syncFiles.every(f => !f.endsWith('.tar.gz')))
+  for (const file of syncFiles) await readDirectoryFile(realB,file)
+  for (const file of syncFiles) await readDirectoryFile(realB,file)
+  assert.equal(realB.prepare('SELECT count(*) n FROM session').get().n,1)
+  realA.exec(`UPDATE part SET data='{"type":"tool","output":"updated"}',time_updated=9`)
+  await publishDirectory(realA, syncDir, 'device-A')
+  for (const file of await walk(syncDir)) await readDirectoryFile(realB,file)
+  assert.equal(realB.prepare('SELECT data FROM part').get().data,'{"type":"tool","output":"updated"}')
   realA.close(); realB.close()
   console.log('PASS: full tool/event records, idempotency, updates, retained revisions, invalid pointers, re-export, corruption rejection')
 } finally {

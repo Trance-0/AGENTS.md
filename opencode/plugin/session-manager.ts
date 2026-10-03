@@ -200,7 +200,8 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
       return [
         { group: "Directory sync", expanded: true, key: "sync.directory", label: "Sync folder", type: "string", value: syncConfig.directory },
         { group: "Directory sync", key: "sync.mode", label: "Sync mode", type: "select", value: syncConfig.mode,
-          options: [{ value: "manual", label: "Manual — read on request" }, { value: "import", label: "Import — automatically read and merge" }, { value: "auto", label: "Auto — read, merge and publish" }] },
+          options: [{ value: "manual", label: "Manual — no active merge" }, { value: "local", label: "Local only — merge local AI agent stores" }, { value: "directory", label: "Directory — merge configured folder only" }, { value: "auto", label: "Auto — local agents and optional directory" }],
+          description: "Directory layout: projects/<name-id>/imported/<session-id>/<device-revision>.json; retained conflicts, raw provider records and operation history are content-addressed under history/. One-time .tar.gz export is separate. The remote folder defaults to blank." },
         { group: "Directory sync", key: "sync-directory", label: "Sync / read folder now", type: "action", action: "sync-directory" },
         // Indexing is maintenance, so it lives with the settings rather than
         // on the Info tab, which is for reading.
@@ -585,7 +586,7 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
       },
     },
     actions: {
-      "sync-directory": { label: "Sync / read folder now", hidden: true, run: () => DirectorySync.sync() },
+      "sync-directory": { label: "Sync / read folder now", hidden: true, run: () => DirectorySync.sync(() => Registry.get(PLUGIN_ID)!.actions!["import-all"]!.run()) },
       scan: {
         label: "Rescan stores",
         async run() {
@@ -1490,6 +1491,7 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
    * opencode is working; importing is not, and is left to an explicit request.
    */
   async function sweep(reason: string) {
+    if (reason !== "manual" && (await DirectorySync.config()).mode === "directory") return null
     if (!Registry.isEnabled(PLUGIN_ID)) return null
     if (sweepState.running) return null
 
@@ -1536,7 +1538,7 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
   }
 
   // One sweep shortly after startup, then on a slow timer — scheduled once for
-  DirectorySync.start()
+  DirectorySync.start(() => Registry.get(PLUGIN_ID)!.actions!["import-all"]!.run())
   // the whole process, not once per project instance, or 40+ copies would fire
   // together. `unref` keeps the timers from holding opencode open.
   if (!sweepState.scheduled) {

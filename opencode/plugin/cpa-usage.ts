@@ -128,6 +128,49 @@ function reportQuota(models: CPA.ModelUsage[]): void {
 /** Shared across instances, so the startup line is written once per process. */
 const LOADED_KEY = Symbol.for("@dsh/opencode-cpa-usage-loaded")
 
+/**
+ * Refresh the usage cache, mirroring what the dashboard's "Update model usage"
+ * action does. Silently skipped when the plugin is disabled or no management
+ * key is configured, since neither is an error at startup or on a timer.
+ */
+async function refreshUsage(reason: string): Promise<void> {
+  if (!Registry.isEnabled("cpa-usage")) return
+  const config = await CPA.resolveConfig()
+  if (!config.managementKey) return
+  try {
+    const usage = await CPA.modelUsage(config)
+    const low = usage.filter((entry) => tone(entry) === "red").length
+    reportQuota(usage)
+    Logs.log("cpa-usage", `${reason}: refreshed usage for ${usage.length} models${low > 0 ? `, ${low} low` : ""}`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    Logs.log("cpa-usage", `${reason}: usage refresh failed: ${message}`, "warn")
+  }
+}
+
+/**
+ * Tick once a minute and refresh when the cache is older than the configured
+ * interval. Reading the config on every tick means a changed (or zeroed)
+ * interval takes effect without a restart, and the coarse tick keeps the loop
+ * cheap. The timer is unref'd so it never keeps the process alive.
+ */
+function scheduleAutoRefresh(): void {
+  const timer = setTimeout(async () => {
+    try {
+      const config = await CPA.resolveConfig()
+      if (config.refreshMinutes > 0) {
+        const cache = CPA.cachedUsage()
+        if (!cache || Date.now() - cache.at >= config.refreshMinutes * 60_000) {
+          await refreshUsage("auto refresh")
+        }
+      }
+    } finally {
+      scheduleAutoRefresh()
+    }
+  }, 60_000)
+  timer.unref?.()
+}
+
 export const CpaUsage: Plugin = async () => {
   await Registry.init()
 
@@ -156,11 +199,27 @@ export const CpaUsage: Plugin = async () => {
           description: "Required for per-model quota. The API key is not accepted here.",
         },
         { key: "probePath", label: "Probe path", type: "string", value: config.probePath, placeholder: "/models" },
+        {
+          group: "Auto refresh",
+          key: "refreshMinutes",
+          label: "Refresh interval (minutes)",
+          type: "number",
+          value: config.refreshMinutes,
+          min: 0,
+          max: 1440,
+          description: "Refresh model usage automatically this often. 0 disables the timer.",
+        },
       ]
     },
     async update(key, value) {
-      const editable = ["baseURL", "apiKey", "managementURL", "managementKey", "probePath"]
+      const editable = ["baseURL", "apiKey", "managementURL", "managementKey", "probePath", "refreshMinutes"]
       if (!editable.includes(key)) throw new Error(`unknown setting: ${key}`)
+      if (key === "refreshMinutes") {
+        const minutes = Number(value)
+        if (!Number.isFinite(minutes) || minutes < 0) throw new Error("refreshMinutes must be a number ≥ 0")
+        await CPA.saveConfig({ refreshMinutes: minutes })
+        return
+      }
       const text = String(value).trim()
       if (!text && (key === "baseURL" || key === "probePath")) throw new Error(`${key} cannot be empty`)
       await CPA.saveConfig({ [key]: text })
@@ -287,9 +346,13 @@ export const CpaUsage: Plugin = async () => {
       "cpa-usage",
       `loaded — endpoint ${config.baseURL || "unset"}, ` +
         `api key ${config.apiKey ? "configured" : "missing"}, ` +
-        `management key ${config.managementKey ? "configured" : "missing"}`,
+        `management key ${config.managementKey ? "configured" : "missing"}, ` +
+        `auto refresh ${config.refreshMinutes > 0 ? `every ${config.refreshMinutes}m` : "off"}`,
       config.apiKey ? "info" : "warn",
     )
+    // Populate the cache at startup, then keep it fresh on the timer.
+    void refreshUsage("startup")
+    scheduleAutoRefresh()
   }
 
   return {

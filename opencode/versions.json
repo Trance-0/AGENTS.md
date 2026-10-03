@@ -3,37 +3,39 @@
   "plugins": [
     {
       "id": "plugin-manager",
-      "version": "1.1.10",
-      "promotedFrom": "1.1.0",
+      "version": "1.2.0",
+      "promotedFrom": "1.1.10",
       "notes": "Operation status is collapsible and attached to its widget; emitted browser script is syntax-checked."
     },
     {
       "id": "bark-notify",
-      "version": "1.0.5",
+      "version": "1.1.0",
+      "promotedFrom": "1.0.5",
       "notes": "The subscriber table sits on the Settings tab, beside the defaults its rows override."
     },
     {
       "id": "cpa-usage",
-      "version": "1.0.0",
-      "notes": "CliProxy quota and model catalog probing."
+      "version": "1.1.0",
+      "promotedFrom": "1.0.4",
+      "notes": "Per-account quota visibility, diagnostics and persistent operation logging."
     },
     {
       "id": "session-manager",
-      "version": "1.2.0",
-      "promotedFrom": "1.1.10",
-      "notes": "Full-history archive transfer with manual, import-only and automatic shared-folder synchronization."
+      "version": "1.3.0",
+      "promotedFrom": "1.2.0",
+      "notes": "Manual, local-only, directory-only and auto modes; incremental project/session JSON folders with retained conflict history."
     },
     {
       "id": "task-queue",
-      "version": "1.0.3",
-      "promotedFrom": "1.0.0",
-      "notes": "Summary model can be tested from its setting, reporting the reply, latency and whether it parses."
+      "version": "1.1.0",
+      "promotedFrom": "1.0.10",
+      "notes": "Cross-project task monitoring, model fallback routing, restart recovery and diagnostic history."
     },
     {
       "id": "session-rename",
-      "version": "1.0.2",
-      "promotedFrom": "1.0.0",
-      "notes": "Rename model can be tested from its setting, checking the reply yields a usable title."
+      "version": "1.1.0",
+      "promotedFrom": "1.0.3",
+      "notes": "Shared model selection and scratch-session exclusion for rename operations."
     }
   ]
 }

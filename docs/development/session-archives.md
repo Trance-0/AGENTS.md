@@ -2,20 +2,36 @@
 
 ## Shared-folder synchronization
 
-Session Manager 1.2.0 adds Directory sync settings. Choose a local folder backed
-by Nextcloud or another file synchronizer on each device. Modes are Manual
-(read on request), Import (automatically read and merge), and Auto (merge then
-publish). Automatic passes run on startup and every minute. Each device writes
-its own `device-<id>.tar.gz`; local SHA-256 cursors avoid importing unchanged
-archives. Failed or changing files are retried and never acknowledged as synced.
+Session Manager 1.3.0 separates directory synchronization from archive exports.
+Choose a folder backed by Nextcloud or another file synchronizer on each device.
+Modes are Manual (no active merge), Local only (merge Codex, Claude Code and dsh
+stores), Directory (use the configured folder only), and Auto (merge local stores
+and the shared directory when configured). The shared directory defaults to blank;
+local indexes and cursors stay in the plugin's local data/config directories.
+Automatic passes run on startup and every minute.
+
+Shared layout:
+
+```text
+projects/<project-name-id>/imported/<session-id>/<device-revision>.json
+conflicts/<hash-prefix>/<revision-hash>.json
+history/<hash-prefix>/<record-hash>.json
+```
+
+Per-session JSON revisions are immutable and updates do not overwrite another
+device's history. Conflicts preserve superseded records; history retains original
+provider records and operation logs. Local SHA-256 cursors skip unchanged files.
+Failed or changing files are retried and never acknowledged as synced.
+Existing `.tar.gz` snapshots are ignored by directory sync; use explicit archive
+import for those files. Directory sync does not create new archive snapshots.
 Do not copy `device.json` between machines: each device must retain its own ID.
 
 The configured folder for the owner's current device is
 `D:\Documents\Nextcloud\opencode-sync`; that path is local configuration and
 is not a default imposed on other installations.
 
-Restart OpenCode after installing session-manager 1.1.10 and plugin-manager
-1.1.10. Running processes retain the previous module implementation.
+Restart OpenCode after updating the plugins. Running processes retain the
+previous module implementation.
 
 On the source device, use Session Manager > Settings > Export complete session
 history to .tar.gz. On the destination, use Import from .tar.gz and supply the

@@ -17,6 +17,8 @@
 import fsp from "node:fs/promises"
 import path from "node:path"
 import { CONFIG_DIR } from "./paths.ts"
+import * as Scratch from "./scratch.ts"
+import * as ModelPicker from "./model-picker.ts"
 
 /** Sentinel meaning "no model", which leaves the plugin inactive. */
 export const NO_MODEL = ""
@@ -205,7 +207,7 @@ type Client = {
 }
 
 /** Title of the throwaway session the rename runs in. */
-export const SCRATCH_TITLE = "session-rename: proposing a title"
+export const SCRATCH_TITLE = Scratch.register("session-rename: proposing a title")
 
 /**
  * Sessions this plugin created to do its own work.
@@ -285,29 +287,10 @@ function withTimeout<T>(promise: Promise<T>): Promise<T | null> {
 /**
  * Models offered by the Settings dropdown.
  *
- * "none" is always first, since that is what turns the plugin off, and the
- * configured model is always present even when its provider is unreachable — a
- * dropdown that silently dropped the saved value would look like the setting
- * had been lost.
+ * Delegates to the shared picker so every plugin's list is built the same way;
+ * only the "none" wording differs, because what turning it off *means* differs
+ * per plugin.
  */
 export async function modelOptions(client: Client, current: string): Promise<Array<{ value: string; label: string }>> {
-  const options = [{ value: NO_MODEL, label: "none — renaming off" }]
-  const seen = new Set<string>()
-
-  try {
-    const response = await client.config?.providers()
-    for (const provider of (response?.data?.providers ?? []) as any[]) {
-      for (const model of Object.values(provider?.models ?? {}) as any[]) {
-        const id = `${provider.id}/${model.id}`
-        if (seen.has(id)) continue
-        seen.add(id)
-        options.push({ value: id, label: `${provider.name ?? provider.id} · ${model.name ?? model.id}` })
-      }
-    }
-  } catch {
-    // Fall through to whatever is configured.
-  }
-
-  if (current && !seen.has(current)) options.push({ value: current, label: `${current} (not currently available)` })
-  return options
+  return ModelPicker.options(client as any, current, "none — renaming off")
 }

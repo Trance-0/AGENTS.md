@@ -1,6 +1,7 @@
 /** Portable session records. Source paths are observations, never ownership. */
 import { createHash, randomUUID } from "node:crypto"
 import fsp from "node:fs/promises"
+import path from "node:path"
 import type { DatabaseSync, SQLInputValue } from "node:sqlite"
 import * as Archive from "./archive.ts"
 import * as DB from "./db.ts"
@@ -316,4 +317,88 @@ export async function importLocal(file: string, handle: Handle) {
     remember(db, { operation: { id: randomUUID(), action: "import", at: Date.now(), outcome: `failed: ${e instanceof Error ? e.message : String(e)}` } })
     throw e
   } finally { db.close() }
+}
+
+/** Incremental directory transfer. Archives are reserved for explicit export. */
+export async function publishDirectory(db: DatabaseSync, root: string, device: string,
+  report: (done: number, total: number) => void = () => {}) {
+  init(db)
+  const sessions = db.prepare('SELECT * FROM session ORDER BY id').all() as Row[]
+  const safe = (s: string) => s.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").slice(0, 80) || "unnamed"
+  async function put(relative: string, payload: string) {
+    const file = path.join(root, relative)
+    if (await fsp.readFile(file, "utf8").catch(() => "") === payload) return
+    await fsp.mkdir(path.dirname(file), { recursive: true })
+    const temp = `${file}.${process.pid}.${randomUUID()}.tmp`
+    await fsp.writeFile(temp, payload)
+    await fsp.rename(temp, file)
+  }
+  let written = 0
+  for (const session of sessions) {
+    const id = String(session.id)
+    const project = db.prepare('SELECT * FROM project WHERE id = ?').get(session.project_id!) as Row
+    const projectFolder = `${safe(String(project.name || project.worktree || "project").split(/[\\/]/).pop()!)}-${hash(String(project.id)).slice(0, 10)}`
+    const items: RecordEntry[] = [{ table: "project", row: project }]
+    for (const table of TABLES.filter((t) => t !== "project")) {
+      if (!columns(db, table).length) continue
+      let rows: Row[] = []
+      if (table === "project_directory") rows = db.prepare('SELECT * FROM project_directory WHERE project_id = ?').all(session.project_id!) as Row[]
+      else if (table === "workspace") rows = session.workspace_id ? db.prepare('SELECT * FROM workspace WHERE id = ?').all(session.workspace_id) as Row[] : []
+      else if (table === "session") rows = [session]
+      else if (table === "event" || table === "event_sequence") rows = db.prepare(`SELECT * FROM ${quote(table)} WHERE aggregate_id = ?`).all(id) as Row[]
+      else rows = db.prepare(`SELECT * FROM ${quote(table)} WHERE session_id = ?`).all(id) as Row[]
+      for (const row of rows) items.push({ table, row })
+    }
+    const payload = JSON.stringify({ version: 1, device, records: items })
+    // Immutable revisions let devices publish independently without overwriting
+    // each other's updates or using a shared mutable cursor.
+    const digest = hash(payload)
+    await put(path.join("projects", projectFolder, "imported", safe(id), `${safe(device)}-${digest}.json`), payload)
+    for (const record of items) remember(db, record)
+    report(++written, sessions.length)
+    if (written % 10 === 0) await new Promise((r) => setTimeout(r, 0))
+  }
+  // Original provider payloads, superseded records and operation history are
+  // independent of paths and remain available on a newly configured device.
+  for (const row of db.prepare(`SELECT hash,payload FROM ${HISTORY}`).iterate()) {
+    const r = row as { hash: string; payload: string }
+    const record = JSON.parse(r.payload) as RecordEntry
+    // Current records are already present in their project/session revision;
+    // only superseded records need another entry in the retained-history tree.
+    if (record.table && record.row) {
+      const schema = columns(db, record.table)
+      const keys = schema.filter((c) => c.pk).map((c) => c.name)
+      if (keys.length) {
+        const current = db.prepare(`SELECT * FROM ${quote(record.table)} WHERE ${keys.map((k) => `${quote(k)} = ?`).join(" AND ")}`).get(...keys.map((k) => record.row[k]!))
+        if (current && hash(JSON.stringify({ table: record.table, row: current })) === r.hash) continue
+      }
+    }
+    await put(path.join(record.table ? "conflicts" : "history", r.hash.slice(0, 2), `${r.hash}.json`), r.payload)
+  }
+  return written
+}
+
+export async function readDirectoryFile(db: DatabaseSync, file: string) {
+  const payload = await fsp.readFile(file, "utf8")
+  const parsed = JSON.parse(payload)
+  if (Array.isArray(parsed.records) && parsed.version === 1) return mergeRecords(db, parsed.records)
+  // History is content-addressed and cannot silently change beneath a cursor.
+  if (path.basename(file) !== `${hash(payload)}.json`) throw error("directory history checksum mismatch")
+  init(db)
+  remember(db, parsed as Stored)
+  const source = parsed.source as SourceRecord | undefined
+  if (source?.turns?.length) {
+    const d = source.descriptor
+    const kind = String(d.kind ?? "archive")
+    const nativeID = String(d.nativeID ?? String(d.key).slice(kind.length + 1))
+    const device = String(d.device ?? "archive")
+    const exists = db.prepare(`SELECT id FROM session WHERE json_extract(metadata,'$.imported.source') = ? AND json_extract(metadata,'$.imported.sourceID') = ? AND json_extract(metadata,'$.imported.device') = ?`).get(kind, nativeID, device)
+    if (!exists) {
+      const target = Identity.resolveOffline({ directory: String(d.directory ?? ""), recordedRemote: typeof d.remote === "string" ? d.remote : null })
+      DB.importSession(db, { target, title: String(d.sourceTitle || d.title || nativeID), turns: source.turns,
+        created: Number(d.created) || Date.now(), model: String(d.model ?? ""), source: kind, sourceID: nativeID, device })
+      return { imported: 1, merged: 0, skipped: 0 }
+    }
+  }
+  return { imported: 0, merged: 0, skipped: 1 }
 }

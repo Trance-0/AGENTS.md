@@ -19,19 +19,19 @@
  * model is an optional improvement on top of it.
  */
 
+import * as Scratch from "./scratch.ts"
+
 /** Sentinel meaning "no model — use the parser". Kept out of the model list. */
 export const NO_MODEL = ""
 
 /**
  * Title given to the throwaway session a model summary runs in.
  *
- * The task runner wraps every new session so it occupies a concurrency slot,
- * which would also wrap this one — and wrapping it queues a task, whose own
- * summary creates another scratch session, and so on. Exporting the title lets
- * the wrapper recognise and skip these, breaking the feedback loop at its
- * source rather than cleaning up after it.
+ * Registered centrally so every consumer — the task runner's wrapper and
+ * session-rename alike — skips it without having to know this module exists.
+ * See `scratch.ts` for why that matters.
  */
-export const SCRATCH_TITLE = "task-queue summary"
+export const SCRATCH_TITLE = Scratch.register("task-queue summary")
 
 /** Offered when nothing else is known; a small local model suits the job. */
 export const SUGGESTED_MODEL = "freetoken/Qwen3.8-27B-NVFP4"

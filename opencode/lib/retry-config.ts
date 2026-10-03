@@ -51,6 +51,11 @@ export type RetryConfig = Policy & {
    * model failure falls back to, so this is always optional.
    */
   summaryModel: string
+  /**
+   * Ordered `providerID/modelID` routes used when a queued session's selected
+   * model fails. The task's explicit model is always attempted first.
+   */
+  modelFallbacks: string[]
 }
 
 const CONFIG_PATH = path.join(CONFIG_DIR, "task-queue-retry.json")
@@ -65,6 +70,7 @@ export const DEFAULTS: RetryConfig = {
   retryIntervalSeconds: 300,
   pollSeconds: 30,
   summaryModel: SUGGESTED_MODEL,
+  modelFallbacks: [],
   ...DEFAULT_POLICY,
 }
 
@@ -85,6 +91,7 @@ export async function load(): Promise<RetryConfig> {
       rateLimitMode: parsed.rateLimitMode === "interval" ? "interval" : DEFAULTS.rateLimitMode,
       // An explicit "" means "no model"; only an absent key takes the default.
       summaryModel: typeof parsed.summaryModel === "string" ? parsed.summaryModel.trim() : DEFAULTS.summaryModel,
+      modelFallbacks: parseModelFallbacks(parsed.modelFallbacks),
       maxConcurrent: clamp(parsed.maxConcurrent, 1, 32, DEFAULTS.maxConcurrent),
       retryIntervalSeconds: clamp(parsed.retryIntervalSeconds, 10, 86_400, DEFAULTS.retryIntervalSeconds),
       pollSeconds: clamp(parsed.pollSeconds, 5, 3_600, DEFAULTS.pollSeconds),
@@ -97,6 +104,11 @@ export async function load(): Promise<RetryConfig> {
   }
 }
 
+function parseModelFallbacks(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : typeof value === "string" ? value.split(/[\n,]/) : []
+  return [...new Set(values.map(String).map((item) => item.trim()).filter((item) => item.includes("/")))]
+}
+
 function clamp(value: unknown, min: number, max: number, fallback: number): number {
   const n = Number(value)
   if (!Number.isFinite(n)) return fallback
@@ -104,7 +116,12 @@ function clamp(value: unknown, min: number, max: number, fallback: number): numb
 }
 
 export async function save(patch: Partial<RetryConfig>): Promise<RetryConfig> {
-  const next = { ...(await load()), ...patch }
+  const merged = { ...(await load()), ...patch }
+  // Normalise on the way in as well as on the way out: a caller may hand over
+  // whatever a text field produced, and a malformed route written here would be
+  // dispatched verbatim rather than rejected on the next read.
+  const next: RetryConfig = { ...merged, modelFallbacks: parseModelFallbacks(merged.modelFallbacks) }
+
   await fsp.mkdir(path.dirname(CONFIG_PATH), { recursive: true })
   const temp = CONFIG_PATH + ".tmp"
   await fsp.writeFile(temp, JSON.stringify(next, null, 2) + "\n", "utf8")

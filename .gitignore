@@ -15,6 +15,12 @@ opencode/dist/
 opencode/*.port
 opencode/*.pid
 
+# Plugin logs. These live under the opencode data directory, not here, but the
+# rule guards against a stray copy: they carry timings, paths and hostnames
+# that should not ship.
+logs/
+*.log
+
 # Editors and OS noise.
 .vscode/
 .idea/

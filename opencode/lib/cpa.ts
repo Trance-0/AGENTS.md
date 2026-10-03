@@ -20,6 +20,7 @@ const DEFAULT_HEADERS = [
   "x-ratelimit-remaining",
   "x-remaining-credits",
 ]
+const DEFAULT_REFRESH_MINUTES = 5
 
 export type Config = {
   baseURL: string
@@ -30,6 +31,8 @@ export type Config = {
   managementURL: string
   /** Management key. Distinct from `apiKey`: the `/v1` key is rejected with 403. */
   managementKey: string
+  /** Minutes between automatic usage refreshes; 0 disables the timer. */
+  refreshMinutes: number
 }
 
 export type Quota = {
@@ -68,6 +71,7 @@ export async function resolveConfig(): Promise<Config> {
     quotaHeaderNames: [...DEFAULT_HEADERS],
     managementURL: "",
     managementKey: process.env.CPA_MANAGEMENT_KEY ?? "",
+    refreshMinutes: DEFAULT_REFRESH_MINUTES,
   }
 
   // opencode's own config may already describe the cpa provider.
@@ -96,6 +100,9 @@ export async function resolveConfig(): Promise<Config> {
     if (Array.isArray(own.quotaHeaderNames)) config.quotaHeaderNames = own.quotaHeaderNames.map(String)
     if (typeof own.managementURL === "string" && own.managementURL.trim()) config.managementURL = own.managementURL
     if (typeof own.managementKey === "string" && own.managementKey.trim()) config.managementKey = own.managementKey
+    if (typeof own.refreshMinutes === "number" && Number.isFinite(own.refreshMinutes) && own.refreshMinutes >= 0) {
+      config.refreshMinutes = own.refreshMinutes
+    }
   }
 
   // The management API sits on the same host as the `/v1` endpoint by default.
@@ -211,11 +218,26 @@ export type Window = {
   resetsAt: number | null
 }
 
+/** What one account contributes to a pooled quota. */
+export type AccountUsage = {
+  /** The auth file this quota was read from. */
+  account: string
+  fiveHour: Window | null
+  weekly: Window | null
+  error?: string
+}
+
 export type ModelUsage = {
   model: string
   provider: string
-  /** The account (auth file) this quota belongs to. */
+  /**
+   * The account serving this model, or `N accounts` when several are pooled.
+   * Kept for display; `accounts` holds the per-account detail.
+   */
   account: string
+  /** Every enabled account behind this provider, in the order listed. */
+  accounts: AccountUsage[]
+  /** Pooled across `accounts`: what the provider can actually still serve. */
   fiveHour: Window | null
   weekly: Window | null
   error?: string
@@ -400,13 +422,72 @@ function modelFamily(model: string): string | null {
   return FAMILIES.find((family) => id.includes(family)) ?? null
 }
 
-async function claudeUsage(config: Config, account: AuthFile): Promise<Omit<ModelUsage, "model">> {
+/* ------------------------------------------------------------------ *
+ * Pooling across accounts
+ * ------------------------------------------------------------------ */
+
+/**
+ * Combine one window across several accounts.
+ *
+ * CliProxy rotates requests over every enabled account for a provider, so what
+ * is actually left is the *sum* of what each account has left, not whichever
+ * account happened to be read last. Three Codex accounts at 100%, 100% and 76%
+ * are not "76% remaining" — they are 92% of a budget three times the size.
+ *
+ * Percentages are therefore averaged, which is the same as summing the
+ * remaining capacity and dividing by the summed total when the accounts carry
+ * equal quotas. Unequal plans would need absolute token counts, and the
+ * provider endpoints do not report them.
+ *
+ * The reset is the *soonest* among accounts that are actually exhausted: that
+ * is the moment capacity returns. When nothing is exhausted the soonest reset
+ * of all is used, which is when the pool next grows.
+ */
+function poolWindows(windows: Array<Window | null>): Window | null {
+  const present = windows.filter((window): window is Window => window !== null)
+  if (present.length === 0) return null
+
+  const percents = present
+    .map((window) => window.remainingPercent)
+    .filter((percent): percent is number => percent !== null)
+
+  const remainingPercent =
+    percents.length === 0 ? null : Math.max(0, Math.min(100, percents.reduce((a, b) => a + b, 0) / percents.length))
+
+  // An account with nothing left is the one whose reset actually matters; if
+  // every account still has capacity, the earliest refresh is the next change.
+  const exhausted = present.filter((window) => (window.remainingPercent ?? 100) <= 0)
+  const candidates = (exhausted.length > 0 ? exhausted : present)
+    .map((window) => window.resetsAt)
+    .filter((at): at is number => at !== null && at > 0)
+
+  return { remainingPercent, resetsAt: candidates.length > 0 ? Math.min(...candidates) : null }
+}
+
+/** Pool every account of one provider into a single usage figure. */
+function poolAccounts(provider: string, accounts: AccountUsage[]): Omit<ModelUsage, "model"> {
+  const usable = accounts.filter((entry) => !entry.error)
+  // Every account failing is worth reporting; one failing among several is not,
+  // since the others still describe the pool.
+  const errors = accounts.filter((entry) => entry.error)
+
+  return {
+    provider,
+    account: accounts.length === 1 ? accounts[0].account : `${accounts.length} accounts`,
+    accounts,
+    fiveHour: poolWindows(usable.map((entry) => entry.fiveHour)),
+    weekly: poolWindows(usable.map((entry) => entry.weekly)),
+    ...(usable.length === 0 && errors.length > 0 ? { error: errors[0].error } : {}),
+  }
+}
+
+async function claudeUsage(config: Config, account: AuthFile): Promise<AccountUsage> {
   const result = await apiCall(config, account.authIndex, {
     method: "GET",
     url: "https://api.anthropic.com/api/oauth/usage",
     header: { Authorization: "Bearer $TOKEN$", "Content-Type": "application/json", "anthropic-beta": "oauth-2025-04-20" },
   })
-  const base = { provider: account.provider, account: account.name }
+  const base = { account: account.name }
   if (result.statusCode < 200 || result.statusCode >= 300) {
     return { ...base, fiveHour: null, weekly: null, error: `HTTP ${result.statusCode}` }
   }
@@ -414,7 +495,7 @@ async function claudeUsage(config: Config, account: AuthFile): Promise<Omit<Mode
   return { ...base, fiveHour: claudeWindow(body?.five_hour), weekly: claudeWindow(body?.seven_day) }
 }
 
-async function codexUsage(config: Config, account: AuthFile): Promise<Omit<ModelUsage, "model">> {
+async function codexUsage(config: Config, account: AuthFile): Promise<AccountUsage> {
   const result = await apiCall(config, account.authIndex, {
     method: "GET",
     url: "https://chatgpt.com/backend-api/wham/usage",
@@ -424,7 +505,7 @@ async function codexUsage(config: Config, account: AuthFile): Promise<Omit<Model
       "User-Agent": "codex_cli_rs/0.76.0",
     },
   })
-  const base = { provider: account.provider, account: account.name }
+  const base = { account: account.name }
   if (result.statusCode < 200 || result.statusCode >= 300) {
     return { ...base, fiveHour: null, weekly: null, error: `HTTP ${result.statusCode}` }
   }
@@ -445,8 +526,8 @@ const ANTIGRAVITY_AGENT = "antigravity/cli/1.0.13 (aidev_client; os_type=darwin;
 async function antigravityUsage(
   config: Config,
   account: AuthFile,
-): Promise<Array<Omit<ModelUsage, "model"> & { families: string[] }>> {
-  const base = { provider: account.provider, account: account.name }
+): Promise<Array<AccountUsage & { families: string[] }>> {
+  const base = { account: account.name }
   if (!account.projectID) {
     return [{ ...base, families: [], fiveHour: null, weekly: null, error: "no project id" }]
   }
@@ -518,27 +599,41 @@ export async function modelUsage(config: Config): Promise<ModelUsage[]> {
 async function fetchModelUsage(config: Config): Promise<ModelUsage[]> {
   const [owners, accounts] = await Promise.all([modelOwners(config), listAccounts(config)])
 
-  const byProvider = new Map<string, Omit<ModelUsage, "model">>()
-  const antigravityByFamily = new Map<string, Omit<ModelUsage, "model">>()
+  // Every account is collected per provider rather than overwriting a single
+  // slot: a provider with three accounts serves three accounts' worth of
+  // quota, and reporting only the last one read understates it badly.
+  const byProvider = new Map<string, AccountUsage[]>()
+  const antigravityByFamily = new Map<string, AccountUsage[]>()
+
+  const push = (map: Map<string, AccountUsage[]>, key: string, usage: AccountUsage) => {
+    const existing = map.get(key)
+    if (existing) existing.push(usage)
+    else map.set(key, [usage])
+  }
 
   await Promise.all(
     accounts.map(async (account) => {
       try {
         if (account.provider === "claude") {
-          byProvider.set("claude", await claudeUsage(config, account))
+          push(byProvider, "claude", await claudeUsage(config, account))
         } else if (account.provider === "codex") {
-          byProvider.set("codex", await codexUsage(config, account))
+          push(byProvider, "codex", await codexUsage(config, account))
         } else if (account.provider === "antigravity") {
           for (const group of await antigravityUsage(config, account)) {
-            for (const family of group.families) antigravityByFamily.set(family, group)
+            const usage: AccountUsage = {
+              account: group.account,
+              fiveHour: group.fiveHour,
+              weekly: group.weekly,
+              ...(group.error ? { error: group.error } : {}),
+            }
+            for (const family of group.families) push(antigravityByFamily, family, usage)
             // A group that names no family (or an outright failure) still needs
             // to surface, so it becomes the provider-wide fallback.
-            if (group.families.length === 0) byProvider.set("antigravity", group)
+            if (group.families.length === 0) push(byProvider, "antigravity", usage)
           }
         }
       } catch (error) {
-        byProvider.set(account.provider, {
-          provider: account.provider,
+        push(byProvider, account.provider, {
           account: account.name,
           fiveHour: null,
           weekly: null,
@@ -551,9 +646,11 @@ async function fetchModelUsage(config: Config): Promise<ModelUsage[]> {
   return [...owners.entries()]
     .map(([model, provider]) => {
       const family = provider === "antigravity" ? modelFamily(model) : null
-      const usage = (family ? antigravityByFamily.get(family) : null) ?? byProvider.get(provider)
-      if (!usage) return { model, provider, account: "", fiveHour: null, weekly: null, error: "no account" }
-      return { model, ...usage }
+      const pool = (family ? antigravityByFamily.get(family) : null) ?? byProvider.get(provider)
+      if (!pool || pool.length === 0) {
+        return { model, provider, account: "", accounts: [], fiveHour: null, weekly: null, error: "no account" }
+      }
+      return { model, ...poolAccounts(provider, pool) }
     })
     .sort((a, b) => a.model.localeCompare(b.model))
 }

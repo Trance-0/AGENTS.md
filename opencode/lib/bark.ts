@@ -463,7 +463,7 @@ export async function enqueue(kind: TypeID, context: Context): Promise<number> {
   return items.length
 }
 
-export async function flushQueue(state: State): Promise<Delivery[]> {
+export async function flushQueue(state: State, summarize?: Summarizer): Promise<Delivery[]> {
   const items = await loadQueue()
   const results: Delivery[] = []
   for (const item of items) {
@@ -472,7 +472,10 @@ export async function flushQueue(state: State): Promise<Delivery[]> {
     if (item.context === undefined && typeof legacy.title === "string") {
       results.push(...(await deliver(state, legacy.title, legacy.body ?? "")))
     } else {
-      results.push(...(await deliverEvent(state, item.kind, item.context ?? {})))
+      // A queued entry stores its context, so it is summarized on the way out
+      // rather than on the way in: the settings that apply are the ones in
+      // force when it is actually pushed.
+      results.push(...(await deliverEvent(state, item.kind, item.context ?? {}, summarize)))
     }
   }
   await saveQueue([])
@@ -488,10 +491,11 @@ export async function emit(
   state: State,
   kind: TypeID,
   context: Context,
+  summarize?: Summarizer,
 ): Promise<{ queued: number } | Delivery[] | null> {
   if (!state.subscribers.some((subscriber) => subscribes(state, kind, subscriber))) return null
   if (state.mode !== "work") return { queued: await enqueue(kind, context) }
-  return deliverEvent(state, kind, context)
+  return deliverEvent(state, kind, context, summarize)
 }
 
 export function summarize(results: Delivery[]): string {
