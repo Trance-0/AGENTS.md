@@ -22,7 +22,7 @@ for reference; the opencode ports supersede them.
 | `bark-notify` | Bark push notifications for opencode lifecycle events, with per-type templates |
 | `cpa-usage` | CliProxy quota and model-catalog probing |
 | `task-queue` | Durable task queue with concurrency, restart resume, and automatic transport/quota retry |
-| `session-manager` | Indexes and imports Claude Code, Codex and dsh transcripts into opencode |
+| `session-manager` | Indexes external transcripts and transfers full OpenCode session history between devices ([archive guide](docs/development/session-archives.md)) |
 | `session-rename` | Retitles sessions from their transcript using a model you pick |
 
 opencode has no plugin settings UI, so `plugin-manager` supplies one: run the

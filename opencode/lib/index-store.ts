@@ -55,6 +55,16 @@ export type IndexEntry = SourceSession & {
   conflict?: "grown" | "rewritten"
   /** Set when the source file disappeared. */
   missing?: boolean
+  /**
+   * Fingerprint at which the transcript was found to hold no usable turns.
+   *
+   * A file with bytes in it can still decode to nothing — a dsh session that
+   * recorded only metadata, say. Without remembering that, such an entry is
+   * neither imported nor importable, so it is retried by every sync and sits in
+   * the pending count forever. Keyed by fingerprint so a file that later grows
+   * real turns is tried again rather than written off permanently.
+   */
+  emptyAt?: string
 }
 
 export type Index = {
@@ -157,12 +167,15 @@ export function reconcile(index: Index, scanned: SourceSession[], device?: strin
       continue
     }
 
-    // Refresh the descriptor but preserve import and push bookkeeping.
+    // Refresh the descriptor but preserve import and push bookkeeping. The
+    // empty verdict is carried only while the file is unchanged: once it grows
+    // it deserves another read.
     const imported = existing.imported
     index.entries[session.key] = {
       ...session,
       ...(imported ? { imported } : {}),
       ...(existing.pcp ? { pcp: existing.pcp } : {}),
+      ...(existing.emptyAt === session.fingerprint ? { emptyAt: existing.emptyAt } : {}),
     }
     const entry = index.entries[session.key]
 
@@ -208,6 +221,7 @@ export function stats(index: Index) {
   let imported = 0
   let conflicts = 0
   let missing = 0
+  let empty = 0
 
   for (const entry of Object.values(index.entries)) {
     const kind = (byKind[entry.kind] ??= { total: 0, imported: 0 })
@@ -223,7 +237,11 @@ export function stats(index: Index) {
     }
     if (entry.conflict) conflicts++
     if (entry.missing) missing++
+    // Counted apart from `imported`: nothing was written, but nothing is owed
+    // either, so a pending figure derived from total - imported would never
+    // reach zero without subtracting these too.
+    if (entry.emptyAt && !entry.imported) empty++
   }
 
-  return { total: Object.keys(index.entries).length, imported, conflicts, missing, byKind, byDevice }
+  return { total: Object.keys(index.entries).length, imported, conflicts, missing, empty, byKind, byDevice }
 }

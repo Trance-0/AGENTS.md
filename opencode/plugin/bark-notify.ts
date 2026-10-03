@@ -525,6 +525,11 @@ export const BarkNotify: Plugin = async ({ client }) => {
           // switches, and the only useful question — which devices get
           // `approval`? — is answered by reading one column down the page.
           type: "table" as const,
+          // On the Settings tab, because this *is* configuration: the rows
+          // edit who receives what. Its table shape says how a list of devices
+          // is best read, not that it became read-only information.
+          tab: "settings" as const,
+          noun: "subscriber",
           columns: [
             { label: "key" },
             { label: "on" },

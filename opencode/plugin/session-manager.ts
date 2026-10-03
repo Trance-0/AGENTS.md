@@ -18,6 +18,10 @@
  *   - An append-only source that grew after import merges its new tail into the
  *     existing session. A source rewritten under the same id branches into a
  *     new session so nothing is silently rewritten.
+ *   - Transcripts go to three independent destinations, each with its own
+ *     cursor: opencode's database, a PCP deployment, and a local `.tar.gz`.
+ *     The archive is the only one readable with no server and no database,
+ *     which is what makes it the usable form of a backup.
  */
 
 import type { Plugin } from "@opencode-ai/plugin"
@@ -29,9 +33,16 @@ import * as Desktop from "../lib/desktop.ts"
 import * as Registry from "../lib/registry.ts"
 import * as PCP from "../lib/pcp.ts"
 import * as Logs from "../lib/logs.ts"
+import * as Archive from "../lib/archive.ts"
+import * as Progress from "../lib/progress.ts"
+import * as Transfer from "../lib/session-transfer.ts"
+import * as DirectorySync from "../lib/directory-sync.ts"
 import { LARGE_FILE_BYTES, readTurns, scanAll } from "../lib/sources.ts"
 import { local as localDevice } from "../lib/device.ts"
+import { DATA_DIR } from "../lib/paths.ts"
 import type { IndexEntry } from "../lib/index-store.ts"
+import path from "node:path"
+import fsp from "node:fs/promises"
 
 type Logger = (level: "debug" | "info" | "warn" | "error", message: string, extra?: Record<string, unknown>) => void
 
@@ -45,6 +56,15 @@ const MAX_TURNS = 4000
 
 /** Minimum gap between background sweeps. */
 const RESCAN_INTERVAL_MS = 10 * 60 * 1000
+
+/**
+ * Where a `.tar.gz` export lands when the user names no directory.
+ *
+ * Under the data directory rather than the config one: an archive is a dump of
+ * operational data, and must not travel when the config is copied to another
+ * machine — which is the very thing the archive itself is for.
+ */
+const EXPORT_DIR = path.join(DATA_DIR, "session-exports")
 
 function summarize(entry: IndexEntry) {
   return {
@@ -76,6 +96,46 @@ const SOURCE_LABEL: Record<string, string> = {
   claude: "Claude Code",
   codex: "Codex",
   dsh: "dsh",
+}
+
+/**
+ * The chips offered over the projects tree, worst state first.
+ *
+ * "Which projects still owe an import" is the question the tree is usually
+ * asked, and answering it previously meant expanding every project in turn.
+ */
+const PROJECT_STATUS = ["conflict", "pending", "synced"] as const
+
+function projectStatus(state: { pending: number; conflicts: number }): (typeof PROJECT_STATUS)[number] {
+  if (state.conflicts > 0) return "conflict"
+  if (state.pending > 0) return "pending"
+  return "synced"
+}
+
+/**
+ * Why one transcript is still awaiting review.
+ *
+ * `rewritten` is the only one that loses something on import — it branches into
+ * a new session rather than merging — so it is worth naming separately from a
+ * transcript that merely grew. `empty` is a source file with no bytes in it,
+ * which an import can only skip; without its own name it would sit under
+ * "pending" forever, making that count permanently unreachable.
+ */
+const REVIEW_STATE = ["rewritten", "grown", "pending", "empty"] as const
+
+/** Rows the pending table shows before it starts truncating. */
+const REVIEW_LIMIT = 200
+
+function reviewState(entry: IndexEntry): (typeof REVIEW_STATE)[number] {
+  if (entry.conflict === "rewritten") return "rewritten"
+  if (entry.conflict === "grown") return "grown"
+  if (entry.emptyAt === entry.fingerprint) return "empty"
+  return "pending"
+}
+
+/** Compare paths the way the two stores spell them: either slash, either case. */
+function normalize(directory: string): string {
+  return directory.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
 }
 
 /**
@@ -124,11 +184,24 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
     title: "Session Manager",
     description: "Index Claude Code, Codex and dsh transcripts and import them into opencode.",
     async settings() {
+      const syncConfig = await DirectorySync.config()
       const config = await PCP.resolveConfig()
       const index = await Index.load()
       const counts = Index.stats(index)
 
+      // Transcripts that decoded to nothing are subtracted: they are neither
+      // imported nor importable, so counting them as owed leaves a figure that
+      // never reaches zero no matter how often the button is pressed.
+      const pending = counts.total - counts.imported - counts.empty
+      const unpushed = Object.values(index.entries).filter(
+        (entry) => !entry.missing && (!entry.pcp || entry.pcp.fingerprint !== entry.fingerprint),
+      ).length
+
       return [
+        { group: "Directory sync", expanded: true, key: "sync.directory", label: "Sync folder", type: "string", value: syncConfig.directory },
+        { group: "Directory sync", key: "sync.mode", label: "Sync mode", type: "select", value: syncConfig.mode,
+          options: [{ value: "manual", label: "Manual — read on request" }, { value: "import", label: "Import — automatically read and merge" }, { value: "auto", label: "Auto — read, merge and publish" }] },
+        { group: "Directory sync", key: "sync-directory", label: "Sync / read folder now", type: "action", action: "sync-directory" },
         // Indexing is maintenance, so it lives with the settings rather than
         // on the Info tab, which is for reading.
         {
@@ -141,13 +214,97 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
             `every ${RESCAN_INTERVAL_MS / 60000} minutes; this forces one now. ` +
             `Currently ${counts.total} transcripts, ${counts.imported} imported.`,
         },
-        { key: "baseURL", label: "PCP base URL", type: "string", value: config.baseURL, placeholder: "https://…" },
-        { key: "scopedToken", label: "PCP scoped token", type: "string", value: config.scopedToken, secret: true, placeholder: "pcp_…" },
+        // Importing and pushing are the plugin's two bulk operations, and both
+        // were previously reachable only by asking a model to call the tool.
+        // They are the reason the settings page exists, so they belong here.
+        {
+          group: "Import from Claude Code, Codex and dsh",
+          expanded: true,
+          key: "import-all",
+          label: pending > 0 ? `Import ${pending} pending sessions` : "Import pending sessions",
+          type: "action",
+          action: "import-all",
+          description:
+            pending > 0
+              ? `${pending} indexed transcripts are not in opencode yet. Importing scans first, then writes ` +
+                `every one of them into opencode's database; sessions with fewer than two turns are skipped.`
+              : "Every indexed transcript is already in opencode. Rescan first if a new one should have appeared.",
+        },
+        // The offline destination. Unlike PCP this needs no server, which is
+        // what makes it the one usable as a backup or to carry work onto a
+        // machine that has nothing set up yet.
+        {
+          group: "Export to a local archive",
+          expanded: true,
+          key: "exportDir",
+          label: "Archive folder",
+          type: "string",
+          value: config.exportDir,
+          placeholder: EXPORT_DIR,
+          description: `Where the .tar.gz is written. Empty uses ${EXPORT_DIR}.`,
+        },
+        {
+          group: "Export to a local archive",
+          key: "archive-all",
+          label: "Export complete session history to .tar.gz",
+          type: "action",
+          action: "archive-all",
+          description:
+            "Exports native and imported OpenCode sessions, messages, tool records, events, source payloads and retained revisions. Unavailable source pointers remain recorded.",
+        },
+        {
+          group: "Export to a local archive",
+          key: "import-archive",
+          label: "Import from .tar.gz…",
+          type: "action",
+          action: "import-archive",
+          prompt: "Path to the archive. Leave empty for the newest one in the folder above.",
+          description:
+            "Imports a full-history version 2 archive. Stable record IDs merge duplicates; newer revisions update records while both histories are retained. Older text-only archives require a fresh export.",
+        },
+        {
+          group: "Export to PCP",
+          expanded: true,
+          key: "baseURL",
+          label: "PCP base URL",
+          type: "string",
+          value: config.baseURL,
+          placeholder: "https://…",
+        },
+        {
+          group: "Export to PCP",
+          key: "scopedToken",
+          label: "PCP scoped token",
+          type: "string",
+          value: config.scopedToken,
+          secret: true,
+          placeholder: "pcp_…",
+        },
+        {
+          group: "Export to PCP",
+          key: "export-all",
+          label: unpushed > 0 ? `Push ${unpushed} sessions to PCP` : "Push sessions to PCP",
+          type: "action",
+          action: "export-all",
+          description:
+            unpushed > 0
+              ? `${unpushed} transcripts have not reached PCP, or grew since they last did. Each resumes from ` +
+                `its own remote cursor, so only the new turns are uploaded.`
+              : "Every indexed transcript has reached PCP at its current length.",
+        },
       ]
     },
     async update(key, value) {
-      if (key !== "baseURL" && key !== "scopedToken") throw new Error(`unknown setting: ${key}`)
       const text = String(value).trim()
+      if (key === "sync.directory") { await DirectorySync.configure({ directory: text }); return }
+      if (key === "sync.mode") { await DirectorySync.configure({ mode: text as DirectorySync.Config["mode"] }); return }
+      // The archive folder may be cleared, which restores the default; the two
+      // PCP fields cannot, because an empty one is not a usable endpoint.
+      if (key === "exportDir") {
+        await PCP.saveConfig({ exportDir: text })
+        return
+      }
+      if (key !== "baseURL" && key !== "scopedToken") throw new Error(`unknown setting: ${key}`)
       if (!text) throw new Error(`${key} cannot be empty`)
       await PCP.saveConfig({ [key]: text })
     },
@@ -176,7 +333,7 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
       return [
         { label: "sources", value: counts.total, tone: "muted" },
         { label: "imported", value: counts.imported, tone: counts.imported > 0 ? "ok" : "muted" },
-        { label: "pending", value: counts.total - counts.imported, tone: counts.total > counts.imported ? "warn" : "muted" },
+        { label: "pending", value: counts.total - counts.imported - counts.empty, tone: counts.total - counts.imported - counts.empty > 0 ? "warn" : "muted" },
         { label: "conflicts", value: counts.conflicts, tone: counts.conflicts > 0 ? "error" : "muted" },
         { label: "opencode sessions", value: live.sessions, tone: "ok" },
         { label: "native", value: native, tone: "muted" },
@@ -185,12 +342,12 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
       ]
     },
     /**
-     * The Info tab: search, and the projects each session belongs to.
+     * The Info tab: search, the pending queue, and the projects tree.
      *
-     * Deliberately only those two. The flat list of every indexed transcript
-     * that used to sit here duplicated what the tree now shows per project,
-     * and was capped anyway — search is the better answer to "where is that
-     * session", and `session_list` still gives the raw index to a model.
+     * The pending table is deliberately not a second copy of the tree. The tree
+     * answers "where is this session"; the table answers "what still has to be
+     * reviewed", which is a homogeneous list of the same four facts per row —
+     * exactly the shape cards are worst at and a table is for.
      */
     async panels() {
       // Every project opencode knows about, with its sessions loaded on
@@ -208,12 +365,73 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
         // Unreadable database: fall back to the flat list below.
       }
 
+      const backlog = await projectBacklog(projects)
+
       const mergeTargets = projects.map((project) => ({
         value: project.id,
         label: `${project.name} (${project.sessions})`,
       }))
 
+      // What still has to be reviewed: never imported, or changed since it was.
+      // Transcripts already found to hold nothing are listed too — they are the
+      // explanation for a pending count that stopped falling — but as their own
+      // "empty" state, so they never read as work owed.
+      const index = await Index.load().catch(() => null)
+      const review = index
+        ? Object.values(index.entries)
+            .filter((entry) => !entry.missing)
+            .filter((entry) => entry.conflict || !entry.imported)
+            .sort((a, b) => b.modified - a.modified)
+        : []
+
       return [
+        {
+          key: "review",
+          type: "table" as const,
+          noun: "session",
+          title: "Pending review",
+          description:
+            review.length
+              ? `${review.length} transcripts are not in opencode at their current length. ` +
+                "Import one to bring it in, or read it first to see what it holds."
+              : "Every indexed transcript is in opencode at its current length.",
+          columns: [
+            { label: "state" },
+            { label: "source" },
+            { label: "size", align: "right" as const },
+            { label: "modified" },
+            { label: "device" },
+          ],
+          // The same vocabulary the projects tree uses, so "pending" means one
+          // thing across the page.
+          filters: [...REVIEW_STATE],
+          empty: "Nothing pending — every transcript is imported and unchanged since.",
+          action: "import-all",
+          items: review.slice(0, REVIEW_LIMIT).map((entry) => {
+            const state = reviewState(entry)
+            const tone =
+              state === "rewritten" ? ("error" as const) : state === "empty" ? ("muted" as const) : ("warn" as const)
+            return {
+              title: entry.sourceTitle || entry.title || "(untitled)",
+              subtitle: entry.directory || undefined,
+              group: state,
+              tone,
+              fields: [
+                { label: "state", value: state, tone },
+                { label: "source", value: SOURCE_LABEL[entry.kind] ?? entry.kind },
+                { label: "size", value: entry.size < 1024 ? `${entry.size} B` : `${Math.round(entry.size / 1024)} KB` },
+                { label: "modified", value: new Date(entry.modified).toISOString().slice(0, 16).replace("T", " ") },
+                { label: "device", value: entry.device || "—" },
+              ],
+              // An empty source has nothing to import, so it gets no button
+              // that could only report having done nothing.
+              controls:
+                state === "empty"
+                  ? []
+                  : [{ type: "button" as const, action: "import-one", label: "Import", input: entry.key }],
+            }
+          }),
+        },
         {
           key: "projects",
           type: "tree" as const,
@@ -223,17 +441,31 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
             "Expand a project to load its sessions; each card is labelled with the source it came from. " +
             "Use the ⋯ menu to rename a project, add a directory, or merge it into another.",
           items: [],
-          groups: projects.map((project) => ({
+          // Which projects still owe work, without expanding each one. The
+          // counts come from the index, so a project whose Codex transcript
+          // grew is visible as such before anything is imported.
+          filters: [...PROJECT_STATUS],
+          groups: projects.map((project) => {
+            const state = backlog.get(project.id) ?? { pending: 0, conflicts: 0, imported: 0 }
+            return {
             id: project.id,
             title: project.name,
+            group: projectStatus(state),
             subtitle: project.directories.length > 1
               ? `${project.worktree}  (+${project.directories.length - 1} more)`
               : project.worktree,
             count: project.sessions,
+            tone: state.conflicts > 0 ? ("error" as const) : state.pending > 0 ? ("warn" as const) : undefined,
             fields: [
               ...Object.entries(project.bySource)
                 .sort((a, b) => b[1] - a[1])
                 .map(([source, n]) => ({ label: source, value: String(n) })),
+              ...(state.pending > 0
+                ? [{ label: "pending", value: String(state.pending), tone: "warn" as const }]
+                : []),
+              ...(state.conflicts > 0
+                ? [{ label: "conflicts", value: String(state.conflicts), tone: "error" as const }]
+                : []),
               ...(project.lastActivity
                 ? [{ label: "active", value: new Date(project.lastActivity).toISOString().slice(0, 10) }]
                 : []),
@@ -269,7 +501,8 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
                 options: mergeTargets.filter((target) => target.value !== project.id),
               },
             ],
-          })),
+            }
+          }),
           empty: "No projects yet — import some sessions first.",
           /**
            * One project's sessions, fetched when the group is expanded.
@@ -352,6 +585,7 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
       },
     },
     actions: {
+      "sync-directory": { label: "Sync / read folder now", hidden: true, run: () => DirectorySync.sync() },
       scan: {
         label: "Rescan stores",
         async run() {
@@ -359,6 +593,211 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
           const result = await sweep("manual")
           if (!result) return "a scan is already running"
           return `scanned ${result.scanned}; ${result.added.length} new, ${result.grown.length} grown`
+        },
+      },
+
+      /**
+       * The importer and the exporter, as buttons.
+       *
+       * Both were previously reachable only through `session_sync_all` and
+       * `pcp_sync` — a model had to be asked to run the plugin's own bulk
+       * operation, which is not something the Settings tab should require.
+       */
+      "import-all": {
+        label: "Import pending sessions",
+        async run() {
+          if (!Registry.isEnabled(PLUGIN_ID)) return "session-manager is disabled"
+          if (Progress.running(PLUGIN_ID, "import-all")) return "An import is already running."
+
+          const handle = Progress.start(PLUGIN_ID, "import-all", "Scanning the session stores…")
+          try {
+            const device = await localDevice()
+            const index = await Index.load()
+            Index.reconcile(index, await scanAll(), device.id)
+
+            const planned = pendingImports(index)
+            if (planned.length === 0) {
+              await Index.save(index)
+              handle.finish("done", "Nothing to import — everything is already in opencode.")
+              return "Nothing to import — every indexed transcript is already in opencode."
+            }
+
+            handle.step(0, planned.length, `Importing ${planned.length} sessions`)
+            const { tally, failures } = await importBatch(index, planned, (done, total) =>
+              handle.step(done, total, `Importing ${done}/${total}: ${planned[done - 1]!.title.slice(0, 60)}`),
+            )
+            for (const failure of failures) handle.log(`${failure.key}: ${failure.error}`, "error")
+
+            const written = tally.imported + tally.merged + tally.branched
+            const summary =
+              `Imported ${tally.imported}, merged ${tally.merged}, branched ${tally.branched} of ${planned.length}` +
+              (failures.length ? `; ${failures.length} failed.` : ".")
+            handle.finish(failures.length ? "failed" : "done", summary)
+            return summary + (written > 0 ? " Restart opencode to see them in the session picker." : "")
+          } catch (error) {
+            handle.finish("failed", error instanceof Error ? error.message : String(error))
+            throw error
+          }
+        },
+      },
+
+      /**
+       * Import one transcript, from its row in the pending table.
+       *
+       * The row-level counterpart of `import-all`: reviewing a queue usually
+       * means acting on one entry, not on all of it.
+       */
+      "import-one": {
+        label: "Import this session",
+        hidden: true,
+        async run(input) {
+          const [key] = splitInput(input)
+          if (!key) throw new Error("Pick a session to import")
+
+          const index = await Index.load()
+          const entry = index.entries[key]
+          if (!entry) throw new Error(`Unknown session key: ${key}`)
+          if (entry.missing) throw new Error(`Source file for ${key} no longer exists`)
+
+          const result = await importOne(entry, await resolverFor(index), false)
+          await Index.save(index)
+          log("info", `${result.status}: ${key}`)
+          return `${result.status}: ${entry.sourceTitle || entry.title}`
+        },
+      },
+
+      "archive-all": {
+        label: "Export sessions to .tar.gz",
+        async run() {
+          if (!Registry.isEnabled(PLUGIN_ID)) return "session-manager is disabled"
+          if (Progress.running(PLUGIN_ID, "archive-all")) return "An export is already running."
+
+          const handle = Progress.start(PLUGIN_ID, "archive-all", "Scanning the session stores…")
+          try {
+            const config = await PCP.resolveConfig()
+            const device = await localDevice()
+            const index = await Index.load()
+            Index.reconcile(index, await scanAll(), device.id)
+            await Index.save(index)
+
+            // Everything present, not just what is pending: an archive is a
+            // copy of the transcripts, and one missing the sessions already
+            // imported would be useless as the backup it exists to be.
+            const planned = Object.values(index.entries)
+              .filter((entry) => !entry.missing)
+              .sort((a, b) => b.modified - a.modified)
+
+            const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")
+            const file = path.join(config.exportDir || EXPORT_DIR, `sessions-${device.id}-${stamp}.tar.gz`)
+            handle.step(0, planned.length, `Exporting ${planned.length} sessions`)
+            handle.log(`writing ${file}`)
+
+            const result = await archiveBatch(file, planned, (done, total) =>
+              handle.step(done, total, `Exporting history ${done}/${total}`),
+            )
+            for (const failure of result.failures) handle.log(`${failure.key}: ${failure.error}`, "warn")
+
+            const mb = (result.bytes / 1024 / 1024).toFixed(1)
+            const summary =
+              `Exported ${result.sessions} sessions (${mb} MB) to ${result.file}` +
+              (result.failures.length ? `; ${result.failures.length} could not be read.` : ".")
+            handle.finish("done", summary)
+            return summary
+          } catch (error) {
+            handle.finish("failed", error instanceof Error ? error.message : String(error))
+            throw error
+          }
+        },
+      },
+
+      /**
+       * Read an archive back in.
+       *
+       * Given no path it takes the newest archive in the configured folder,
+       * which is what "restore what I just exported" means; a path names any
+       * other file, including one carried from another device.
+       */
+      "import-archive": {
+        label: "Import from .tar.gz",
+        async run(input) {
+          if (!Registry.isEnabled(PLUGIN_ID)) return "session-manager is disabled"
+          if (Progress.running(PLUGIN_ID, "import-archive")) return "An archive import is already running."
+
+          const handle = Progress.start(PLUGIN_ID, "import-archive", "Opening the archive…")
+          try {
+            const config = await PCP.resolveConfig()
+            const folder = config.exportDir || EXPORT_DIR
+            const [named] = splitInput(input)
+            let file = named.trim()
+
+            if (!file) {
+              const entries = await fsp.readdir(folder).catch(() => [] as string[])
+              const archives = entries.filter((name) => name.endsWith(".tar.gz")).sort()
+              if (archives.length === 0) {
+                handle.finish("failed", `No .tar.gz found in ${folder}`)
+                return `No archive found in ${folder} — export one first, or give a path.`
+              }
+              // Lexical order is chronological: the names are timestamped.
+              file = path.join(folder, archives[archives.length - 1]!)
+              handle.log(`no path given — using the newest archive in ${folder}`)
+            } else if (!path.isAbsolute(file)) {
+              file = path.join(folder, file)
+            }
+
+            await fsp.access(file)
+            const tally = await importArchive(file, handle)
+            const summary =
+              `Imported ${tally.imported}, merged ${tally.merged}, skipped ${tally.skipped} already current` +
+              (tally.failed ? `; ${tally.failed} failed.` : ".")
+            handle.finish(tally.failed ? "failed" : "done", summary)
+            return (
+              summary +
+              (tally.imported + tally.merged > 0 ? " Restart opencode to see them in the session picker." : "")
+            )
+          } catch (error) {
+            handle.finish("failed", error instanceof Error ? error.message : String(error))
+            throw error
+          }
+        },
+      },
+
+      "export-all": {
+        label: "Push sessions to PCP",
+        async run() {
+          if (!Registry.isEnabled(PLUGIN_ID)) return "session-manager is disabled"
+          if (Progress.running(PLUGIN_ID, "export-all")) return "A push is already running."
+
+          const handle = Progress.start(PLUGIN_ID, "export-all", "Scanning the session stores…")
+          try {
+            const config = await PCP.resolveConfig()
+            const device = await localDevice()
+            const index = await Index.load()
+            Index.reconcile(index, await scanAll(), device.id)
+
+            const planned = pendingPushes(index)
+            if (planned.length === 0) {
+              await Index.save(index)
+              handle.finish("done", "Nothing to push — PCP is up to date.")
+              return "Nothing to push — PCP holds every indexed transcript at its current length."
+            }
+
+            handle.step(0, planned.length, `Pushing ${planned.length} sessions to ${config.baseURL}`)
+            const { tally, results } = await pushBatch(index, config, planned, (done, total) =>
+              handle.step(done, total, `Pushing ${done}/${total}: ${planned[done - 1]!.title.slice(0, 60)}`),
+            )
+            for (const result of results) {
+              if (result.status === "failed") handle.log(`${result.key}: ${result.error}`, "error")
+            }
+
+            const summary =
+              `Pushed ${tally.pushed} of ${planned.length} to ${config.baseURL}` +
+              (tally.failed ? `; ${tally.failed} failed.` : ".")
+            handle.finish(tally.failed ? "failed" : "done", summary)
+            return summary
+          } catch (error) {
+            handle.finish("failed", error instanceof Error ? error.message : String(error))
+            throw error
+          }
         },
       },
 
@@ -508,6 +947,42 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
   })
 
   /**
+   * How much each project still owes, taken from the index.
+   *
+   * A project is matched to index entries by working directory, because that is
+   * exactly what `importSession` registers against the project row — no git or
+   * remote resolution is repeated here, so this stays cheap enough for a panel
+   * the dashboard polls. A pending transcript in a directory no project owns
+   * yet belongs to no project until its first import, and is counted by the
+   * Settings tab's totals instead.
+   */
+  async function projectBacklog(projects: DB.ProjectRow[]) {
+    const state = new Map<string, { pending: number; conflicts: number; imported: number }>()
+    const byDirectory = new Map<string, string>()
+    for (const project of projects) {
+      state.set(project.id, { pending: 0, conflicts: 0, imported: 0 })
+      for (const directory of [project.worktree, ...project.directories]) {
+        if (directory) byDirectory.set(normalize(directory), project.id)
+      }
+    }
+
+    const index = await Index.load().catch(() => null)
+    if (!index) return state
+
+    for (const entry of Object.values(index.entries)) {
+      if (entry.missing) continue
+      const projectID = entry.imported?.projectID ?? byDirectory.get(normalize(entry.directory))
+      const counts = projectID ? state.get(projectID) : undefined
+      if (!counts) continue
+
+      if (entry.conflict) counts.conflicts++
+      else if (entry.imported) counts.imported++
+      else if (entry.emptyAt !== entry.fingerprint) counts.pending++
+    }
+    return state
+  }
+
+  /**
    * Build a resolver primed with every remote the index has seen.
    *
    * Sharing learned remotes across the whole index is what keeps sessions that
@@ -527,7 +1002,14 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
     force: boolean,
   ) {
     const turns = (await readTurns(entry, LARGE_FILE_BYTES)).slice(0, MAX_TURNS)
-    if (turns.length === 0) return { key: entry.key, status: "empty" as const }
+    if (turns.length === 0) {
+      // Remembered against this fingerprint, so a transcript that decodes to
+      // nothing stops being re-read by every sync and stops counting as owed.
+      // A later version of the same file has a new fingerprint and is retried.
+      entry.emptyAt = entry.fingerprint
+      return { key: entry.key, status: "empty" as const }
+    }
+    delete entry.emptyAt
 
     // The remote recorded in the transcript is what lets a session captured on
     // another device resolve onto the same project as its local counterparts.
@@ -662,6 +1144,345 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
     }
   }
 
+  /** Indexed transcripts that opencode does not hold at their current length. */
+  function pendingImports(index: Index.Index, source?: string) {
+    return Object.values(index.entries)
+      .filter((entry) => !entry.missing)
+      .filter((entry) => (source ? entry.kind === source : true))
+      // A transcript already found to decode to nothing at this exact
+      // fingerprint owes nothing; re-reading it every pass only ever produces
+      // the same verdict.
+      .filter((entry) => entry.emptyAt !== entry.fingerprint)
+      .filter((entry) => !entry.imported || entry.conflict)
+      .sort((a, b) => b.modified - a.modified)
+  }
+
+  /** Indexed transcripts PCP does not hold at their current length. */
+  function pendingPushes(index: Index.Index) {
+    return Object.values(index.entries)
+      .filter((entry) => !entry.missing)
+      .filter((entry) => !entry.pcp || entry.pcp.fingerprint !== entry.fingerprint)
+      .sort((a, b) => b.modified - a.modified)
+  }
+
+  /**
+   * Import a batch, reporting progress and persisting as it goes.
+   *
+   * Shared by the `session_sync_all` tool and the Settings button so the two
+   * cannot drift: the button is the same operation with no model in the loop.
+   */
+  async function importBatch(
+    index: Index.Index,
+    planned: IndexEntry[],
+    progress?: (done: number, total: number, tally: Record<string, number>) => void,
+    aborted?: () => boolean,
+  ) {
+    const tally = { imported: 0, merged: 0, branched: 0, skipped: 0, empty: 0, failed: 0 }
+    const failures: Array<{ key: string; error: string }> = []
+    const resolver = await resolverFor(index)
+
+    for (const [position, entry] of planned.entries()) {
+      if (aborted?.()) break
+      progress?.(position + 1, planned.length, tally)
+
+      try {
+        const result = await importOne(entry, resolver, false)
+        if (result.status === "empty") tally.empty++
+        else if (result.status === "merged") tally.merged++
+        else if (result.status === "branched") tally.branched++
+        else if (result.status === "imported") tally.imported++
+        else tally.skipped++
+      } catch (error) {
+        tally.failed++
+        const message = error instanceof Error ? error.message : String(error)
+        failures.push({ key: entry.key, error: message })
+        log("warn", `import failed for ${entry.key}: ${message}`)
+      }
+
+      // Persist incrementally so an interrupted run does not redo work.
+      if (position % 20 === 19) await Index.save(index)
+    }
+
+    await Index.save(index)
+    log("info", "sync complete", { ...tally })
+    return { tally, failures }
+  }
+
+  /** Push a batch to PCP, resuming each session from its own remote cursor. */
+  async function pushBatch(
+    index: Index.Index,
+    config: PCP.Config,
+    planned: IndexEntry[],
+    progress?: (done: number, total: number, tally: Record<string, number>) => void,
+    aborted?: () => boolean,
+  ) {
+    const tally: Record<string, number> = { pushed: 0, "up-to-date": 0, empty: 0, failed: 0 }
+    const results: Array<Record<string, unknown>> = []
+
+    for (const [position, entry] of planned.entries()) {
+      if (aborted?.()) break
+      progress?.(position + 1, planned.length, tally)
+
+      try {
+        const result = await pushOne(entry, config, false)
+        tally[result.status] = (tally[result.status] ?? 0) + 1
+        results.push(result)
+      } catch (error) {
+        tally.failed++
+        const message = error instanceof Error ? error.message : String(error)
+        results.push({ key: entry.key, status: "failed", error: message })
+        log("warn", `PCP push failed for ${entry.key}: ${message}`)
+      }
+
+      // Persist incrementally so an interrupted run never re-uploads turns.
+      if (position % 20 === 19) await Index.save(index)
+    }
+
+    await Index.save(index)
+    log("info", "PCP sync complete", { ...tally })
+    return { tally, results }
+  }
+
+  /**
+   * Write transcripts to a local `.tar.gz`.
+   *
+   * The third destination, alongside opencode's database and PCP: a single file
+   * that needs no server and no database to read, which is what makes it the
+   * one usable for a backup or for moving work onto a machine that has neither.
+   *
+   * Each session becomes `sessions/<kind>/<nativeID>.json` holding its
+   * descriptor and its normalised turns, so an archive is self-describing —
+   * `manifest.json` lists what is inside but nothing depends on it. Turns are
+   * read one session at a time and handed straight to the writer, so the
+   * archive streams rather than being assembled in memory.
+   */
+  async function archiveBatch(
+    file: string,
+    planned: IndexEntry[],
+    progress?: (done: number, total: number) => void,
+    aborted?: () => boolean,
+  ) {
+    return Transfer.exportLocal(file, planned, progress, aborted)
+  }
+
+  async function legacyArchiveBatch(
+    file: string,
+    planned: IndexEntry[],
+    progress?: (done: number, total: number) => void,
+    aborted?: () => boolean,
+  ) {
+    const written: Array<{ key: string; name: string; turns: number }> = []
+    const failures: Array<{ key: string; error: string }> = []
+    const device = await localDevice()
+
+    const result = await Archive.writeTarGz(
+      file,
+      (async function* () {
+        for (const [position, entry] of planned.entries()) {
+          if (aborted?.()) break
+          progress?.(position + 1, planned.length)
+
+          let turns
+          try {
+            turns = (await readTurns(entry, LARGE_FILE_BYTES)).slice(0, MAX_TURNS)
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            failures.push({ key: entry.key, error: message })
+            log("warn", `archive failed for ${entry.key}: ${message}`)
+            continue
+          }
+          if (turns.length === 0) continue
+
+          const name = `sessions/${entry.kind}/${entry.nativeID}.json`
+          written.push({ key: entry.key, name, turns: turns.length })
+          yield {
+            name,
+            mtime: entry.modified,
+            data: JSON.stringify({ session: summarize(entry), turns }, null, 2),
+          }
+        }
+
+        // Last, so it can describe what was actually written rather than what
+        // was planned — a session that failed to read is absent from both.
+        yield {
+          name: "manifest.json",
+          data: JSON.stringify(
+            {
+              version: 1,
+              exportedAt: new Date().toISOString(),
+              device: { id: device.id, hostname: device.hostname },
+              sessions: written.length,
+              failures,
+              files: written,
+            },
+            null,
+            2,
+          ),
+        }
+      })(),
+    )
+
+    log("info", `archived ${written.length} sessions to ${file}`, { bytes: result.bytes })
+    return { file, ...result, sessions: written.length, failures }
+  }
+
+  /**
+   * Import sessions out of a `.tar.gz` written by the exporter.
+   *
+   * The inverse of `archiveBatch`, and the way work reaches a machine whose
+   * source stores do not hold it — a second device's transcripts, or a restore
+   * after the stores are gone.
+   *
+   * Duplicates merge on their own because identity is the archive's own
+   * `<kind>:<nativeID>` key, the same one the local scan produces. An archived
+   * session already in opencode is therefore recognised as that session:
+   * shorter or equal, it is skipped; longer, only its new tail is appended.
+   * Nothing is ever written twice, so importing the same archive repeatedly is
+   * a no-op rather than a pile of copies.
+   */
+  async function importArchive(file: string, handle: Progress.Handle) {
+    return Transfer.importLocal(file, handle)
+  }
+
+  async function legacyImportArchive(file: string, handle: Progress.Handle) {
+    const tally = { imported: 0, merged: 0, skipped: 0, empty: 0, failed: 0 }
+    const index = await Index.load()
+    const resolver = await resolverFor(index)
+
+    // Counted first so the bar has a denominator. The archive is read twice,
+    // which for a file of this size is far cheaper than holding every
+    // transcript in memory to count them.
+    let total = 0
+    for await (const entry of Archive.readTarGz(file)) {
+      if (entry.name !== "manifest.json") total++
+    }
+    handle.step(0, total, `Importing ${total} sessions from ${path.basename(file)}`)
+    handle.log(`reading ${file}`)
+
+    let done = 0
+    for await (const file_ of Archive.readTarGz(file)) {
+      if (file_.name === "manifest.json") continue
+      done++
+
+      let parsed: { session?: Record<string, unknown>; turns?: Array<{ role: string; text: string; time?: number }> }
+      try {
+        parsed = JSON.parse(file_.data.toString("utf8"))
+      } catch {
+        tally.failed++
+        handle.log(`${file_.name}: not valid JSON`, "warn")
+        continue
+      }
+
+      const descriptor = parsed.session ?? {}
+      const key = typeof descriptor.key === "string" ? descriptor.key : ""
+      const turns = (parsed.turns ?? []).filter(
+        (turn): turn is { role: "user" | "assistant"; text: string; time?: number } =>
+          (turn?.role === "user" || turn?.role === "assistant") && typeof turn.text === "string",
+      )
+
+      if (!key) {
+        tally.failed++
+        handle.log(`${file_.name}: no session key`, "warn")
+        continue
+      }
+      handle.step(done, total, `Importing ${done}/${total}: ${String(descriptor.title ?? key).slice(0, 60)}`)
+
+      if (turns.length === 0) {
+        tally.empty++
+        continue
+      }
+
+      // The archive's descriptor becomes an index entry when this device has
+      // never seen the session. Its `file` points into an archive rather than
+      // a live store, so it is marked missing: a later scan must not conclude
+      // the source vanished from a store it was never in.
+      const existing = index.entries[key]
+      const entry: IndexEntry = existing ?? {
+        key,
+        kind: (descriptor.kind as IndexEntry["kind"]) ?? "claude",
+        nativeID: String(descriptor.key ?? key).split(":").slice(1).join(":") || key,
+        file: `${file}!${file_.name}`,
+        directory: typeof descriptor.directory === "string" ? descriptor.directory : "",
+        remote: (descriptor.remote as string | null) ?? null,
+        branch: (descriptor.branch as string | null) ?? null,
+        device: typeof descriptor.device === "string" ? descriptor.device : "archive",
+        title: typeof descriptor.title === "string" ? descriptor.title : key,
+        sourceTitle: (descriptor.sourceTitle as string | null) ?? null,
+        model: typeof descriptor.model === "string" ? descriptor.model : "",
+        created: Date.parse(String(descriptor.created ?? "")) || file_.mtime || Date.now(),
+        modified: Date.parse(String(descriptor.modified ?? "")) || file_.mtime || Date.now(),
+        size: file_.data.length,
+        fingerprint: `${file_.data.length}:${file_.mtime ?? 0}`,
+        missing: true,
+      }
+
+      try {
+        const already = entry.imported
+        const db = DB.open()
+        try {
+          const live = already && DB.sessionExists(db, already.sessionID)
+
+          if (live && turns.length <= already!.turns) {
+            tally.skipped++
+            continue
+          }
+
+          if (live) {
+            // Known session, longer in the archive: append only what is new.
+            const added = DB.appendTurns(db, {
+              sessionID: already!.sessionID,
+              target: await resolver.identify(entry.directory || directory),
+              turns: turns.slice(already!.turns),
+              model: entry.model,
+              source: entry.kind,
+            })
+            already!.turns = turns.length
+            tally.merged++
+            handle.log(`merged ${added} new turns into ${already!.sessionID}`)
+          } else {
+            const target = await resolver.identify(entry.directory || directory)
+            const result = DB.importSession(db, {
+              target,
+              title: entry.sourceTitle || entry.title,
+              turns,
+              created: entry.created,
+              model: entry.model,
+              source: entry.kind,
+              sourceID: entry.nativeID,
+              device: entry.device,
+              branch: entry.branch,
+              sourceTitle: entry.sourceTitle,
+            })
+            entry.imported = {
+              sessionID: result.sessionID,
+              projectID: result.projectID,
+              projectSource: target.source,
+              fingerprint: entry.fingerprint,
+              turns: turns.length,
+              importedAt: Date.now(),
+              device: entry.device,
+            }
+            tally.imported++
+          }
+        } finally {
+          db.close()
+        }
+        index.entries[key] = entry
+      } catch (error) {
+        tally.failed++
+        const message = error instanceof Error ? error.message : String(error)
+        handle.log(`${key}: ${message}`, "error")
+        log("warn", `archive import failed for ${key}: ${message}`)
+      }
+
+      if (done % 20 === 0) await Index.save(index)
+    }
+
+    await Index.save(index)
+    log("info", `archive import complete from ${file}`, { ...tally })
+    return tally
+  }
+
   /**
    * Fold the source stores into the index without importing anything.
    *
@@ -715,6 +1536,7 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
   }
 
   // One sweep shortly after startup, then on a slow timer — scheduled once for
+  DirectorySync.start()
   // the whole process, not once per project instance, or 40+ copies would fire
   // together. `unref` keeps the timers from holding opencode open.
   if (!sweepState.scheduled) {
@@ -970,6 +1792,54 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
         },
       }),
 
+      session_export: tool({
+        description:
+          "Write indexed transcripts to a local .tar.gz archive: one JSON file per session holding its " +
+          "descriptor and normalised turns, plus a manifest. Needs no server or database to read back, so " +
+          "this is the destination to use for a backup or to move sessions onto a machine with nothing set up.",
+        args: {
+          file: tool.schema.string().optional().describe("Archive path. Omit for a timestamped file in the configured folder."),
+          source: tool.schema.enum(["claude", "codex", "dsh"]).optional().describe("Restrict to one source store."),
+          pendingOnly: tool.schema
+            .boolean()
+            .optional()
+            .describe("Export only transcripts not yet imported at their current length (default false)."),
+          limit: tool.schema.number().int().min(1).optional().describe("Max sessions to write."),
+        },
+        async execute(args, context) {
+          const config = await PCP.resolveConfig()
+          const device = await localDevice()
+          const index = await Index.load()
+          Index.reconcile(index, await scanAll(), device.id)
+          await Index.save(index)
+
+          const candidates = (args.pendingOnly ? pendingImports(index, args.source) : Object.values(index.entries))
+            .filter((entry) => !entry.missing)
+            .filter((entry) => (args.source ? entry.kind === args.source : true))
+            .sort((a, b) => b.modified - a.modified)
+          const planned = args.limit ? candidates.slice(0, args.limit) : candidates
+
+          const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")
+          const file = args.file || path.join(config.exportDir || EXPORT_DIR, `sessions-${device.id}-${stamp}.tar.gz`)
+
+          const result = await archiveBatch(
+            file,
+            planned,
+            (done, total) =>
+              context.metadata({
+                title: `Archiving history ${done}/${total}`,
+                metadata: { progress: done, total },
+              }),
+            () => context.abort.aborted,
+          )
+
+          return {
+            title: `Wrote ${result.sessions} sessions to ${path.basename(result.file)}`,
+            output: JSON.stringify(result, null, 2),
+          }
+        },
+      }),
+
       pcp_sync: tool({
         description: "Push every indexed session whose transcript has not yet reached PCP, resuming from each session's remote cursor.",
         args: {
@@ -982,10 +1852,7 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
           const index = await Index.load()
           Index.reconcile(index, await scanAll(), device.id)
 
-          const pending = Object.values(index.entries)
-            .filter((entry) => !entry.missing)
-            .filter((entry) => !entry.pcp || entry.pcp.fingerprint !== entry.fingerprint)
-            .sort((a, b) => b.modified - a.modified)
+          const pending = pendingPushes(index)
           const planned = args.limit ? pending.slice(0, args.limit) : pending
 
           if (args.dryRun) {
@@ -996,34 +1863,18 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
             }
           }
 
-          const tally = { pushed: 0, "up-to-date": 0, empty: 0, failed: 0 }
-          const results: Array<Record<string, unknown>> = []
+          const { tally, results } = await pushBatch(
+            index,
+            config,
+            planned,
+            (done, total, counts) =>
+              context.metadata({
+                title: `Pushing ${done}/${total}: ${planned[done - 1]!.title.slice(0, 60)}`,
+                metadata: { progress: done, total, ...counts },
+              }),
+            () => context.abort.aborted,
+          )
 
-          for (const [position, entry] of planned.entries()) {
-            if (context.abort.aborted) break
-
-            context.metadata({
-              title: `Pushing ${position + 1}/${planned.length}: ${entry.title.slice(0, 60)}`,
-              metadata: { progress: position + 1, total: planned.length, ...tally },
-            })
-
-            try {
-              const result = await pushOne(entry, config, false)
-              tally[result.status] = (tally[result.status] ?? 0) + 1
-              results.push(result)
-            } catch (error) {
-              tally.failed++
-              const message = error instanceof Error ? error.message : String(error)
-              results.push({ key: entry.key, status: "failed", error: message })
-              log("warn", `PCP push failed for ${entry.key}: ${message}`)
-            }
-
-            // Persist incrementally so an interrupted run never re-uploads turns.
-            if (position % 20 === 19) await Index.save(index)
-          }
-
-          await Index.save(index)
-          log("info", "PCP sync complete", { ...tally })
           return {
             title: `Pushed ${tally.pushed} sessions to PCP`,
             output: JSON.stringify({ planned: planned.length, ...tally, results: results.slice(0, 40) }, null, 2),
@@ -1035,11 +1886,10 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
         description:
           "Scan every source store and import all pending sessions into opencode in one pass. " +
           "Use dryRun first to see the plan. Progress is written to the opencode log as it goes. " +
-          "Filter by source or by a minimum turn count to keep the first run manageable.",
+          "Filter by source or cap the count to keep the first run manageable.",
         args: {
           dryRun: tool.schema.boolean().optional().describe("Report the plan without writing (default false)."),
           source: tool.schema.enum(["claude", "codex", "dsh"]).optional().describe("Restrict to one source store."),
-          minTurns: tool.schema.number().int().min(0).optional().describe("Skip sessions with fewer turns (default 2)."),
           limit: tool.schema.number().int().min(1).optional().describe("Max sessions to import this pass."),
         },
         async execute(args, context) {
@@ -1048,13 +1898,7 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
           const scanned = await scanAll()
           Index.reconcile(index, scanned, device.id)
 
-          const minTurns = args.minTurns ?? 2
-          const pending = Object.values(index.entries)
-            .filter((entry) => !entry.missing)
-            .filter((entry) => (args.source ? entry.kind === args.source : true))
-            .filter((entry) => !entry.imported || entry.conflict)
-            .sort((a, b) => b.modified - a.modified)
-
+          const pending = pendingImports(index, args.source)
           const planned = args.limit ? pending.slice(0, args.limit) : pending
 
           if (args.dryRun) {
@@ -1077,39 +1921,17 @@ export const SessionManager: Plugin = async ({ client, directory }) => {
             }
           }
 
-          const tally = { imported: 0, merged: 0, branched: 0, skipped: 0, empty: 0, failed: 0 }
-          const failures: Array<{ key: string; error: string }> = []
-          const resolver = await resolverFor(index)
-
-          for (const [position, entry] of planned.entries()) {
-            if (context.abort.aborted) break
-
-            context.metadata({
-              title: `Importing ${position + 1}/${planned.length}: ${entry.title.slice(0, 60)}`,
-              metadata: { progress: position + 1, total: planned.length, ...tally },
-            })
-
-            try {
-              const result = await importOne(entry, resolver, false)
-              if (result.status === "empty") tally.empty++
-              else if (result.status === "merged") tally.merged++
-              else if (result.status === "branched") tally.branched++
-              else if (result.status === "imported") tally.imported++
-              else tally.skipped++
-            } catch (error) {
-              tally.failed++
-              const message = error instanceof Error ? error.message : String(error)
-              failures.push({ key: entry.key, error: message })
-              log("warn", `import failed for ${entry.key}: ${message}`)
-            }
-
-            // Persist incrementally so an interrupted run does not redo work.
-            if (position % 20 === 19) await Index.save(index)
-          }
-
-          await Index.save(index)
+          const { tally, failures } = await importBatch(
+            index,
+            planned,
+            (done, total, counts) =>
+              context.metadata({
+                title: `Importing ${done}/${total}: ${planned[done - 1]!.title.slice(0, 60)}`,
+                metadata: { progress: done, total, ...counts },
+              }),
+            () => context.abort.aborted,
+          )
           const counts = Index.stats(index)
-          log("info", "sync complete", { ...tally })
 
           return {
             title: `Synced ${tally.imported + tally.merged + tally.branched} sessions`,

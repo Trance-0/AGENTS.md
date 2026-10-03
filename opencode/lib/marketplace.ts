@@ -50,6 +50,12 @@ export type Status = {
   /** Newest stable version offered, or null when the marketplace has none. */
   available: string | null
   downloadURL: string | null
+  /** Release notes from the GitHub release body, when it published any. */
+  notes: string | null
+  /** ISO timestamp of the offered release. */
+  publishedAt: string | null
+  /** Release tag, which is also the link back to the GitHub page. */
+  tag: string | null
   channel: Versions.Channel
   /** True when a strictly newer stable version exists. */
   updateAvailable: boolean
@@ -220,6 +226,11 @@ export async function status(): Promise<Status[]> {
       installed: entry.version,
       available: listing?.version ?? null,
       downloadURL: listing?.downloadURL ?? null,
+      // Carried through so the Version tab can say what a release actually
+      // changed, rather than only that a newer number exists.
+      notes: listing?.notes ?? null,
+      publishedAt: listing?.publishedAt ?? null,
+      tag: listing?.tag ?? null,
       channel: installed === null ? "beta" : Versions.channel(installed),
       updateAvailable:
         installed !== null && available !== null && Versions.compare(available, installed) > 0,

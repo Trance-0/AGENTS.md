@@ -23,6 +23,8 @@ import * as Marketplace from "./marketplace.ts"
 import * as Sessions from "./session-store.ts"
 import * as ModelPicker from "./model-picker.ts"
 import * as Theme from "./theme.ts"
+import * as Logs from "./logs.ts"
+import * as Progress from "./progress.ts"
 
 const PORT_MIN = 14100
 const PORT_MAX = 14120
@@ -138,6 +140,43 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   }
 
   /**
+   * One day of a plugin's persistent log.
+   *
+   * The live buffer dies with the process, which is exactly when a log matters
+   * most, so past days are read back from disk. `day` omitted means today;
+   * `day=latest` resolves to the newest file, which is what a reader wants
+   * after a restart that rolled the date over.
+   */
+  const logs = url.pathname.match(/^\/api\/plugins\/([^/]+)\/logs$/)
+  if (logs && req.method === "GET") {
+    const id = decodeURIComponent(logs[1])
+    const available = Logs.days(id)
+    const today = Logs.dayOf()
+
+    const requested = url.searchParams.get("day")
+    const day =
+      !requested || requested === "today"
+        ? today
+        : requested === "latest"
+          ? (available[0] ?? today)
+          : requested
+
+    // A day is a path segment; anything not shaped like one is refused rather
+    // than joined into a filename.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      return json(res, 400, { error: `Not a date: ${day}` })
+    }
+
+    return json(res, 200, {
+      day,
+      today,
+      // Today is always offered even before anything has been written to it.
+      days: available.includes(today) ? available : [today, ...available],
+      entries: Logs.readDay(id, day),
+    })
+  }
+
+  /**
    * The scratch conversation used to try a model out.
    *
    * Held in memory by the model picker and never written anywhere: a test
@@ -160,6 +199,19 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
         return json(res, 400, { error: error instanceof Error ? error.message : String(error) })
       }
     }
+  }
+
+  /**
+   * Dismiss a finished run's progress panel.
+   *
+   * Only finished ones: `Progress.clear` ignores a run still in flight, so
+   * this cannot be used to hide work that is still happening.
+   */
+  const dismiss = url.pathname.match(/^\/api\/plugins\/([^/]+)\/progress\/dismiss$/)
+  if (dismiss && req.method === "POST") {
+    const body = await readBody(req)
+    Progress.clear(decodeURIComponent(dismiss[1]), String(body.action ?? ""))
+    return json(res, 200, { ok: true })
   }
 
   const chatClear = url.pathname.match(/^\/api\/plugins\/([^/]+)\/chat\/clear$/)
@@ -618,6 +670,57 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
 .switch.sm input:checked+.slider:before{transform:translateX(14px)}
 /* A table cannot usefully shrink below its columns; scroll instead of wrapping. */
 @media (max-width:860px){ .table{overflow-x:auto} .trow{min-width:640px} }
+
+/* ---- table toolbar and pager ----
+   A table long enough to need columns is long enough to need finding a row in
+   it, which is search, sort and paging. Without them the only way to reach row
+   180 is to scroll past 179 others. */
+.tbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.tbar .tsearch{flex:1;min-width:150px;max-width:300px}
+.tbar input[type=search]{width:100%;padding:5px 10px;background:var(--panel2);border:1px solid var(--line);
+  border-radius:7px;color:var(--text);font:inherit;font-size:12.5px}
+.tbar input[type=search]:focus{outline:none;border-color:var(--accent)}
+.tcount{color:var(--faint);font-size:12px;font-variant-numeric:tabular-nums}
+.tsize{display:flex;align-items:center;gap:6px;margin-left:auto;color:var(--faint);font-size:11.5px}
+.tsize select{background:var(--panel2);border:1px solid var(--line);border-radius:6px;color:var(--text);
+  font:inherit;font-size:11.5px;padding:4px 7px;width:auto}
+.tsort{background:none;border:0;padding:0;margin:0;cursor:pointer;color:inherit;font:inherit;
+  text-transform:inherit;letter-spacing:inherit;font-weight:inherit;display:inline-flex;gap:4px;align-items:center}
+.tsort:hover{color:var(--accent)}
+.tsort .arw{font-size:8px}
+.tpager{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;
+  color:var(--faint);font-size:12px}
+.tpager .pgof{font-variant-numeric:tabular-nums}
+.tpager .sp{margin-left:auto}
+.btn.sm{padding:3px 9px;font-size:11.5px;border-radius:6px}
+
+/* ---- progress: a running action reports here ----
+   An action is one request that answers only when it is over, so without this
+   a bulk run is a disabled button and nothing else. */
+.prog{background:var(--panel);border:1px solid var(--line);border-radius:9px;
+  padding:12px 14px;margin-bottom:12px;border-left:3px solid var(--accent)}
+.prog.done{border-left-color:var(--ok)}
+.prog.failed{border-left-color:var(--err)}
+.proghead{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+.proghead .pt{font-size:13px;font-weight:600;color:var(--text);flex:1;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.proghead .pn{color:var(--faint);font-size:11.5px;font-variant-numeric:tabular-nums;flex:none}
+.progbar{height:6px;border-radius:999px;background:var(--panel2);overflow:hidden}
+.progbar i{display:block;height:100%;background:var(--accent);border-radius:999px;
+  transition:width .25s ease}
+.prog.done .progbar i{background:var(--ok)}
+.prog.failed .progbar i{background:var(--err)}
+/* Indeterminate: a total of zero means "working" with no countable steps. */
+.progbar.idle i{width:35%;animation:slide 1.1s ease-in-out infinite}
+@keyframes slide{0%{margin-left:0}50%{margin-left:65%}100%{margin-left:0}}
+.proglog{margin-top:10px;max-height:160px;overflow-y:auto;background:#101014;
+  border:1px solid var(--line);border-radius:7px;padding:4px 0}
+.proglog .pl{display:grid;grid-template-columns:64px 1fr;gap:9px;padding:2px 11px;
+  font-family:ui-monospace,Consolas,monospace;font-size:11.5px;line-height:1.5}
+.proglog .pl .ts{color:var(--faint);font-variant-numeric:tabular-nums}
+.proglog .pl .tx{color:var(--muted);white-space:pre-wrap;word-break:break-word}
+.proglog .pl.warn .tx{color:#fde68a}
+.proglog .pl.error .tx{color:var(--delfg)}
 /* ---- per-card controls ---- */
 .ctlrow{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;padding-top:9px;border-top:1px solid var(--line)}
 .btn.ctl{padding:3px 9px;font-size:11.5px;border-radius:6px}
@@ -683,6 +786,12 @@ select.ctl:hover{border-color:var(--accent)}
   font:inherit;font-size:12.5px;margin:2px;padding:5px 7px}
 
 /* ---- logs ---- */
+/* Level filters left, day picker hard right, on one row. */
+.logbar{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+.logbar .chips{margin-bottom:0;flex:1}
+.logdays{background:var(--panel2);border:1px solid var(--line);border-radius:7px;
+  color:var(--text);font:inherit;font-size:12.5px;padding:5px 9px;margin-left:auto;flex:none}
+.logdays:focus{outline:none;border-color:var(--accent)}
 .logs{background:#101014;border:1px solid var(--line);border-radius:9px;
   max-height:60vh;overflow-y:auto;padding:4px 0}
 .logline{display:grid;grid-template-columns:76px 52px 1fr;gap:10px;padding:3px 13px;
@@ -800,12 +909,19 @@ let editor = null   // { name, file, original, draft }
 let tab = "info"    // active tab on a plugin page
 const filters = {}  // panel key -> selected group, per plugin
 const logLevel = {} // plugin id -> minimum log level shown
+const logDay = {}   // plugin id -> { day, entries, loaded, loading }; absent means live
+const logDays = {}  // plugin id -> days with a log file, newest first
+const logToday = {} // plugin id -> the server's idea of today, for labelling
 const sections = {} // "<plugin>:<group>" -> open, so a refresh keeps it open
 const expanded = {} // "<plugin>:<panel>:<group>" -> open, for tree panels
 const treeRows = {} // same key -> { loading, items, error }, filled on expand
 const searchState = {} // plugin id -> { query, items, loading, error }
 const chatOpen = {}    // "<plugin>:<field>" -> whether the chat window is open
 const chatState = {}   // same key -> { turns, sending }
+// Per-table view state, keyed "<plugin>:<panel>". Kept at module scope for the
+// same reason the tree's is: the poll rebuilds this subtree every few seconds,
+// and a search box that resets on every tick cannot be typed into.
+const tableState = {}
 let openMenu = null // the open three-dot menu, appended to document.body
 
 /* -------------------------------- routing -------------------------------- */
@@ -1005,7 +1121,7 @@ function field(plugin, f) {
       },
     }, f.label)
     // An action's label is on the button, so the row label stays empty.
-    return el("div", { class: "row" }, el("label", { title: f.description || "" }, ""), input)
+    return el("div", {}, el("div", { class: "row" }, el("label", { title: f.description || "" }, ""), input), progressView(plugin, f.action))
   } else if (f.multiline) {
     input = el("textarea", { rows: 4, value: f.value, placeholder: f.placeholder || "",
       onchange: (e) => commit(e.target.value) })
@@ -1212,6 +1328,52 @@ async function runAction(p, key, button, value) {
   return ok
 }
 
+/**
+ * Live progress for the plugin's running (or just-finished) actions.
+ *
+ * Shown above whatever tab is open, because the interesting thing about a
+ * five-minute import is that it is happening at all — which is not a fact
+ * about any one tab. A finished run stays until dismissed so its outcome is
+ * still readable after the poll that completed it.
+ */
+function progressView(p, action) {
+  const runs = (p.runs || []).filter((r) => r.action === action)
+  if (!runs.length) return null
+
+  return runs.map((r) => {
+    const pct = r.total > 0 ? Math.round((r.done / r.total) * 100) : 0
+    const idle = r.total === 0 && r.status === "running"
+
+    const key = "progress:" + p.id + ":" + r.action
+    return el("details", { class: "prog " + r.status, open: sections[key] !== false,
+      ontoggle: (e) => { sections[key] = e.currentTarget.open } },
+      el("summary", {}, r.title + " — " + r.status),
+      el("div", { class: "proghead" },
+        el("span", { class: "pt" }, r.title),
+        el("span", { class: "pn" },
+          r.total > 0 ? r.done + "/" + r.total + "  " + pct + "%" : (r.status === "running" ? "working…" : "")),
+        r.status !== "running"
+          ? el("button", {
+              class: "btn sm",
+              title: "Dismiss",
+              onclick: () => {
+                post("/api/plugins/" + encodeURIComponent(p.id) + "/progress/dismiss", { action: r.action })
+                  .then(load)
+                  .catch(() => {})
+              },
+            }, "Dismiss")
+          : null),
+      el("div", { class: "progbar" + (idle ? " idle" : "") },
+        el("i", { style: "width:" + (idle ? 35 : pct) + "%" })),
+      r.lines.length
+        ? el("div", { class: "proglog" }, r.lines.slice(-40).map((l) =>
+            el("div", { class: "pl " + l.level },
+              el("span", { class: "ts" }, hhmmss(l.at)),
+              el("span", { class: "tx" }, l.text))))
+        : null)
+  })
+}
+
 function actionRow(p) {
   // An action needing an argument is only meaningful from the control that
   // supplies it; as a bare button it acts on nothing.
@@ -1221,6 +1383,13 @@ function actionRow(p) {
     el("h4", {}, "Actions"),
     el("div", { class: "btnrow" }, runnable.map((a) =>
       el("button", { class: "btn", onclick: (e) => runAction(p, a.key, e.target) }, a.label))))
+}
+
+/** Wall-clock time of a timestamp, for log and progress lines. */
+function hhmmss(at) {
+  const d = new Date(at)
+  return [d.getHours(), d.getMinutes(), d.getSeconds()]
+    .map((n) => String(n).padStart(2, "0")).join(":")
 }
 
 /** "3 min ago" — panels carry a timestamp so stale data is obvious. */
@@ -1535,8 +1704,7 @@ function escMenu(e) {
  * Open state and loaded rows both live at module scope, because the dashboard
  * polls and rebuilds this subtree wholesale every few seconds.
  */
-function treeView(p, panel) {
-  const groups = panel.groups || []
+function treeView(p, panel, groups) {
   if (!groups.length) return el("div", { class: "empty" }, panel.empty || "Nothing to show.")
 
   return el("div", { class: "tree" }, groups.map((g) => {
@@ -1598,24 +1766,18 @@ function loadChildren(p, panel, groupID, key) {
 
 function panelView(p, panel) {
   const key = p.id + ":" + panel.key
-  const act0 = panel.action ? p.actions.find((a) => a.key === panel.action) : null
-  if (panel.type === "tree") {
-    return el("section", { class: "panel" },
-      el("div", { class: "phead" },
-        el("h3", {}, panel.title),
-        el("span", { class: "when" }, panel.updatedAt !== undefined ? ago(panel.updatedAt) : ""),
-        act0 ? el("button", { class: "btn primary", onclick: (e) => runAction(p, act0.key, e.target) }, act0.label) : null),
-      panel.description ? el("p", { class: "pdesc" }, panel.description) : null,
-      treeView(p, panel))
-  }
-
+  const act = panel.action ? p.actions.find((a) => a.key === panel.action) : null
   const active = filters[key] || panel.defaultFilter || "all"
-  const items = active === "all" ? panel.items : panel.items.filter((it) => it.group === active)
+
+  // A tree filters its groups, a flat panel its items; both read the same
+  // "group" field, so one chip row serves either shape.
+  const source = panel.type === "tree" ? panel.groups || [] : panel.items
+  const shown = active === "all" ? source : source.filter((it) => it.group === active)
 
   const chips = (panel.filters || []).length
     ? el("div", { class: "chips" },
         ["all", ...panel.filters].map((g) => {
-          const n = g === "all" ? panel.items.length : panel.items.filter((it) => it.group === g).length
+          const n = g === "all" ? source.length : source.filter((it) => it.group === g).length
           return el("button", {
             class: "chip" + (active === g ? " on" : ""),
             onclick: () => { filters[key] = g; render() },
@@ -1623,7 +1785,14 @@ function panelView(p, panel) {
         }))
     : null
 
-  const act = panel.action ? p.actions.find((a) => a.key === panel.action) : null
+  let body
+  if (panel.type === "tree") body = treeView(p, panel, shown)
+  // A table renders its own empty state, because "no rows at all" and "no rows
+  // match your search" are different sentences and only it knows which applies.
+  else if (panel.type === "table") body = tableView(p, panel, shown)
+  else if (!shown.length) body = el("div", { class: "empty" }, panel.empty || "Nothing to show.")
+  else if (panel.type === "alerts") body = alertsView(p, shown)
+  else body = el("div", { class: "grid" }, shown.map((it) => panelItem(p, it)))
 
   return el("section", { class: "panel" },
     el("div", { class: "phead" },
@@ -1632,13 +1801,8 @@ function panelView(p, panel) {
       act ? el("button", { class: "btn primary", onclick: (e) => runAction(p, act.key, e.target) }, act.label) : null),
     panel.description ? el("p", { class: "pdesc" }, panel.description) : null,
     chips,
-    items.length
-      ? panel.type === "table"
-        ? tableView(p, panel, items)
-        : panel.type === "alerts"
-          ? alertsView(p, items)
-          : el("div", { class: "grid" }, items.map((it) => panelItem(p, it)))
-      : el("div", { class: "empty" }, panel.empty || "Nothing to show."))
+    body,
+    panel.action ? progressView(p, panel.action) : null)
 }
 
 /**
@@ -1676,9 +1840,72 @@ function alertsView(p, items) {
  * underneath. Row controls go in a trailing column so the actions available on
  * a row sit beside it rather than below.
  */
+const PAGE_SIZES = [10, 25, 50, 100]
+
+/** The text a column shows for one row — what search matches and sort orders. */
+function cellText(it, label) {
+  const f = (it.fields || []).find((x) => x.label === label)
+  return f ? String(f.value) : ""
+}
+
+/**
+ * Compare two cells, numerically when both look like numbers.
+ *
+ * "9 KB" before "10 KB" is what a size column has to do; plain string order
+ * would put 10 first and make the column useless for finding the big ones.
+ */
+function compareCells(a, b) {
+  const na = parseFloat(a.replace(/[^0-9.\-]/g, ""))
+  const nb = parseFloat(b.replace(/[^0-9.\-]/g, ""))
+  const numeric = !isNaN(na) && !isNaN(nb) && /[0-9]/.test(a) && /[0-9]/.test(b)
+  if (numeric && na !== nb) return na - nb
+  return a.localeCompare(b, undefined, { numeric: true })
+}
+
+/**
+ * Search, sort and page a table's rows.
+ *
+ * Applied to the rows the caller already filtered by chip, so the two narrow
+ * together rather than fighting: chips pick a category, search finds a row.
+ */
+function tableSlice(key, panel, items) {
+  const st = (tableState[key] ||= { q: "", sort: null, dir: null, page: 1, size: PAGE_SIZES[1] })
+  const columns = panel.columns || []
+
+  const needle = st.q.trim().toLowerCase()
+  // The title and subtitle are searched alongside the columns: on these tables
+  // the name is in the row header, not in a declared column, and a search that
+  // could not find a session by its title would be the wrong search.
+  const filtered = needle
+    ? items.filter((it) =>
+        [it.title || "", it.subtitle || "", ...columns.map((c) => cellText(it, c.label))]
+          .join(" ").toLowerCase().includes(needle))
+    : items
+
+  let sorted = filtered
+  if (st.sort && st.dir) {
+    const sign = st.dir === "asc" ? 1 : -1
+    sorted = filtered.slice().sort((a, b) =>
+      sign * (st.sort === "name"
+        ? (a.title || "").localeCompare(b.title || "")
+        : compareCells(cellText(a, st.sort), cellText(b, st.sort))))
+  }
+
+  const pages = Math.max(1, Math.ceil(sorted.length / st.size))
+  // Clamped rather than reset, so narrowing a search keeps the reader near
+  // where they were instead of throwing them back to page one.
+  if (st.page > pages) st.page = pages
+  const start = (st.page - 1) * st.size
+
+  return { st, filtered, sorted, pages, start, rows: sorted.slice(start, start + st.size) }
+}
+
 function tableView(p, panel, items) {
+  const key = p.id + ":" + panel.key
   const columns = panel.columns || []
   const hasControls = items.some((it) => (it.controls || []).length)
+  const noun = panel.noun || "row"
+  const { st, sorted, pages, start, rows: pageRows } = tableSlice(key, panel, items)
 
   // Controls that name a column are cells, not buttons in the actions cell:
   // six mute switches belong under six headings, not in a row of toggles.
@@ -1692,12 +1919,45 @@ function tableView(p, panel, items) {
     columns.map(() => "minmax(60px,max-content)").join(" ") +
     (hasControls ? " max-content" : "")
 
+  const sortBtn = (label, sortKey) =>
+    el("button", {
+      class: "tsort" + (st.sort === sortKey ? " active" : ""),
+      title: "Sort by " + label,
+      onclick: () => {
+        // Third click clears the sort rather than cycling back to ascending,
+        // so the table's own order stays reachable.
+        if (st.sort !== sortKey) { st.sort = sortKey; st.dir = "asc" }
+        else if (st.dir === "asc") st.dir = "desc"
+        else { st.sort = null; st.dir = null }
+        st.page = 1
+        render()
+      },
+    }, label, st.sort === sortKey ? el("span", { class: "arw" }, st.dir === "asc" ? "▲" : "▼") : null)
+
+  const toolbar = el("div", { class: "tbar" },
+    el("div", { class: "tsearch" },
+      el("input", {
+        type: "search",
+        value: st.q,
+        placeholder: "Search " + noun + "s…",
+        oninput: (e) => { st.q = e.target.value; st.page = 1; render() },
+      })),
+    el("span", { class: "tcount" },
+      sorted.length + " " + noun + (sorted.length === 1 ? "" : "s") +
+      (sorted.length !== items.length ? " of " + items.length : "")),
+    el("label", { class: "tsize" },
+      el("span", {}, "Per page"),
+      el("select", {
+        onchange: (e) => { st.size = Number(e.target.value); st.page = 1; render() },
+      }, PAGE_SIZES.map((n) => el("option", { value: String(n), selected: n === st.size }, String(n))))))
+
   const head = el("div", { class: "trow thead", style: "--tcols:" + template },
-    el("div", { class: "tcell tname" }, "name"),
-    columns.map((c) => el("div", { class: "tcell" + (c.align === "right" ? " right" : "") }, c.label)),
+    el("div", { class: "tcell tname" }, sortBtn("name", "name")),
+    columns.map((c) => el("div", { class: "tcell" + (c.align === "right" ? " right" : "") },
+      sortBtn(c.label, c.label))),
     hasControls ? el("div", { class: "tcell tactions" }, "") : null)
 
-  const rows = items.map((it) => {
+  const rows = pageRows.map((it) => {
     const byLabel = new Map((it.fields || []).map((f) => [f.label, f]))
     // Controls bound to a column are rendered in it; the rest are row actions.
     const actions = (it.controls || []).filter((c) => !(c.type === "toggle" && c.column))
@@ -1724,7 +1984,24 @@ function tableView(p, panel, items) {
         : null)
   })
 
-  return el("div", { class: "table" }, head, rows)
+  const body = rows.length
+    ? el("div", { class: "table" }, head, rows)
+    : el("div", { class: "empty" }, items.length ? "No " + noun + "s match this search." : (panel.empty || "Nothing to show."))
+
+  const step = (to) => { st.page = Math.min(pages, Math.max(1, to)); render() }
+  const pager = pages > 1
+    ? el("div", { class: "tpager" },
+        el("span", {}, (start + 1) + "–" + Math.min(start + st.size, sorted.length) + " of " + sorted.length),
+        el("span", { class: "sp" }),
+        el("button", { class: "btn sm", disabled: st.page === 1, onclick: () => step(1) }, "First"),
+        el("button", { class: "btn sm", disabled: st.page === 1, onclick: () => step(st.page - 1) }, "Previous"),
+        el("span", { class: "pgof" }, "Page " + st.page + " of " + pages),
+        el("button", { class: "btn sm", disabled: st.page === pages, onclick: () => step(st.page + 1) }, "Next"),
+        el("button", { class: "btn sm", disabled: st.page === pages, onclick: () => step(pages) }, "Last"))
+    : null
+
+  // The toolbar is pointless on a table short enough to read whole.
+  return el("div", {}, items.length > PAGE_SIZES[0] ? toolbar : null, body, pager)
 }
 
 /** A checkbox cell that sends its new state to the plugin. */
@@ -1852,11 +2129,22 @@ const LOG_RANK = { info: 0, warn: 1, error: 2 }
  */
 function logView(p) {
   const combined = p.id === "plugin-manager"
-  const source = combined
-    ? DATA.plugins
-        .flatMap((x) => x.logs.map((l) => ({ ...l, plugin: x.title })))
-        .sort((a, b) => a.at - b.at)
-    : p.logs
+  const history = logDay[p.id]
+
+  // A past day comes from the file; "live" is the in-memory tail, which is the
+  // only thing that updates as the process runs.
+  const viewingLive = !history || history.day === "live"
+  if (!viewingLive && !history.loaded && !history.loading) {
+    loadLogDay(p, history.day)
+  }
+
+  const source = viewingLive
+    ? combined
+      ? DATA.plugins
+          .flatMap((x) => x.logs.map((l) => ({ ...l, plugin: x.title })))
+          .sort((a, b) => a.at - b.at)
+      : p.logs
+    : (history.entries ?? [])
 
   const level = logLevel[p.id] || "all"
   const lines = level === "all" ? source : source.filter((l) => LOG_RANK[l.level] >= LOG_RANK[level])
@@ -1868,35 +2156,97 @@ function logView(p) {
     if (LOG_RANK[l.level] >= LOG_RANK.error) counts.error++
   }
 
-  const chips = el("div", { class: "chips" },
-    ["all", "info", "warn", "error"].map((g) =>
-      el("button", {
-        class: "chip" + (level === g ? " on" : ""),
-        onclick: () => { logLevel[p.id] = g; render() },
-      }, g, el("span", { class: "n" }, String(counts[g])))))
+  // Days the server has files for, plus "live" for the running buffer. Dates
+  // are shown as dates, not filenames: which file holds them is an
+  // implementation detail of where the log lives.
+  const available = (history?.days ?? logDays[p.id] ?? []).slice()
+  const today = history?.today ?? logToday[p.id]
+  const options = [
+    { value: "live", label: "Latest (live)" },
+    ...available.map((d) => ({ value: d, label: d === today ? d + " (today)" : d })),
+  ]
 
-  if (!source.length) {
-    return el("div", {}, el("div", { class: "empty" }, "No activity recorded yet this session."))
-  }
+  const selector = el("select", {
+    class: "logdays",
+    title: "Which day's log to show",
+    onchange: (e) => {
+      const day = e.target.value
+      logDay[p.id] = day === "live" ? { day: "live" } : { day, loaded: false, loading: false }
+      render()
+      if (day !== "live") loadLogDay(p, day)
+    },
+  }, options.map((o) =>
+    el("option", { value: o.value, selected: (history?.day ?? "live") === o.value }, o.label)))
 
-  const fmt = (at) => {
-    const d = new Date(at)
-    return [d.getHours(), d.getMinutes(), d.getSeconds()]
-      .map((n) => String(n).padStart(2, "0")).join(":")
-  }
+  // Filters left, day picker right, on one row.
+  const bar = el("div", { class: "logbar" },
+    el("div", { class: "chips" },
+      ["all", "info", "warn", "error"].map((g) =>
+        el("button", {
+          class: "chip" + (level === g ? " on" : ""),
+          onclick: () => { logLevel[p.id] = g; render() },
+        }, g, el("span", { class: "n" }, String(counts[g]))))),
+    selector)
 
-  return el("div", {}, chips,
-    lines.length
-      ? el("div", { class: "logs" },
-          // Newest first: the interesting line is the most recent one.
-          [...lines].reverse().map((l) =>
-            el("div", { class: "logline " + l.level },
-              el("span", { class: "ts" }, fmt(l.at)),
-              el("span", { class: "lv" }, l.level),
-              // Only the combined view needs to say which plugin spoke.
-              l.plugin ? el("span", { class: "who" }, l.plugin) : null,
-              el("span", { class: "msg" }, l.message))))
-      : el("div", { class: "empty" }, "Nothing at this level."))
+  const fmt = hhmmss
+
+  const body = !viewingLive && history.loading
+    ? el("div", { class: "empty" }, "loading " + history.day + "…")
+    : !source.length
+      ? el("div", { class: "empty" },
+          viewingLive ? "No activity recorded yet this session." : "Nothing was logged on " + history.day + ".")
+      : lines.length
+        ? el("div", { class: "logs" },
+            // Newest first: the interesting line is the most recent one.
+            [...lines].reverse().map((l) =>
+              el("div", { class: "logline " + l.level },
+                el("span", { class: "ts" }, fmt(l.at)),
+                el("span", { class: "lv" }, l.level),
+                // Only the combined view needs to say which plugin spoke.
+                l.plugin ? el("span", { class: "who" }, l.plugin) : null,
+                el("span", { class: "msg" }, l.message))))
+        : el("div", { class: "empty" }, "Nothing at this level.")
+
+  return el("div", {}, bar, body)
+}
+
+/** Fetch one day of a plugin's file log, then re-render if still on that tab. */
+function loadLogDay(p, day) {
+  logDay[p.id] = { ...(logDay[p.id] || {}), day, loading: true, loaded: false }
+
+  api("/api/plugins/" + encodeURIComponent(p.id) + "/logs?day=" + encodeURIComponent(day))
+    .then((r) => {
+      logDays[p.id] = r.days
+      logToday[p.id] = r.today
+      logDay[p.id] = { day: r.day, days: r.days, today: r.today, entries: r.entries, loaded: true, loading: false }
+    })
+    .catch((e) => {
+      logDay[p.id] = { day, entries: [], loaded: true, loading: false, error: e.message }
+      toast(e.message, true)
+    })
+    .then(() => { if (view.name === "plugin" && view.arg === p.id) render() })
+}
+
+/**
+ * Which days each plugin has logs for.
+ *
+ * Fetched once per plugin so the dropdown is populated before a past day is
+ * chosen; refreshing it on every poll would mean a request per tab render for
+ * a list that changes at most once a day.
+ */
+function ensureLogDays(p) {
+  if (logDays[p.id] !== undefined) return
+  logDays[p.id] = []
+
+  api("/api/plugins/" + encodeURIComponent(p.id) + "/logs")
+    .then((r) => {
+      logDays[p.id] = r.days
+      logToday[p.id] = r.today
+      if (view.name === "plugin" && view.arg === p.id && tab === "logging") render()
+    })
+    .catch(() => {
+      // The dropdown falls back to "live" alone, which still works.
+    })
 }
 
 /* -------------------------------- views --------------------------------- */
@@ -1919,6 +2269,10 @@ function viewPlugin(id) {
   ]
   if (!tabs.some((t) => t.key === tab)) tab = "info"
 
+  // A panel that edits something belongs with the settings; the rest are Info.
+  const infoPanels = p.panels.filter((panel) => panel.tab !== "settings")
+  const settingPanels = p.panels.filter((panel) => panel.tab === "settings")
+
   let body
   if (tab === "version") {
     body = versionView(p)
@@ -1934,21 +2288,30 @@ function viewPlugin(id) {
       hits && hits.query
         ? searchResults(p, hits)
         : [
-            ...p.panels.map((panel) => panelView(p, panel)),
-            !p.status.length && !p.panels.length
+            ...infoPanels.map((panel) => panelView(p, panel)),
+            !p.status.length && !infoPanels.length
               ? el("div", { class: "empty" }, "This plugin reports no info.")
               : null,
           ],
     ]
   } else if (tab === "logging") {
+    // Populate the day list before it is needed, so the dropdown is not empty
+    // on the first paint of the tab.
+    ensureLogDays(p)
     body = [logView(p)]
   } else {
     // Actions already reachable from a panel button are not repeated here.
-    const panelActions = new Set(p.panels.map((panel) => panel.action).filter(Boolean))
+    const panelActions = new Set([
+      ...p.panels.map((panel) => panel.action),
+      ...p.settings.filter((field) => field.type === "action").map((field) => field.action),
+    ].filter(Boolean))
     const rest = { ...p, actions: p.actions.filter((a) => !panelActions.has(a.key)) }
     // A plugin's own state file is edited here rather than in a central list.
     const own = DATA.files.find((f) => f.pluginID === p.id)
     body = [
+      // Editing panels come first: a table of subscribers is the thing being
+      // configured, and the scalar fields below are its defaults.
+      ...settingPanels.map((panel) => panelView(p, panel)),
       ...settingsView(p),
       rest.actions.length ? el("div", { class: "card" }, actionRow(rest)) : null,
       own
@@ -1975,6 +2338,8 @@ function viewPlugin(id) {
         t.count ? el("span", { class: "count" }, String(t.count)) : null,
         // An available update is worth seeing without opening the tab.
         t.dot ? el("span", { class: "count" }, "●") : null))),
+    // Above the tab body, not inside it: that a bulk import is running is not
+    // a fact about whichever tab happens to be open.
     // Flattened before spreading: a tab body is built as nested arrays — the
     // Info tab's panel list is one element of it — and spreading without this
     // hands replaceChildren an array, which it renders as the text
@@ -2082,7 +2447,7 @@ function viewSession(id) {
             el("div", { class: "item " + (t.role === "user" ? "ok" : "muted") },
               el("div", { class: "t" }, t.role),
               el("div", { class: "s", style: "white-space:pre-wrap;word-break:break-word;color:var(--muted)" },
-                t.text.length > 2000 ? t.text.slice(0, 2000) + "\n…" : t.text))))
+                t.text.length > 2000 ? t.text.slice(0, 2000) + "\\n…" : t.text))))
         : el("div", { class: "empty" }, "No text turns recorded.")),
   ]
 }
@@ -2203,11 +2568,16 @@ function render() {
   const scrolled = pane.querySelector(".logs")
   const keepScroll = scrolled ? scrolled.scrollTop : null
 
-  // Same problem for the search box: a poll would otherwise steal the caret
-  // mid-word. Remember where it was and put it back.
+  // Same problem for any search box: a poll would otherwise steal the caret
+  // mid-word. Remember which one had focus and put it back. Matched by
+  // selector rather than one hardcoded class, so a new box — the table
+  // toolbar's — is covered without being registered anywhere.
   const active = document.activeElement
-  const typing = active && active.classList && active.classList.contains("searchin")
-    ? { start: active.selectionStart, end: active.selectionEnd, value: active.value }
+  const typingSel = active && active.closest && active.matches(".searchin, .tbar input[type=search]")
+    ? (active.classList.contains("searchin") ? ".searchin" : ".tbar input[type=search]")
+    : null
+  const typing = typingSel
+    ? { sel: typingSel, start: active.selectionStart, end: active.selectionEnd, value: active.value }
     : null
 
   const kids =
@@ -2225,7 +2595,7 @@ function render() {
   }
 
   if (typing) {
-    const box = pane.querySelector(".searchin")
+    const box = pane.querySelector(typing.sel)
     if (box) {
       // The value is restored too: a poll can land between a keystroke and a
       // submit, and the re-render would otherwise revert what was typed.

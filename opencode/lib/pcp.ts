@@ -26,6 +26,14 @@ export type Config = {
   baseURL: string
   /** Global scoped token with read_all, create_sessions and mint_tokens. */
   scopedToken: string
+  /**
+   * Where local `.tar.gz` exports are written; empty means the default.
+   *
+   * Kept in this file rather than one of its own because it is the session
+   * manager's other export destination, and a second config file for a single
+   * path would be two files describing one concern.
+   */
+  exportDir: string
 }
 
 export type Message = {
@@ -61,6 +69,7 @@ export async function resolveConfig(): Promise<Config> {
   return {
     baseURL,
     scopedToken: typeof own?.scopedToken === "string" ? own.scopedToken.trim() : "",
+    exportDir: typeof own?.exportDir === "string" ? own.exportDir.trim() : "",
   }
 }
 

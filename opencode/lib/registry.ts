@@ -23,6 +23,7 @@ import { CONFIG_DIR } from "./paths.ts"
 import * as Logs from "./logs.ts"
 import * as Versions from "./versions.ts"
 import * as Marketplace from "./marketplace.ts"
+import * as Progress from "./progress.ts"
 
 /**
  * Placement of a setting within the Settings tab.
@@ -156,6 +157,8 @@ export type PanelGroup = {
   count?: number
   /** Open on first paint instead of staying collapsed. */
   expanded?: boolean
+  /** Used by the panel's filter chips, like `PanelItem.group`. */
+  group?: string
   /** Menu entries for this group, rendered behind a three-dot button. */
   menu?: Array<
     | { type: "button"; action: string; label: string; input?: string; danger?: boolean; confirm?: string }
@@ -201,6 +204,14 @@ export type Panel = {
    * neighbours into the wrong columns.
    */
   columns?: Array<{ label: string; align?: "left" | "right" }>
+  /**
+   * What one row is, for `type: "table"`: "subscriber", "session".
+   *
+   * Used by the toolbar's count and search placeholder. Defaults to "row",
+   * which is right for a table of nothing in particular and wrong for every
+   * table that has a name for its contents.
+   */
+  noun?: string
   /** Collapsible groups, for `type: "tree"`. */
   groups?: PanelGroup[]
   /**
@@ -213,7 +224,13 @@ export type Panel = {
   items: PanelItem[]
   /** Shown when `items` is empty. */
   empty?: string
-  /** When set, the dashboard offers chips filtering items by `PanelItem.group`. */
+  /**
+   * When set, the dashboard offers chips filtering by `group`.
+   *
+   * On a `cards` panel this filters `items`; on a `tree` panel it filters the
+   * `groups`, which is what lets a projects tree be narrowed to the projects
+   * that still have something pending without expanding each one.
+   */
   filters?: string[]
   /**
    * Chip selected before the user picks one. Defaults to "all".
@@ -226,6 +243,16 @@ export type Panel = {
   updatedAt?: number | null
   /** Action key to run from a button at the top of the panel. */
   action?: string
+  /**
+   * Which tab the panel belongs on. Defaults to `info`.
+   *
+   * A panel that *edits* something is a setting, whatever its shape. The list
+   * of Bark subscribers is a table because a table is the readable form of a
+   * list of devices — not because it stopped being configuration — so it
+   * belongs beside the fields that configure the same plugin, not on the
+   * read-only Info tab.
+   */
+  tab?: "info" | "settings"
 }
 
 export type PluginDescriptor = {
@@ -481,6 +508,10 @@ export async function snapshot() {
         ) ?? Promise.resolve([] as Panel[]))
       ).map(({ children, ...panel }) => panel),
       logs: Logs.read(plugin.id, 200),
+      // Live progress for anything long-running. Polled with the rest of the
+      // snapshot, because an action's own response arrives only once it is
+      // over — which is exactly too late to report how it is going.
+      runs: Progress.forPlugin(plugin.id),
       actions: Object.entries(plugin.actions ?? {}).map(([key, action]) => ({
         key,
         label: action.label,

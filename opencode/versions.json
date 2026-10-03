@@ -3,14 +3,14 @@
   "plugins": [
     {
       "id": "plugin-manager",
-      "version": "1.1.2",
+      "version": "1.1.10",
       "promotedFrom": "1.1.0",
-      "notes": "Panel cards carry their own controls, so a listed item can be acted on where it is read."
+      "notes": "Operation status is collapsible and attached to its widget; emitted browser script is syntax-checked."
     },
     {
       "id": "bark-notify",
-      "version": "1.0.2",
-      "notes": "Subscribers are a list with per-row rename, mute, test and remove, and Add above the list."
+      "version": "1.0.5",
+      "notes": "The subscriber table sits on the Settings tab, beside the defaults its rows override."
     },
     {
       "id": "cpa-usage",
@@ -19,9 +19,9 @@
     },
     {
       "id": "session-manager",
-      "version": "1.1.4",
-      "promotedFrom": "1.1.0",
-      "notes": "Projects tree listing every opencode session by source, plus full-text search across every transcript."
+      "version": "1.2.0",
+      "promotedFrom": "1.1.10",
+      "notes": "Full-history archive transfer with manual, import-only and automatic shared-folder synchronization."
     },
     {
       "id": "task-queue",

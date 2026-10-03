@@ -1,5 +1,12 @@
 # LLM_CHECK.md — Canonical End-of-Round Checklist
 
+## Session archive verification round
+
+- Added version 2 complete-record archive transfer and isolated A/B/C database tests.
+- Added generated-browser-script syntax verification and widget-local collapsible status.
+- Preserved pre-existing working-tree changes; no live-session test records were created.
+- See `docs/development/session-archives.md` for format scope and verification commands.
+
 This file is the **reference template** for the `docs/LLM_CHECK.md` that every
 project in this owner's workspace should ship. Copy it into a target repo's
 `docs/` directory and adapt the project-specific items. The agent reads this
@@ -279,3 +286,18 @@ bullets specific: filenames, command names, outcomes.
   (§2.5), material-change docs sync rule (§2.6). Moved `LLM_CHECK.md` from
   repo root to `docs/LLM_CHECK.md`, added `CLAUDE.md` at root as the
   `@AGENTS.md` include, and updated every in-repo path reference.
+- 2026-09-21: task-queue (1.0.6). A pending task whose session is gone is now
+  dropped by `reconcile` instead of being dispatched into "Session not found";
+  dispatch falls back to the session's directory when the task has none; task
+  directories are stored with forward slashes. `task_create` gained
+  `nextAttemptAt` and fills in the session's project/directory. Verified with
+  `tsc --noEmit` over `lib/*.ts plugin/*.ts` plus two sandboxed scheduler tests
+  (`restart-sim.mjs`, `fix-verify2.mjs`).
+- 2026-09-21: task-queue (1.0.8). A task may omit `sessionID`: it carries a
+  unique `new:` placeholder and creates a real session on first dispatch, with
+  `bypassPermissions` auto-answering `permission.updated`. Added
+  `task-queue-seed.json`, merged once at startup, so work can be queued while
+  opencode is down (the store is rewritten by whichever process is up, so a
+  task placed there by an older build is dropped or stripped). Verified with
+  `tsc --noEmit` over `lib/*.ts plugin/*.ts` and four sandboxed scheduler tests
+  (`restart-sim`, `fix-verify2`, `new-session-test`, `seed-test`).
