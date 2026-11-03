@@ -1,0 +1,110 @@
+// Agent dashboard CI/CD. Builds the image, smoke-tests it, then deploys it on
+// the docker build node. Secrets come from Jenkins credentials (never git);
+// see dashboard/README.md for the credential IDs.
+
+pipeline {
+  agent { label 'local-docker' }
+
+  environment {
+    IMAGE = "agent-dashboard"
+    // Loopback bind is the single-instance lock and the security boundary.
+    PORT = '14141'
+  }
+
+  stages {
+    stage('Build') {
+      steps {
+        dir('dashboard') {
+          sh 'docker build -t $IMAGE:ci-${BUILD_NUMBER} .'
+        }
+      }
+    }
+
+    stage('Smoke test') {
+      steps {
+        sh '''
+          set -e
+          docker rm -f agent-dashboard-smoke 2>/dev/null || true
+          docker run -d --name agent-dashboard-smoke \
+            -e HOST=127.0.0.1 -e PORT=14142 \
+            -e SESSION_SECRET=smoke -e DASHBOARD_TOKEN=smoke \
+            -e OIDC_ISSUER=https://auth.trance-0.com \
+            -e OIDC_CLIENT_ID=smoke -e OIDC_CLIENT_SECRET=smoke \
+            -p 127.0.0.1:14142:14142 \
+            $IMAGE:ci-${BUILD_NUMBER}
+          for i in $(seq 1 20); do
+            if curl -fsS --max-time 3 http://127.0.0.1:14142/healthz; then
+              docker rm -f agent-dashboard-smoke >/dev/null 2>&1 || true
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs agent-dashboard-smoke || true
+          docker rm -f agent-dashboard-smoke >/dev/null 2>&1 || true
+          echo "smoke test failed" >&2
+          exit 1
+        '''
+      }
+    }
+
+    stage('Deploy') {
+      steps {
+        withCredentials([
+          string(credentialsId: 'dashboard-oidc-client-secret', variable: 'OIDC_CLIENT_SECRET'),
+          string(credentialsId: 'dashboard-session-secret', variable: 'SESSION_SECRET'),
+          string(credentialsId: 'dashboard-token', variable: 'DASHBOARD_TOKEN'),
+          string(credentialsId: 'openclaw-gateway-token', variable: 'OPENCLAW_TOKEN'),
+          string(credentialsId: 'astrbot-password', variable: 'ASTRBOT_PASSWORD'),
+        ]) {
+          sh '''
+            set -e
+            # Save the running image id for rollback.
+            PREV=$(docker inspect -f '{{.Image}}' agent-dashboard 2>/dev/null || true)
+
+            docker tag $IMAGE:ci-${BUILD_NUMBER} $IMAGE:release-${BUILD_NUMBER}
+            docker rm -f agent-dashboard 2>/dev/null || true
+            docker run -d --name agent-dashboard \
+              --restart unless-stopped \
+              --network host \
+              -e HOST=127.0.0.1 -e PORT=$PORT \
+              -e OIDC_ISSUER=https://auth.trance-0.com \
+              -e OIDC_CLIENT_ID=agent-dashboard \
+              -e OIDC_CLIENT_SECRET \
+              -e OIDC_REQUIRED_GROUP=trance-0/app-agent \
+              -e SESSION_SECRET \
+              -e DASHBOARD_TOKEN \
+              -e OPENCLAW_ENDPOINT=http://127.0.0.1:18789 \
+              -e OPENCLAW_TOKEN \
+              -e ASTRBOT_ENDPOINT=http://127.0.0.1:6185 \
+              -e ASTRBOT_USERNAME=admin \
+              -e ASTRBOT_PASSWORD \
+              -e JENKINS_ENDPOINT=http://127.0.0.1:8081 \
+              $IMAGE:release-${BUILD_NUMBER}
+
+            for i in $(seq 1 20); do
+              if curl -fsS --max-time 3 http://127.0.0.1:$PORT/healthz; then
+                echo "deploy ok"
+                exit 0
+              fi
+              sleep 1
+            done
+
+            echo "deploy health check failed; rolling back" >&2
+            docker rm -f agent-dashboard 2>/dev/null || true
+            if [ -n "$PREV" ]; then
+              docker run -d --name agent-dashboard --restart unless-stopped --network host \
+                -e HOST=127.0.0.1 -e PORT=$PORT "$PREV" || true
+            fi
+            exit 1
+          '''
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      sh 'docker image prune -f --filter "dangling=true" >/dev/null 2>&1 || true'
+    }
+  }
+}

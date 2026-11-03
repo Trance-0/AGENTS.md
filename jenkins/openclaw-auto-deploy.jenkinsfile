@@ -1,0 +1,91 @@
+// OpenClaw auto-deploy pipeline (stage 1 of the ai-infra build plan).
+//
+// Triggered by a signed Forgejo/Gitea webhook on push to the openclaw repo.
+// Rebuilds the gateway image from source, swaps the running container, health
+// gates it, and rolls back to the previous image on failure. Secrets are
+// injected from Jenkins credentials — nothing is committed.
+
+pipeline {
+  agent { label 'local-docker' }
+
+  environment {
+    COMPOSE_DIR = 'openclaw'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout([
+          $class: 'GitSCM',
+          branches: [[name: '**']],
+          userRemoteConfigs: [[
+            url: 'https://git.trance-0.com/Trance-0/openclaw.git',
+            credentialsId: 'agent-git-read'
+          ]]
+        ])
+      }
+    }
+
+    stage('Build') {
+      steps {
+        sh '''
+          set -e
+          # Core dependencies + compiled dist. Keep Node 22 as the runtime baseline.
+          if command -v pnpm >/dev/null 2>&1; then
+            pnpm install --frozen-lockfile
+            pnpm build
+          else
+            npm ci
+            npm run build
+          fi
+        '''
+      }
+    }
+
+    stage('Image') {
+      steps {
+        sh '''
+          set -e
+          # openclaw:patched = openclaw:local + the Anthropic HTTP-400 usage-cap
+          # failover pattern. Rebuild it from the current source.
+          docker build -t openclaw:patched -t openclaw:ci-${BUILD_NUMBER} .
+        '''
+      }
+    }
+
+    stage('Deploy') {
+      steps {
+        withCredentials([
+          string(credentialsId: 'openclaw-gateway-token', variable: 'OPENCLAW_GATEWAY_TOKEN'),
+          string(credentialsId: 'cpa-api-key', variable: 'CPA_API_KEY'),
+          string(credentialsId: 'openai-api-key', variable: 'OPENAI_API_KEY'),
+        ]) {
+          sh '''
+            set -e
+            PREV=$(docker inspect -f '{{.Image}}' openclaw-openclaw-gateway-1 2>/dev/null || true)
+
+            export OPENCLAW_IMAGE=openclaw:patched
+            export OPENCLAW_GATEWAY_TOKEN CPA_API_KEY OPENAI_API_KEY
+            docker compose -f docker-compose.yml up -d --no-deps openclaw-gateway
+
+            # Health gate: the gateway must serve a canary reply.
+            for i in $(seq 1 30); do
+              if curl -fsS --max-time 3 http://127.0.0.1:18789/healthz; then
+                echo "deploy ok"
+                exit 0
+              fi
+              sleep 2
+            done
+
+            echo "health gate failed; rolling back" >&2
+            if [ -n "$PREV" ]; then
+              docker tag "$PREV" openclaw:patched 2>/dev/null || true
+              docker compose -f docker-compose.yml up -d --no-deps openclaw-gateway || true
+            fi
+            exit 1
+          '''
+        }
+      }
+    }
+  }
+}
