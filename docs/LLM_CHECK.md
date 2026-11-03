@@ -304,3 +304,9 @@ bullets specific: filenames, command names, outcomes.
   task placed there by an older build is dropped or stripped). Verified with
   `tsc --noEmit` over `lib/*.ts plugin/*.ts` and four sandboxed scheduler tests
   (`restart-sim`, `fix-verify2`, `new-session-test`, `seed-test`).
+- 2026-11-03: Added `ai-platform-design/` at repo root on branch `ai-infra-v0`
+  (root placement requested by the owner). It holds `design.md`,
+  `build-plan.md` (Tasks 1-11), `agent-comparison.md` and `checks/*.sh` stubs.
+  No code paths changed. Verified with `bash -n` on every check script and a
+  publish-safety scan of the branch diff. The check scripts themselves were not
+  run: they target the owner's platform host, which doesn't exist yet.

@@ -14,6 +14,11 @@ Two things live here:
 `codex-plugins/` holds the earlier Codex MCP versions of the same tools, kept
 for reference; the opencode ports supersede them.
 
+[`ai-platform-design/`](ai-platform-design/README.md) holds the v0 design for a
+self-hosted AI platform (AstrBot, OpenClaw, PCP, Claude Code) with a
+self-evolving, rollback-safe CI/CD loop. It is docs and check-script stubs
+only.
+
 ## The plugins
 
 | Plugin | What it does |
