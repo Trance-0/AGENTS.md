@@ -266,3 +266,29 @@ this commit before its next rollout can retain the new integration.
   validation passed. Deployment and post-restart live checks follow via Jenkins.
 - Local probe evidence is retained in ignored `logs/cpa-model-probes.log` and
   `logs/openclaw-cpa-fallback-check.log`.
+
+
+Post-restart verification:
+
+- GitHub push `6f95ef2` triggered Jenkins build #4, which passed all ten Node 22
+  tests, smoke checks, backup, deployment, and plugin update. Dashboard and
+  gateway were both restarted after the final model configuration was saved.
+- Resolved default and dashboard-host order matched CPA Opus 5.5 → CPA GPT-6
+  Astra → official OpenAI GPT-6 Astra. CPA Gemini was absent from canonical
+  definitions/aliases and all generated agent registries after restart.
+- Two authenticated chat requests on the existing public recording and its
+  original conversation history produced normal CPA GPT-6 Astra answers. Each
+  answer's `runId` matched a successful `model_output` record for provider
+  `cpa`, model `gpt-6-astra`. Neither turn used Gemini; repeated legacy start
+  events were absent. The temporary Casdoor viewer was removed afterward.
+- Chromium confirmed `cpa/gpt-6-astra` events render in the public live player.
+  The original recording ID and prior history were preserved. Evidence is
+  retained in ignored `logs/dashboard-v0.1.4-live-cpa.log`,
+  `logs/dashboard-v0.1.4-model-verification.json`,
+  `logs/dashboard-v0.1.4-cpa-visible.png`, and
+  `logs/jenkins-agent-dashboard-4.log`.
+- CPA Opus 5.5 remains unavailable with upstream HTTP 503 `auth_unavailable`.
+  Its configured position is primary, but current successful answers use CPA
+  GPT-6 Astra. Official OpenAI GPT-6 Astra was directly probed successfully and
+  is the final configured fallback. No claim is made that unavailable Opus
+  produced a reply.

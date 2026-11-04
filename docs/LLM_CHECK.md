@@ -451,3 +451,13 @@ bullets specific: filenames, command names, outcomes.
   checked cron/session overrides. CPA Opus currently returns auth_unavailable.
   Private config backups and detailed dev evidence are retained. Jenkins push
   deployment will restart gateway/dashboard and verify the preserved recording.
+
+- 2026-11-04: Jenkins #4 completed SUCCESS from actual GitHub push `6f95ef2`.
+  Gateway and dashboard restarted with the final three-model order and no CPA
+  Gemini definitions. Two public-chat turns using the original live recording
+  and saved history matched their reply run IDs to successful CPA GPT-6 Astra
+  model-output events. Public Chromium rendering passed; temporary test user
+  removed. Model config, secret exclusion, docs links/line limits, and recording
+  preservation were verified. CPA Opus 5.5 remains upstream-auth unavailable;
+  official OpenAI GPT-6 Astra direct probe succeeded. Final evidence added to
+  the development log; no unrelated runtime data or source was changed.
