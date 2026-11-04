@@ -34,6 +34,12 @@ export function mountOpenClaw(app, broadcast) {
     }
     res.json({ recording: broadcast.stop("openclaw") });
   }));
+  app.post("/api/openclaw/stream/summary", authenticate, route((req, res) => {
+    const { summary, recordingId, sessionRef } = req.body || {};
+    if (!broadcast.active || broadcast.active.id !== recordingId || broadcast.active.sessionRef !== sessionRef) return res.status(409).json({ error: "Summary cannot be updated: dashboard/openclaw control — this session does not own the live recording." });
+    if (typeof summary !== "string" || !summary.trim() || summary.length > 4000) return res.status(400).json({ error: "Summary cannot be updated: dashboard/stream summary — enter between 1 and 4000 characters." });
+    res.json({ stream: broadcast.summarize(summary.trim()) });
+  }));
   app.post("/api/openclaw/events", authenticate, route((req, res) => {
     const event = req.body || {};
     if (!broadcast.active || broadcast.active.id !== event.recordingId) return res.status(409).json({ error: "Event not recorded: dashboard/openclaw ingestion — target recording is no longer live." });

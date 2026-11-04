@@ -3,8 +3,8 @@
 The browser connects to `https://live.trance-0.com`. Its remote reverse proxy
 terminates TLS and routes HTTP to FRP remote TCP port 6018. The existing local
 `frpc` container uses host networking and forwards requests to
-`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.1.2` using image
-`agent-dashboard:0.1.2`, with Node.js 22 as the unprivileged `node` user.
+`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.1.3` using image
+`agent-dashboard:0.1.3`, with Node.js 22 as the unprivileged `node` user.
 
 ## Casdoor setup
 
@@ -127,8 +127,8 @@ and without `admin-agent` must receive 403 for mutations even with a valid
 bearer token. Remove any temporary test identities after testing.
 
 ```sh
-docker logs --timestamps --tail 100 agent-dashboard-v0.1.2
-docker inspect agent-dashboard-v0.1.2 --format '{{.State.Health.Status}}'
+docker logs --timestamps --tail 100 agent-dashboard-v0.1.3
+docker inspect agent-dashboard-v0.1.3 --format '{{.State.Health.Status}}'
 ```
 
 Docker retains three rotated JSON log files of up to 10 MB each. Application
@@ -140,15 +140,15 @@ never be included in logs.
 
 Before a future update, retain the current image under a distinct local tag.
 To roll back, restore the previous source revision or retag the retained image
-as `agent-dashboard:0.1.2`, then run
+as `agent-dashboard:0.1.3`, then run
 `docker compose -f dashboard/compose.yaml up -d --no-build`. Keep the private
 environment file and state volume. To remove just the dashboard exposure,
 restore the saved FRP configuration, validate it, and restart `frpc`; other
 services and the existing development dashboard do not need changing.
 
-`dashboard/Jenkinsfile` is the earlier CI scaffold. It was not configured or
-run for this deployment; its deployment settings still require alignment with
-this Compose setup before it can replace the local workflow.
+`dashboard/Jenkinsfile` is the active Pipeline-from-SCM deployment. The job
+pulls GitHub branch `ai-infra-v0` and reads this file from the remote checkout.
+Local files supply runtime secrets only. See the Jenkins section below.
 
 
 ## OpenClaw public host
@@ -183,8 +183,9 @@ a fresh install is offline; ordinary process startup does not start a stream.
 Existing recordings survive container updates in `dashboard_dashboard-state`.
 Each recording has `recordings/<UUID>.json` metadata and a corresponding
 `recordings/<UUID>.ndjson` event file. Appends and metadata writes are synced to
-disk before events are broadcast. After a restart, an unfinished stream is
-closed with `status: interrupted`, retaining all complete event records.
+disk before events are broadcast. After a restart, the same live stream resumes with its original recording ID
+and start time. A partial trailing event is truncated before appending the
+recovery event; all complete events and the current summary remain intact.
 
 The event envelope keeps `id`, `ts`, `t`, `source`, `level`, and `msg`; `kind`
 separates log and chat events, `recordingId` binds each event to a stream, and
@@ -273,12 +274,16 @@ to preserve explicit source provenance.
 
 Ask the owner-facing OpenClaw agent to use `dashboard_stream` with
 `action: start` and a title. `status` reports the stream; `end` saves it.
+`action: summary` with `summary` text (1–4000 characters) sets the current live
+description and persists it into the recording. Only the owning session may
+change that summary.
 Repeated starts from the same session return the existing stream; a different
 session cannot take over or end it. Browser administrators retain their
 Start/End controls and recording moderation.
 
 The machine API is `/api/openclaw/stream` (GET),
-`/api/openclaw/stream/start` and `/api/openclaw/stream/end` (POST), and
+`/api/openclaw/stream/start`, `/api/openclaw/stream/end`, and
+`/api/openclaw/stream/summary` (POST), and
 `/api/openclaw/events` (POST). Every route requires the separate bearer token.
 Event submissions target the recording ID and use unique event references to
 avoid duplicate delivery. Events for ended or replaced streams are rejected.
@@ -296,3 +301,68 @@ The event queue serializes delivery with five-second request timeouts and a
 256-event pending limit. Dashboard failures are logged and do not terminate an
 agent run. Disconnected events can be lost; the bridge is not a durable replay
 of the gateway's private history. It records live activity while a stream is on.
+
+
+## Jenkins webhook deployment (0.1.3)
+
+Job: `https://jenkins.trance-0.com/job/agent-dashboard/`.
+SCM: `https://github.com/Trance-0/AGENTS.md.git`, branch `ai-infra-v0`,
+script `dashboard/Jenkinsfile`, agent label `local-docker`.
+The GitHub webhook targets `https://jenkins.trance-0.com/github-webhook/`.
+The job and Jenkinsfile both register the GitHub push trigger. A push to this
+branch builds that remote revision; the host working tree is not used.
+
+To configure or repair the job, run on the host with private credentials:
+
+```sh
+read -r -s -p 'Jenkins password/token: ' JENKINS_PASSWORD
+export JENKINS_PASSWORD
+python3 dashboard/scripts/configure-jenkins.py --branch ai-infra-v0
+unset JENKINS_PASSWORD
+```
+
+Runtime env lives at
+`/home/motuariki/Documents/DockerVolumes/agent-dashboard/secrets/deploy.env`
+on the host and Jenkins agent (mode `0600`). Populate it with the same keys as
+`dashboard/.env.example`. It is independent from SCM and survives pushes.
+The agent's workspace is mounted at the same absolute host path so test
+container binds resolve against the checked-out remote source.
+
+Stages: checkout remote → versioned image build → Node 22 server tests →
+isolated container health check → stop writes and back up state → deploy →
+local/public health verification → update installed OpenClaw plugin if changed.
+Images include the package version and Jenkins build number; containers include
+the software version. The existing `dashboard_dashboard-state` volume is reused.
+Backups live under
+`/home/motuariki/Documents/DockerVolumes/agent-dashboard/backups/<UTC stamp>/`.
+The prior container and image are retained. A failed app rollout starts the
+prior container again. Gateway plugin updates restart only that gateway; the
+live recording continues in the dashboard container.
+
+Verify the build cause says **Started by GitHub push** and the checkout SHA
+matches the pushed commit. A manually queued build proves the pipeline only;
+it does not prove delivery of a GitHub webhook. See the development log for
+current run evidence.
+
+The owner agent's checkout is
+`/home/node/.openclaw/workspace/projects/agent-dashboard` in the gateway
+container, on branch `ai-infra-v0`. Its repo-local SSH command uses the dedicated
+key at `/home/node/.openclaw/dashboard-git/id_ed25519` and a pinned GitHub
+known-hosts file. Add the matching public key as a **write-enabled deploy key**
+for this GitHub repository. Private keys never enter the checkout or prompts.
+After committing changes there, `git push origin ai-infra-v0` triggers Jenkins.
+
+## Browser-session viewer counting and player controls
+
+The watching count represents browser sessions currently connected to the
+player's event feed. A signed HttpOnly session cookie is established before
+opening the feed; every tab in that browser session shares it. Multiple tabs
+and SSE reconnects cannot inflate the count. Separate profiles or browser
+sessions have separate cookies and each count once. Closing the final
+connection removes that session. This is a current audience count, not lifetime
+unique users or IP addresses, and does not require another database container.
+
+Playback uses accessible SVG Play/Pause icon controls. Pausing live playback
+stops following the stream at the current time; Go live resumes following.
+OpenClaw's current session summary is displayed beneath the player and remains
+in saved recording metadata and the summary-change log event.

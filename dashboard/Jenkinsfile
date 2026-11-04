@@ -1,110 +1,73 @@
-// Agent dashboard CI/CD. Builds the image, smoke-tests it, then deploys it on
-// the docker build node. Secrets come from Jenkins credentials (never git);
-// see dashboard/README.md for the credential IDs.
-
 pipeline {
   agent { label 'local-docker' }
-
-  environment {
-    IMAGE = "agent-dashboard"
-    // Loopback bind is the single-instance lock and the security boundary.
-    PORT = '14141'
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    skipDefaultCheckout(true)
+    timeout(time: 20, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '20'))
   }
-
+  triggers { githubPush() }
+  environment {
+    DEPLOY_ENV_SOURCE = '/home/motuariki/Documents/DockerVolumes/agent-dashboard/secrets/deploy.env'
+    NO_PROXY = 'localhost,127.0.0.1,::1'
+    no_proxy = 'localhost,127.0.0.1,::1'
+  }
   stages {
-    stage('Build') {
+    stage('Checkout GitHub') {
       steps {
-        dir('dashboard') {
-          sh 'docker build -t $IMAGE:ci-${BUILD_NUMBER} .'
+        deleteDir()
+        script {
+          def revision = checkout scm
+          env.GIT_COMMIT = revision.GIT_COMMIT
+          def version = sh(script: "python3 -c 'import json; print(json.load(open(\"dashboard/package.json\"))[\"version\"])'", returnStdout: true).trim()
+          env.DASHBOARD_VERSION = version
+          env.DASHBOARD_IMAGE = "agent-dashboard:${version}-jenkins.${env.BUILD_NUMBER}"
         }
       }
     }
-
-    stage('Smoke test') {
-      steps {
-        sh '''
-          set -e
-          docker rm -f agent-dashboard-smoke 2>/dev/null || true
-          docker run -d --name agent-dashboard-smoke \
-            -e HOST=127.0.0.1 -e PORT=14142 \
-            -e SESSION_SECRET=smoke -e DASHBOARD_TOKEN=smoke \
-            -e OIDC_ISSUER=https://auth.trance-0.com \
-            -e OIDC_CLIENT_ID=smoke -e OIDC_CLIENT_SECRET=smoke \
-            -p 127.0.0.1:14142:14142 \
-            $IMAGE:ci-${BUILD_NUMBER}
-          for i in $(seq 1 20); do
-            if curl -fsS --max-time 3 http://127.0.0.1:14142/healthz; then
-              docker rm -f agent-dashboard-smoke >/dev/null 2>&1 || true
-              exit 0
-            fi
-            sleep 1
-          done
-          docker logs agent-dashboard-smoke || true
-          docker rm -f agent-dashboard-smoke >/dev/null 2>&1 || true
-          echo "smoke test failed" >&2
-          exit 1
-        '''
-      }
+    stage('Build versioned image') {
+      steps { dir('dashboard') { sh 'docker build --progress plain --label org.opencontainers.image.revision="$GIT_COMMIT" -t "$DASHBOARD_IMAGE" .' } }
     }
-
-    stage('Deploy') {
+    stage('Server tests') {
       steps {
-        withCredentials([
-          string(credentialsId: 'dashboard-oidc-client-secret', variable: 'OIDC_CLIENT_SECRET'),
-          string(credentialsId: 'dashboard-session-secret', variable: 'SESSION_SECRET'),
-          string(credentialsId: 'dashboard-token', variable: 'DASHBOARD_TOKEN'),
-          string(credentialsId: 'openclaw-gateway-token', variable: 'OPENCLAW_TOKEN'),
-          string(credentialsId: 'astrbot-password', variable: 'ASTRBOT_PASSWORD'),
-        ]) {
+        dir('dashboard') {
           sh '''
-            set -e
-            # Save the running image id for rollback.
-            PREV=$(docker inspect -f '{{.Image}}' agent-dashboard 2>/dev/null || true)
-
-            docker tag $IMAGE:ci-${BUILD_NUMBER} $IMAGE:release-${BUILD_NUMBER}
-            docker rm -f agent-dashboard 2>/dev/null || true
-            docker run -d --name agent-dashboard \
-              --restart unless-stopped \
-              --network host \
-              -e HOST=127.0.0.1 -e PORT=$PORT \
-              -e OIDC_ISSUER=https://auth.trance-0.com \
-              -e OIDC_CLIENT_ID=agent-dashboard \
-              -e OIDC_CLIENT_SECRET \
-              -e OIDC_REQUIRED_GROUP=trance-0/app-agent \
-              -e SESSION_SECRET \
-              -e DASHBOARD_TOKEN \
-              -e OPENCLAW_ENDPOINT=http://127.0.0.1:18789 \
-              -e OPENCLAW_TOKEN \
-              -e ASTRBOT_ENDPOINT=http://127.0.0.1:6185 \
-              -e ASTRBOT_USERNAME=admin \
-              -e ASTRBOT_PASSWORD \
-              -e JENKINS_ENDPOINT=http://127.0.0.1:8081 \
-              $IMAGE:release-${BUILD_NUMBER}
-
-            for i in $(seq 1 20); do
-              if curl -fsS --max-time 3 http://127.0.0.1:$PORT/healthz; then
-                echo "deploy ok"
-                exit 0
-              fi
-              sleep 1
-            done
-
-            echo "deploy health check failed; rolling back" >&2
-            docker rm -f agent-dashboard 2>/dev/null || true
-            if [ -n "$PREV" ]; then
-              docker run -d --name agent-dashboard --restart unless-stopped --network host \
-                -e HOST=127.0.0.1 -e PORT=$PORT "$PREV" || true
-            fi
-            exit 1
+            set -eu
+            docker run --rm --entrypoint node \
+              --mount type=bind,src="$PWD/server",dst=/app/server,readonly \
+              --mount type=bind,src="$PWD/public",dst=/app/public,readonly \
+              --mount type=bind,src="$PWD/openclaw-plugin",dst=/app/openclaw-plugin,readonly \
+              "$DASHBOARD_IMAGE" --test server/*.test.js
           '''
         }
       }
     }
-  }
-
-  post {
-    always {
-      sh 'docker image prune -f --filter "dangling=true" >/dev/null 2>&1 || true'
+    stage('Isolated smoke test') {
+      steps {
+        sh '''
+          set -eu
+          SMOKE_NAME="agent-dashboard-smoke-$BUILD_NUMBER"
+          trap 'docker rm -f "$SMOKE_NAME" >/dev/null 2>&1 || true' EXIT
+          docker run -d --name "$SMOKE_NAME" --env-file "$DEPLOY_ENV_SOURCE" \
+            -e HOST=127.0.0.1 -e PORT=14143 --tmpfs /app/data:uid=1000,gid=1000,mode=0700 \
+            "$DASHBOARD_IMAGE"
+          for i in $(seq 1 30); do
+            if docker exec "$SMOKE_NAME" node -e "fetch('http://127.0.0.1:14143/healthz',{signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then exit 0; fi
+            echo "Smoke test waiting: dashboard/CI health — service is starting (attempt $i of 30)."
+            sleep 1
+          done
+          echo 'Smoke test failed: dashboard/CI health — service did not become ready within 30 attempts.' >&2
+          exit 1
+        '''
+      }
     }
+    stage('Backup and deploy') {
+      steps { sh 'python3 dashboard/scripts/deploy.py' }
+    }
+  }
+  post {
+    success { echo 'Deployment complete: dashboard/Jenkins pipeline — GitHub revision tested and deployed through the public URL.' }
+    failure { echo 'Deployment incomplete: dashboard/Jenkins pipeline — a required stage failed; inspect its console output.' }
   }
 }

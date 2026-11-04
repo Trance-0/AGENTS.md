@@ -399,3 +399,17 @@ bullets specific: filenames, command names, outcomes.
   staged secrets/sizes, line limits, versions, doc links, and unrelated edits.
   Lint/typecheck and Jenkins remain skipped because this service has no such
   scripts or configured pipeline. Commit stays local; no push requested.
+
+- 2026-11-04: Configured the `agent-dashboard` Pipeline-from-SCM Jenkins job
+  for GitHub `ai-infra-v0`, script `dashboard/Jenkinsfile`, `local-docker`, and
+  `githubPush()`. Runtime env is private on the agent; source is remote-only.
+  Replaced the unused scaffold with versioned builds, Node 22 tests, isolated
+  smoke checks, backup, rollout/rollback, public health, and plugin updates.
+- 2026-11-04: Dashboard 0.1.3 uses SVG Play/Pause icons, signed browser-session
+  viewer identity across tabs/reconnects, owner-scoped live summary updates,
+  and durable same-recording recovery across deployment. Added tests for
+  audience identity, malformed-cookie handling, summary ownership/persistence,
+  and truncation/recovery. Chromium checks cover distinct browser contexts,
+  shared-cookie tabs, and live pause state. `npm test`, browser checks, Python
+  syntax, and Jenkins declarative validation passed locally. Remote build and
+  webhook evidence will be appended after pushing the authorized changes.

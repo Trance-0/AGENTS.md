@@ -13,12 +13,28 @@ export class BroadcastStore {
     for (const name of fs.readdirSync(directory).filter(name => name.endsWith(".json"))) {
       const recording = JSON.parse(fs.readFileSync(path.join(directory, name), "utf8"));
       if (recording.status === "live") {
+        if (this.active) throw new Error("Dashboard cannot start: dashboard/recording recovery — multiple live recordings require administrator review.");
+        const file = this.filename(recording.id, "ndjson");
+        const descriptor = fs.openSync(file, "r+");
+        try {
+          const size = fs.fstatSync(descriptor).size;
+          let position = size;
+          let complete = 0;
+          const buffer = Buffer.alloc(65536);
+          while (position > 0) {
+            const length = Math.min(position, buffer.length);
+            position -= length;
+            fs.readSync(descriptor, buffer, 0, length, position);
+            const newline = buffer.subarray(0, length).lastIndexOf(10);
+            if (newline >= 0) { complete = position + newline + 1; break; }
+          }
+          if (complete !== size) fs.ftruncateSync(descriptor, complete);
+        } finally { fs.closeSync(descriptor); }
         let count = 0;
-        let last;
-        for (const event of this.scanEvents(recording.id)) { count++; last = event; }
-        Object.assign(recording, { status: "interrupted", endedAt: last?.ts || recording.startedAt, eventCount: count });
-        recording.duration = (recording.endedAt - recording.startedAt) / 1000;
-        this.save(recording);
+        for (const _event of this.scanEvents(recording.id)) count++;
+        recording.eventCount = count;
+        this.active = recording;
+        this.publish({ source: "stream", msg: "Stream resumed: dashboard/recording recovery — service restarted; existing recording and timestamps preserved." });
       }
     }
   }
@@ -100,6 +116,15 @@ export class BroadcastStore {
     this.active = null;
     this.notify("status", null);
     return recording;
+  }
+
+  summarize(summary) {
+    if (!this.active) throw Object.assign(new Error("Summary cannot be updated: dashboard/stream summary — no stream is live."), { status: 409 });
+    this.active.summary = summary;
+    this.save(this.active);
+    this.publish({ source: "openclaw", msg: "Stream summary updated: dashboard/stream summary — OpenClaw set the current session description.", summary });
+    this.notify("status", this.status());
+    return this.status();
   }
 
   update(id, changes) {

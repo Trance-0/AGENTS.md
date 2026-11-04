@@ -57,7 +57,12 @@ test("OpenClaw owner control records hooks and excludes private session content"
     assert.equal((await request("/api/openclaw/events", dedup)).status, 201);
     assert.equal((await (await request("/api/openclaw/events", dedup)).json()).duplicate, true);
     assert.equal((await request("/api/openclaw/stream/end", { recordingId: started.stream.id, sessionRef: "f".repeat(64) })).status, 409);
+    assert.equal((await request("/api/openclaw/stream/summary", { recordingId: started.stream.id, sessionRef: "f".repeat(64), summary: "wrong owner" })).status, 409);
+    await tool.execute("summary", { action: "summary", summary: "Current live session summary" });
+    assert.equal(store.status().summary, "Current live session summary");
+    assert.ok(store.readEvents(started.stream.id).some(event => event.summary === "Current live session summary"));
     await tool.execute("end", { action: "end" });
+    assert.equal(store.get(started.stream.id).summary, "Current live session summary");
     assert.equal(store.get(started.stream.id).status, "ended");
     const second = store.start("Next stream");
     assert.equal((await request("/api/openclaw/events", dedup)).status, 409);

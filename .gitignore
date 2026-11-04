@@ -30,3 +30,18 @@ Thumbs.db
 # Local, uncommitted agent instructions.
 CLAUDE.local.md
 .env
+
+# Python deployment helpers.
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.env.*
+!.env.example

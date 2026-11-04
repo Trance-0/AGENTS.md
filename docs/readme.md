@@ -28,7 +28,7 @@ scoped stream-control tool. Agent/model/tool lifecycle events are saved in the
 recording. Assistant text is public only for the session that starts a stream;
 private prompts, tool arguments, and tool results are excluded.
 
-### Local Docker and FRP deployment
+### Jenkins, Docker, and FRP deployment
 
 The Docker Compose service binds to host loopback on port 14143. The existing
 host-network frpc container forwards it to remote TCP port 6018; the remote
@@ -37,7 +37,9 @@ a named volume. The same volume holds durable recording metadata and NDJSON
 events containing public stream logs and viewer chat. Visible recordings sort
 by the administrator's recommendation score and date. The isolated OpenClaw
 `dashboard-host` agent answers authenticated chat through player log events,
-with tools denied and private workspace access disabled. Sessions expire after
+with tools denied and private workspace access disabled. Live sessions resume
+across deployments with the same ID. Watching counts deduplicate tabs using a
+signed browser-session cookie. OpenClaw can set the live summary. Sessions expire after
 12 hours and are cleared on restart.
 Docker retains structured, timestamped application logs with rotation.
 
@@ -57,3 +59,8 @@ callback, group membership, tunnel, logs, and rollback.
 
 The [dashboard development log](development/dashboard-log.md) records root
 causes, implementation decisions, and verification evidence for UI rounds.
+
+The `agent-dashboard` Jenkins job pulls `ai-infra-v0` from GitHub on push and
+builds/tests/deploys that revision. Runtime env is private on `local-docker`;
+SCM never reads local source. The deployment retains recording data and rollback
+containers. See the [Jenkins runbook](deployment/dashboard.md#jenkins-webhook-deployment-013).

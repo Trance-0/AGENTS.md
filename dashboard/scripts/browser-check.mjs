@@ -14,6 +14,12 @@ try {
   assert.equal(await page.locator("#broadcast-controls").isVisible(), false);
   assert.equal(await page.locator("#chat-input").isDisabled(), true);
   assert.equal(await page.getByText("Download", { exact: true }).count(), 0);
+  await page.waitForFunction(() => Number(document.querySelector("#viewer-count").textContent) === 1);
+  const secondTab = await guest.newPage();
+  await secondTab.goto("/");
+  await secondTab.waitForSelector(".rec-card");
+  await page.waitForFunction(() => Number(document.querySelector("#viewer-count").textContent) === 1);
+  await secondTab.close();
   await page.locator(".rec-card").first().click();
   await page.waitForFunction(() => document.querySelector("#stream-title").textContent === "Test stream");
   const bar = await page.locator("#progress-bar").boundingBox();
@@ -53,6 +59,7 @@ try {
   adminPage.on("pageerror", error => errors.push(error.message));
   await adminPage.goto("/");
   await adminPage.waitForSelector("#broadcast-controls", { state: "visible" });
+  await page.waitForFunction(() => Number(document.querySelector("#viewer-count").textContent) === 2);
   await adminPage.waitForFunction(() => document.querySelector("#avatar img")?.naturalWidth > 0);
   await adminPage.locator("#broadcast-title").fill("Browser verification stream");
   const startResponse = adminPage.waitForResponse(response => response.url().endsWith("/api/broadcast/start"));
@@ -60,6 +67,11 @@ try {
   const started = await startResponse;
   assert.equal(started.status(), 201, await started.text());
   await adminPage.waitForFunction(() => document.querySelector("#live-label").textContent === "LIVE");
+  assert.equal(await adminPage.locator("#btn-play").getAttribute("aria-label"), "Pause");
+  await adminPage.locator("#btn-play").click();
+  assert.equal(await adminPage.locator("#btn-play").getAttribute("aria-label"), "Play");
+  assert.equal(await adminPage.locator("#play-icon").isVisible(), true);
+  await adminPage.locator("#btn-live").click();
   await page.getByRole("button").filter({ hasText: "Browser verification stream" }).first().click();
   await page.waitForFunction(() => document.querySelector("#btn-live").hidden === false);
   await adminPage.waitForTimeout(5100);

@@ -7,7 +7,7 @@ import test from "node:test";
 import { BroadcastStore } from "./broadcast.js";
 import { previewAt } from "../public/player.js";
 
-test("recordings preserve chat, ordering, visibility, and interrupted stream recovery", async () => {
+test("recordings preserve chat, ordering, visibility, and live stream recovery", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "broadcast-test-"));
   try {
     let store = new BroadcastStore(directory);
@@ -26,13 +26,15 @@ test("recordings preserve chat, ordering, visibility, and interrupted stream rec
     store.publish({ msg: "Unicode event: 你好 " + "x".repeat(70000) });
     appendFileSync(path.join(directory, `${second.id}.ndjson`), '{"partial');
     store = new BroadcastStore(directory);
-    assert.equal(store.active, null);
-    assert.equal(store.get(second.id).status, "interrupted");
-    assert.equal(store.get(second.id).eventCount, 2);
+    assert.equal(store.active.id, second.id);
+    assert.equal(store.get(second.id).status, "live");
+    assert.equal(store.get(second.id).eventCount, 3);
     assert.match(store.readEvents(second.id, 1, 1)[0].msg, /你好/);
-    assert.deepEqual(store.readEvents(second.id, 2, 1), []);
+    assert.match(store.readEvents(second.id, 2, 1)[0].msg, /Stream resumed/);
+    store.publish({ msg: "After recovery" });
+    assert.equal(store.readEvents(second.id).at(-1).msg, "After recovery");
     store.update(first.id, { hidden: true, score: 90 });
-    assert.equal(store.list().length, 1);
+    assert.equal(store.list().length, 0);
     assert.equal(store.list(true)[0].id, first.id);
     store.update(first.id, { hidden: false, score: 90 });
     assert.equal(new BroadcastStore(directory).list()[0].id, first.id);

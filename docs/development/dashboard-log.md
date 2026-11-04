@@ -149,3 +149,34 @@ active. Public assistant text is limited to the session explicitly starting
 that stream; viewer-chat replies continue through the existing host response
 path. It does not import private gateway history. Event delivery has a bounded
 queue and timeout; disconnected events may be lost, with diagnostic warnings.
+
+
+## 2026-11-04 — Jenkins webhook deployment, audience, and summaries (0.1.3)
+
+- Root cause: no `agent-dashboard` job existed. `dashboard/Jenkinsfile` was an
+  unused scaffold without `githubPush()`, used port 14141 instead of 14143,
+  and its rollback lost runtime configuration. Replaced it with Pipeline-from-SCM,
+  versioned images, Node 22 tests, isolated smoke check, cold state backup,
+  checked deployment, rollback to the retained container, and installed-plugin
+  synchronization. The job pulls the current feature branch from GitHub.
+- Root cause: `server/broadcast-routes.js` used the SSE subscriber count as the
+  watching count. `server/viewers.js` now deduplicates active connections by a
+  signed HttpOnly browser-session cookie shared across tabs. Reconnects and
+  multiple tabs count once, while independent browser sessions count separately.
+- Root cause: `public/player.js` wrote Play/Pause text and considered a live
+  following player paused. It now renders accessible SVG state icons and stops
+  following immediately when Pause is pressed.
+- Added owner-scoped `dashboard_stream` summary action and machine endpoint.
+  Summary is persisted in live/recorded metadata, included in a timestamped log
+  event, and displayed below the player. Other sessions cannot modify it.
+- Live recording recovery now preserves the same recording across service
+  deployment. Incomplete trailing writes are truncated before appending a
+  recovery event; complete events, summary, start time, and session ownership
+  remain intact. This avoids ending broadcasts on every Jenkins push.
+- Existing named recording volume is retained; no database migration was
+  needed. Private Jenkins env and backup files use the DockerVolumes layout.
+- Prepared an isolated container checkout and a dedicated deploy key; its
+  public key must be installed on GitHub to enable container-originated pushes.
+
+Verification, webhook build numbers, and deployed revisions are recorded below
+when the remote build completes.

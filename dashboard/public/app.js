@@ -250,6 +250,7 @@ function connectStream() {
     const previous = state.stream;
     state.stream = next;
     if (previous?.id !== next?.id) state.liveEvents.clear();
+    if (next && player.recording?.id === next.id) { player.recording = next; player.render(); }
     if (next && state.viewingLive && next.id !== player.recording?.id) {
       state.loading++;
       player.load(next, []);

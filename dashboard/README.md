@@ -26,7 +26,7 @@ request. Chat has a five-second per-user cooldown and one host response at a
 time; upstream calls time out after 90 seconds.
 
 The owner-facing OpenClaw main agent can also start/status/end broadcasts with
-`dashboard_stream`. Its `dashboard-stream` plugin records agent/model/tool
+`dashboard_stream` (including `action: summary` for the live description). Its `dashboard-stream` plugin records agent/model/tool
 lifecycle events using a separate stream-controller credential. Starting a
 stream makes subsequent assistant text in that session public; other sessions
 contribute only activity metadata. The public chat host retains its no-tools
@@ -117,14 +117,14 @@ records fixes and verification for each dashboard round.
 
 ## CI/CD
 
-`dashboard/Jenkinsfile` is an earlier scaffold that builds the image, smoke-tests it, deploys it on the
-docker build node, and rolls back on failure. Credential IDs used:
+The `agent-dashboard` Jenkins job reads `dashboard/Jenkinsfile` from GitHub
+branch `ai-infra-v0`. The GitHub push webhook runs remote checkout, a versioned
+image build, Node 22 server tests, an isolated smoke check, recording backup,
+and deployment. Runtime secrets stay on the build agent. Existing live streams
+resume with the same recording ID after deployment; prior containers and images
+are retained for rollback. Changed OpenClaw plugin code is deployed as well.
 
-- `dashboard-oidc-client-secret`, `dashboard-session-secret`, `dashboard-token`
-- `openclaw-gateway-token`, `astrbot-password`
-
-Once configured, the SCM webhook can trigger this pipeline to deploy UI and
-feature changes through CI.
-
-This scaffold was not used for the public test deployment and must be aligned
-with the Compose configuration before enabling it.
+See the [Jenkins runbook](../docs/deployment/dashboard.md#jenkins-webhook-deployment-013)
+for job setup, private env paths, container-agent Git pushes, and verification.
+Watching counts browser sessions once across tabs and reconnects. Playback uses
+accessible Play/Pause icons; the public description displays the stream summary.

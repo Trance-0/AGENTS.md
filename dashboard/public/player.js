@@ -19,9 +19,10 @@ export class Player {
     this.setupTimeline();
     document.querySelector("#btn-live").onclick = () => this.goLive();
     document.querySelector("#btn-play").onclick = () => {
-      if (this.time >= this.duration()) this.time = 0;
+      const wasPlaying = this.follow || this.playing;
+      if (!wasPlaying && this.time >= this.duration()) this.time = 0;
       this.follow = false;
-      this.playing = !this.playing;
+      this.playing = !wasPlaying;
       this.render();
     };
     this.timer = setInterval(() => this.tick(), 200);
@@ -71,7 +72,12 @@ export class Player {
     $("#player").classList.toggle("offline", !this.recording || this.recording.status !== "live");
     $("#stream-title").textContent = this.recording?.title || "AI Platform Live Stream";
     $("#live-label").textContent = this.recording?.status === "live" ? (this.follow ? "LIVE" : "REWIND") : this.recording ? "REPLAY" : "OFFLINE";
-    $("#btn-play").textContent = this.playing ? "Pause" : "Play";
+    const playing = this.follow || this.playing;
+    $("#btn-play").setAttribute("aria-label", playing ? "Pause" : "Play");
+    $("#btn-play").title = playing ? "Pause" : "Play";
+    $("#play-icon").hidden = playing;
+    $("#pause-icon").hidden = !playing;
+    $("#stream-summary").textContent = this.recording?.summary || "Chat with the host beside the player. Completed streams preserve timed logs and viewer chat for replay.";
     $("#btn-play").disabled = !this.recording;
     $("#btn-live").hidden = this.recording?.status !== "live";
     const duration = this.duration();

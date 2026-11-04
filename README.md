@@ -24,7 +24,8 @@ The local Docker deployment is available at <https://live.trance-0.com>, through
 the existing frpc container on remote port 6018. Guests can watch live streams
 and replay visible recordings; signed-in viewers can chat with the OpenClaw
 host. Administrators start/end streams and curate recordings; the owner can
-also ask OpenClaw to start a broadcast and record agent activity. See the
+also ask OpenClaw to start a broadcast, record activity, and set its summary.
+The Jenkins `agent-dashboard` job deploys GitHub pushes to `ai-infra-v0`. See the
 [deployment runbook](docs/deployment/dashboard.md) for setup and verification.
 
 ## The plugins
