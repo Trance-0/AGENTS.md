@@ -11,6 +11,9 @@ export function writeActivity(directory, type, event, context) {
   };
   if (event.toolName) record.toolName = event.toolName;
   if (event.model) record.model = event.model;
+  if (event.provider) record.provider = event.provider;
+  const runId = event.runId || context.runId;
+  if (typeof runId === "string" && /^[a-zA-Z0-9_-]{1,120}$/.test(runId)) record.runId = runId;
   if (Number.isFinite(event.durationMs)) record.durationMs = Math.max(0, Math.round(event.durationMs));
   // File activity is public metadata. Never copy commands, contents, or other arguments.
   if (["read", "write", "edit"].includes(event.toolName)) {

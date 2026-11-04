@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { config } from "./config.js";
 import { emit } from "./log-bus.js";
+import { hostReply } from "./gateway-response.js";
 
 export function createChat(broadcast) {
   let busy = false;
@@ -23,11 +24,10 @@ export function createChat(broadcast) {
       });
       if (!response.ok) throw new Error(`gateway returned HTTP ${response.status}`);
       const body = await response.json();
-      const reply = body.choices?.[0]?.message?.content;
-      if (typeof reply !== "string" || !reply.trim()) throw new Error("gateway returned no assistant text");
-      broadcast.publish({ source: "openclaw", msg: reply.trim().slice(0, 12000) }, recordingId);
+      const reply = hostReply(body);
+      broadcast.publish({ source: "openclaw", msg: reply.text, ...(reply.runId ? { runId: reply.runId } : {}) }, recordingId);
     } catch (error) {
-      const cause = error.name === "TimeoutError" ? "gateway timed out after 90 seconds" : /^gateway returned/.test(error.message) ? error.message : "gateway connection failed";
+      const cause = error.name === "TimeoutError" ? "gateway timed out after 90 seconds" : /^gateway (?:returned|reported|provider)/.test(error.message) ? error.message : "gateway connection failed";
       const msg = `Host reply unavailable: dashboard/openclaw response — ${cause}. Please try again.`;
       emit({ level: "warn", msg });
       broadcast.publish({ source: "openclaw", level: "warn", msg }, recordingId);

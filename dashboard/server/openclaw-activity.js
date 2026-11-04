@@ -11,11 +11,14 @@ export function activityEvent(record) {
     ? record.path.replace(/[\x00-\x1f\x7f]/g, "").slice(0, 512) : undefined;
   const failed = record.success === false;
   const action = record.type === "tool_start" ? "started" : record.type === "tool_end" ? "completed" : "recorded";
-  const detail = tool ? `${tool}${filename ? ` ${filename}` : ""}` : safeName(record.model) ? record.model : record.agentId;
+  const detail = tool ? `${tool}${filename ? ` ${filename}` : ""}` : safeName(record.model) ? `${safeName(record.provider) ? record.provider + "/" : ""}${record.model}` : record.agentId;
   return {
     source: "openclaw", level: failed ? "warn" : "info", openclawEvent: record.type,
     eventRef: record.eventId, agentId: record.agentId,
     activityTimestamp: Date.parse(record.timestamp),
+    ...(safeName(record.provider) ? { provider: record.provider } : {}),
+    ...(safeName(record.model) ? { model: record.model } : {}),
+    ...(safeName(record.runId) ? { runId: record.runId } : {}),
     ...(filename ? { filePath: filename } : {}),
     ...(Number.isFinite(record.durationMs) ? { durationMs: record.durationMs } : {}),
     msg: `OpenClaw ${failed ? "failed" : action}: openclaw/${record.type} — ${detail}${failed ? ", operation reported failure" : ""}.`,

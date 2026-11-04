@@ -25,6 +25,8 @@ test("OpenClaw owner control records hooks and excludes private session content"
   const hooks = new Map(); let factory;
   const pluginConfig = { endpoint, tokenFile };
   register({ pluginConfig, logger: { warn() {} }, on: (name, handler) => hooks.set(name, handler), registerTool: handler => { factory = handler; } });
+  assert.ok(hooks.has("before_model_resolve"));
+  assert.equal(hooks.has("before_agent_start"), false, "legacy hook fires in two phases and duplicates start rows");
   const owner = { agentId: "main", senderIsOwner: true, sessionKey: "agent:main:owner-session" };
   const other = { agentId: "main", sessionKey: "agent:main:private-session" };
   const request = (url, body, token = process.env.OPENCLAW_STREAM_TOKEN) => fetch(endpoint + url, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
@@ -39,7 +41,8 @@ test("OpenClaw owner control records hooks and excludes private session content"
     assert.equal(started.stream.origin, "openclaw");
     assert.equal(started.stream.sessionRef.length, 64);
     assert.equal(JSON.parse((await tool.execute("again", { action: "start" })).content[0].text).stream.id, started.stream.id);
-    await hooks.get("llm_input")({ model: "test-model", prompt: "secret private prompt", systemPrompt: "secret system" }, other);
+    await hooks.get("before_model_resolve")({ prompt: "PRIVATE PROMPT" }, other);
+    await hooks.get("llm_input")({ model: "gpt-6-astra", provider: "cpa", runId: "chatcmpl_test", prompt: "secret private prompt", systemPrompt: "secret system" }, other);
     await hooks.get("llm_output")({ model: "test-model", assistantTexts: ["PRIVATE RESPONSE"] }, other);
     await hooks.get("before_tool_call")({ toolName: "read", params: { path: "/secret-path" } }, other);
     await hooks.get("after_tool_call")({ toolName: "read", result: "SECRET RESULT", error: "SECRET ERROR", durationMs: 30 }, other);
@@ -47,7 +50,8 @@ test("OpenClaw owner control records hooks and excludes private session content"
     await hooks.get("llm_output")({ model: "test-model", assistantTexts: [], lastAssistant: { stopReason: "error", errorMessage: "SECRET PROVIDER ERROR" } }, owner);
     await hooks.get("agent_end")({ success: true, durationMs: 50, messages: ["PRIVATE TRANSCRIPT", "SECRET PROVIDER ERROR"] }, owner);
     const events = store.readEvents(started.stream.id);
-    assert.ok(events.some(event => event.openclawEvent === "model_start"));
+    assert.ok(events.some(event => event.openclawEvent === "model_start" && event.provider === "cpa" && event.runId === "chatcmpl_test" && event.msg.includes("cpa/gpt-6-astra")));
+    assert.equal(events.filter(event => event.openclawEvent === "agent_start").length, 1);
     assert.ok(events.some(event => event.openclawEvent === "tool_end" && event.level === "warn"));
     assert.ok(events.some(event => event.msg === "Public broadcast message"));
     assert.ok(events.some(event => event.openclawEvent === "agent_end"));

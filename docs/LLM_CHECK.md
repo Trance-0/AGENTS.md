@@ -440,3 +440,14 @@ bullets specific: filenames, command names, outcomes.
   the same read-only mount, but no GitHub push or Jenkins build was requested.
   Python syntax, Compose validation, diff checks, and changed-file size audit
   passed. Updated README, architecture overview, env example, and runbook.
+
+- 2026-11-04: Dashboard 0.1.4 corrects gateway HTTP-200 error-completion handling
+  and duplicate legacy start hooks. File and HTTP events retain provider/model
+  and run IDs; private payloads remain excluded. Verified ten server tests,
+  config validation, the real local gateway/token connection, two persistent
+  CPA GPT-6 Astra fallback turns, and an official OpenAI GPT-6 Astra API probe.
+  Configured CPA Opus 5.5 → CPA GPT-6 Astra → official OpenAI GPT-6 Astra for
+  defaults and dashboard-host; removed CPA Gemini definitions/aliases and
+  checked cron/session overrides. CPA Opus currently returns auth_unavailable.
+  Private config backups and detailed dev evidence are retained. Jenkins push
+  deployment will restart gateway/dashboard and verify the preserved recording.

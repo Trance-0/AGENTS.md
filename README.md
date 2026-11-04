@@ -27,7 +27,9 @@ host. Administrators start/end streams and curate recordings; the owner can
 also ask OpenClaw to start a broadcast, record activity, and set its summary.
 OpenClaw writes file-read progress to a shared directory that the dashboard
 mounts read-only; live recordings show file paths and start/completion events.
-The Jenkins `agent-dashboard` job deploys GitHub pushes to `ai-infra-v0`. See the
+The stream host uses CPA Opus 5.5, then CPA GPT-6 Astra, then official OpenAI
+GPT-6 Astra. CPA Gemini models are disabled. The Jenkins `agent-dashboard` job
+deploys GitHub pushes to `ai-infra-v0`. See the
 [deployment runbook](docs/deployment/dashboard.md) for setup and verification.
 
 ## The plugins

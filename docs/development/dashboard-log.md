@@ -232,3 +232,37 @@ was fixed separately in its provider capability registry and checked with two
 real turns, including a persisted-history follow-up. Current runtime is a
 local repair; Jenkins retains its GitHub checkout workflow and needs a push of
 this commit before its next rollout can retain the new integration.
+
+
+## 2026-11-04 — Correct CPA models, fallback verification, and error replies (0.1.4)
+
+- Verified the dashboard's actual runtime gateway address, host network, and
+  bearer credential match the local `openclaw-openclaw-gateway-1` container.
+  The stream was connected; the model configuration selected older Claude
+  models and OpenAI/Codex GPT fallbacks rather than the requested CPA chain.
+- Set both the gateway default and `dashboard-host` model order to
+  `cpa/claude-opus-5-5-high` → `cpa/gpt-6-astra` → `openai/gpt-6-astra`.
+  Removed all five CPA Gemini model definitions and their aliases; checked
+  cron and explicit session overrides. Private pre-change configuration and
+  generated registries were backed up. Existing transcripts remain intact.
+- CPA's live catalog lists both requested models. Opus 5.5 returned HTTP 503
+  `auth_unavailable`; CPA GPT-6 Astra returned a normal answer. Two real
+  gateway turns in the same saved conversation failed over to CPA GPT-6 Astra.
+  Its session metadata and gateway fallback decision log confirmed the actual
+  provider/model. The official OpenAI GPT-6 Astra endpoint also returned a
+  successful response. CPA upstream authentication remains required for Opus.
+- `server/chat.js` trusted any nonempty HTTP 200 completion as a host reply.
+  OpenClaw's compatibility endpoint can wrap `LLM request rejected` in such a
+  response. `server/gateway-response.js` now rejects those failure completions,
+  and the chat path records a clear warning without raw provider error details.
+- The legacy `before_agent_start` hook runs during model selection and prompt
+  preparation. Replaced it with `before_model_resolve` to avoid duplicate starts
+  for one attempt. Both file and HTTP activity records now carry actual
+  provider/model and gateway run IDs. Replies retain the completion ID so the
+  selected fallback can be traced from the stream.
+- All ten server tests passed, including regression tests for HTTP-200 failure
+  handling, one start hook per attempt, provider/run metadata, shared activity
+  file handling, and the existing stream/auth/storage checks. Native config
+  validation passed. Deployment and post-restart live checks follow via Jenkins.
+- Local probe evidence is retained in ignored `logs/cpa-model-probes.log` and
+  `logs/openclaw-cpa-fallback-check.log`.

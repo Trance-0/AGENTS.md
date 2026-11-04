@@ -44,18 +44,18 @@ export function mountOpenClaw(app, broadcast) {
   app.post("/api/openclaw/events", authenticate, route((req, res) => {
     const event = req.body || {};
     if (!broadcast.active || broadcast.active.id !== event.recordingId) return res.status(409).json({ error: "Event not recorded: dashboard/openclaw ingestion — target recording is no longer live." });
-    if (!types.has(event.type) || !safeName(event.agentId) || !/^[a-f0-9]{64}$/.test(event.sessionRef || "") || !safeName(event.eventId) || (event.toolName !== undefined && !safeName(event.toolName)) || (event.model !== undefined && !safeName(event.model))) {
+    if (!types.has(event.type) || !safeName(event.agentId) || !/^[a-f0-9]{64}$/.test(event.sessionRef || "") || !safeName(event.eventId) || (event.toolName !== undefined && !safeName(event.toolName)) || (event.model !== undefined && !safeName(event.model)) || (event.provider !== undefined && !safeName(event.provider)) || (event.runId !== undefined && !safeName(event.runId))) {
       return res.status(400).json({ error: "Event not recorded: dashboard/openclaw ingestion — event type or public metadata is invalid." });
     }
     if (recordingId !== event.recordingId) { recordingId = event.recordingId; seen.clear(); }
     if (seen.has(event.eventId)) return res.json({ duplicate: true });
-    const detail = event.toolName ? `tool ${event.toolName}` : event.model ? `model ${event.model}` : `agent ${event.agentId}`;
+    const detail = event.toolName ? `tool ${event.toolName}` : event.model ? `model ${event.provider ? event.provider + "/" : ""}${event.model}` : `agent ${event.agentId}`;
     const failed = event.success === false;
     const durationMs = Number.isFinite(event.durationMs) ? Math.max(0, Math.round(event.durationMs)) : undefined;
     let msg = `OpenClaw activity ${failed ? "failed" : "recorded"}: openclaw/${event.type} — ${detail}${durationMs === undefined ? "" : `, duration ${durationMs}ms`}${failed ? ", operation reported failure" : ""}.`;
     // Only a session which explicitly started broadcasting may publish its text.
     if (event.type === "model_output" && broadcast.active.sessionRef === event.sessionRef && typeof event.text === "string" && event.text.trim()) msg = event.text.trim().slice(0, 12000);
-    const saved = broadcast.publish({ source: "openclaw", level: failed ? "warn" : "info", msg, openclawEvent: event.type, agentId: event.agentId, eventRef: event.eventId, ...(durationMs === undefined ? {} : { durationMs }) }, event.recordingId);
+    const saved = broadcast.publish({ source: "openclaw", level: failed ? "warn" : "info", msg, openclawEvent: event.type, agentId: event.agentId, eventRef: event.eventId, ...(event.provider ? { provider: event.provider } : {}), ...(event.model ? { model: event.model } : {}), ...(event.runId ? { runId: event.runId } : {}), ...(durationMs === undefined ? {} : { durationMs }) }, event.recordingId);
     seen.add(event.eventId);
     res.status(201).json({ id: saved.id });
   }));

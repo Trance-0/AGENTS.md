@@ -63,3 +63,13 @@ test("reader resumes cursors, handles partial UTF-8 lines, rotation and truncati
     assert.deepEqual(events.map(event => event.eventRef), ["one", "two", "three", "four"]);
   } finally { fs.rmSync(directory, { recursive: true }); }
 });
+
+
+test("model activity identifies the actual provider, model, and gateway run", () => {
+  const record = { type: "model_output", eventId: "event-1", timestamp: new Date().toISOString(), agentId: "dashboard-host", model: "gpt-6-astra", provider: "cpa", runId: "chatcmpl_verified", success: true };
+  const event = activityEvent(record);
+  assert.match(event.msg, /cpa\/gpt-6-astra/);
+  assert.equal(event.provider, "cpa");
+  assert.equal(event.model, "gpt-6-astra");
+  assert.equal(event.runId, "chatcmpl_verified");
+});

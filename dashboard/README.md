@@ -65,6 +65,16 @@ as well; administrators need both groups. Panel-toggle mutations additionally
 require the dashboard bearer token. Verify memberships on the user record. The generated
 client ID and secret go in the gitignored `.env`.
 
+## Host models and connection
+
+The dashboard calls the local OpenClaw gateway at `127.0.0.1:18789` with
+`model: openclaw:dashboard-host`; OpenClaw resolves the real model. Its exact
+order is `cpa/claude-opus-5-5-high` → `cpa/gpt-6-astra` →
+`openai/gpt-6-astra` (official API). CPA Gemini models are disabled.
+Recorded model events expose the provider/model and gateway run ID so a reply
+can be traced to its actual backend. Error completions returned with HTTP 200
+are warnings, not successful host replies.
+
 ## Configuration
 
 Copy `.env.example` to `.env` (gitignored) and fill in real values:

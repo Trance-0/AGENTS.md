@@ -29,8 +29,8 @@ shows both its starting and completed file-path events in the public player.
 The browser connects to `https://live.trance-0.com`. Its remote reverse proxy
 terminates TLS and routes HTTP to FRP remote TCP port 6018. The existing local
 `frpc` container uses host networking and forwards requests to
-`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.1.3` using image
-`agent-dashboard:0.1.3`, with Node.js 22 as the unprivileged `node` user.
+`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.1.4` using image
+`agent-dashboard:0.1.4`, with Node.js 22 as the unprivileged `node` user.
 
 ## Casdoor setup
 
@@ -153,8 +153,8 @@ and without `admin-agent` must receive 403 for mutations even with a valid
 bearer token. Remove any temporary test identities after testing.
 
 ```sh
-docker logs --timestamps --tail 100 agent-dashboard-v0.1.3
-docker inspect agent-dashboard-v0.1.3 --format '{{.State.Health.Status}}'
+docker logs --timestamps --tail 100 agent-dashboard-v0.1.4
+docker inspect agent-dashboard-v0.1.4 --format '{{.State.Health.Status}}'
 ```
 
 Docker retains three rotated JSON log files of up to 10 MB each. Application
@@ -166,7 +166,7 @@ never be included in logs.
 
 Before a future update, retain the current image under a distinct local tag.
 To roll back, restore the previous source revision or retag the retained image
-as `agent-dashboard:0.1.3`, then run
+as `agent-dashboard:0.1.4`, then run
 `docker compose -f dashboard/compose.yaml up -d --no-build`. Keep the private
 environment file and state volume. To remove just the dashboard exposure,
 restore the saved FRP configuration, validate it, and restart `frpc`; other
@@ -393,3 +393,48 @@ Playback uses accessible SVG Play/Pause icon controls. Pausing live playback
 stops following the stream at the current time; Go live resumes following.
 OpenClaw's current session summary is displayed beneath the player and remains
 in saved recording metadata and the summary-change log event.
+
+
+## Stream host model policy (0.1.4)
+
+The canonical private gateway config is `.openclaw/openclaw.json` in the
+OpenClaw persistent mount. Set both `agents.defaults.model` and the
+`dashboard-host` entry's `model` to:
+
+```json
+{
+  "primary": "cpa/claude-opus-5-5-high",
+  "fallbacks": ["cpa/gpt-6-astra", "openai/gpt-6-astra"]
+}
+```
+
+These are the exact configured IDs: CPA publishes Opus 5.5 as
+`claude-opus-5-5-high`. The official `openai` provider uses
+`https://api.openai.com/v1`. Preserve existing provider key references; do not
+copy credentials into the dashboard, prompts, or documentation. Ensure all
+three IDs are in `agents.defaults.models` if its model allowlist is enabled.
+Remove CPA Gemini entries from that allowlist and `models.providers.cpa.models`.
+Check agent overrides and cron/session overrides for old CPA Gemini selections.
+Generated agent model registries must also reflect the updated canonical list.
+Historical transcripts and recorded events may still mention older models;
+these do not authorize selecting them on a new run.
+
+Validate with `docker exec openclaw-openclaw-gateway-1 node dist/index.js config validate`.
+After changes, restart the gateway and dashboard, preserving the shared
+activity mount and recording volume. A Jenkins deployment of a changed plugin
+restarts both services. Confirm the main and `dashboard-host` resolved model
+orders after restart and verify a real multi-turn request using existing
+conversation history.
+
+The 0.1.4 deployment checks found CPA Opus 5.5 listed but unavailable with HTTP
+503 `auth_unavailable`. Native OpenClaw fallback selected CPA GPT-6 Astra and
+completed two consecutive turns. A direct official API GPT-6 Astra probe also
+succeeded. Opus availability depends on CPA restoring authentication for that
+upstream model; changing dashboard credentials cannot fix that response.
+
+Model activity records now include `provider`, `model`, and `runId`, and the
+host reply preserves the gateway completion ID as `runId`. The modern
+`before_model_resolve` hook records the start of a model attempt; the legacy
+`before_agent_start` hook was called twice across model/prompt phases. Legitimate
+fallback attempts can still produce separate start events at different times.
+Shared file logs and the existing authenticated HTTP event path remain intact.

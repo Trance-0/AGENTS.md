@@ -62,6 +62,12 @@ curl --fail --max-time 10 https://live.trance-0.com/healthz
 The [dashboard deployment runbook](deployment/dashboard.md) covers the OIDC
 callback, group membership, tunnel, logs, and rollback.
 
+The OpenClaw primary/fallback order is `cpa/claude-opus-5-5-high`,
+`cpa/gpt-6-astra`, then `openai/gpt-6-astra`, configured both globally and for
+`dashboard-host`. CPA Gemini definitions and aliases are removed. Recorded
+model events include provider and run ID; gateway error completions are treated
+as failures even when HTTP status is 200.
+
 The [dashboard development log](development/dashboard-log.md) records root
 causes, implementation decisions, and verification evidence for UI rounds.
 

@@ -47,6 +47,8 @@ export default function register(api) {
           type, recordingId: stream.id, sessionRef, agentId: context.agentId, eventId: randomUUID(),
           ...(event.toolName ? { toolName: event.toolName } : {}),
           ...(event.model ? { model: event.model } : {}),
+          ...(event.provider ? { provider: event.provider } : {}),
+          ...((event.runId || context.runId) ? { runId: event.runId || context.runId } : {}),
           ...(typeof event.durationMs === "number" ? { durationMs: event.durationMs } : {}),
           success: event.success !== false && !event.error && event.lastAssistant?.stopReason !== "error",
           ...(type === "model_output" && stream.sessionRef === sessionRef ? { text: (event.assistantTexts || []).join("\n").slice(0, 12000) } : {}),
@@ -58,7 +60,7 @@ export default function register(api) {
     queue = queue.then(operation, operation);
     return queue;
   }
-  for (const [hook, type] of [["before_agent_start", "agent_start"], ["llm_input", "model_start"], ["llm_output", "model_output"], ["before_tool_call", "tool_start"], ["after_tool_call", "tool_end"], ["agent_end", "agent_end"]]) {
+  for (const [hook, type] of [["before_model_resolve", "agent_start"], ["llm_input", "model_start"], ["llm_output", "model_output"], ["before_tool_call", "tool_start"], ["after_tool_call", "tool_end"], ["agent_end", "agent_end"]]) {
     api.on(hook, (event, context) => record(type, event, context));
   }
   api.registerTool(context => {
