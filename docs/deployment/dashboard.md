@@ -275,8 +275,9 @@ to preserve explicit source provenance.
 Ask the owner-facing OpenClaw agent to use `dashboard_stream` with
 `action: start` and a title. `status` reports the stream; `end` saves it.
 `action: summary` with `summary` text (1–4000 characters) sets the current live
-description and persists it into the recording. Only the owning session may
-change that summary.
+description and persists it into the recording. The trusted owner-facing main agent may summarize the current live stream,
+including streams started by a dashboard administrator; stream ownership stays
+unchanged.
 Repeated starts from the same session return the existing stream; a different
 session cannot take over or end it. Browser administrators retain their
 Start/End controls and recording moderation.

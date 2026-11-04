@@ -57,7 +57,7 @@ test("OpenClaw owner control records hooks and excludes private session content"
     assert.equal((await request("/api/openclaw/events", dedup)).status, 201);
     assert.equal((await (await request("/api/openclaw/events", dedup)).json()).duplicate, true);
     assert.equal((await request("/api/openclaw/stream/end", { recordingId: started.stream.id, sessionRef: "f".repeat(64) })).status, 409);
-    assert.equal((await request("/api/openclaw/stream/summary", { recordingId: started.stream.id, sessionRef: "f".repeat(64), summary: "wrong owner" })).status, 409);
+    assert.equal((await request("/api/openclaw/stream/summary", { recordingId: started.stream.id, sessionRef: "f".repeat(64), agentId: "dashboard-host", summary: "wrong owner" })).status, 403);
     await tool.execute("summary", { action: "summary", summary: "Current live session summary" });
     assert.equal(store.status().summary, "Current live session summary");
     assert.ok(store.readEvents(started.stream.id).some(event => event.summary === "Current live session summary"));
@@ -67,6 +67,10 @@ test("OpenClaw owner control records hooks and excludes private session content"
     const second = store.start("Next stream");
     assert.equal((await request("/api/openclaw/events", dedup)).status, 409);
     assert.equal(store.readEvents(second.id).length, 1);
+    const anotherOwner = factory({ ...owner, sessionKey: "agent:main:another-owner-session" });
+    await anotherOwner.execute("summary", { action: "summary", summary: "Admin-started stream summary" });
+    assert.equal(store.status().summary, "Admin-started stream summary");
+    assert.equal(store.active.id, second.id);
   } finally {
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
     await rm(directory, { recursive: true, force: true });

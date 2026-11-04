@@ -168,7 +168,8 @@ queue and timeout; disconnected events may be lost, with diagnostic warnings.
   following immediately when Pause is pressed.
 - Added owner-scoped `dashboard_stream` summary action and machine endpoint.
   Summary is persisted in live/recorded metadata, included in a timestamped log
-  event, and displayed below the player. Other sessions cannot modify it.
+  event, and displayed below the player. Public chat agents cannot modify it; trusted owner-facing main-agent sessions
+  can summarize the current live stream without taking over its ownership.
 - Live recording recovery now preserves the same recording across service
   deployment. Incomplete trailing writes are truncated before appending a
   recovery event; complete events, summary, start time, and session ownership
@@ -178,5 +179,37 @@ queue and timeout; disconnected events may be lost, with diagnostic warnings.
 - Prepared an isolated container checkout and a dedicated deploy key; its
   public key must be installed on GitHub to enable container-originated pushes.
 
-Verification, webhook build numbers, and deployed revisions are recorded below
-when the remote build completes.
+Verification and deployment:
+
+- Created `https://jenkins.trance-0.com/job/agent-dashboard/`, configured as
+  `CpsScmFlowDefinition` for GitHub `ai-infra-v0`, script
+  `dashboard/Jenkinsfile`, agent label `local-docker`, and GitHub push trigger.
+  Jenkins declarative validation returned `Jenkinsfile successfully validated`.
+- Pushed implementation commit `30d8ff1` to GitHub. The existing webhook
+  delivered the real push event and Jenkins build **#1** completed **SUCCESS**
+  with cause `Started by GitHub push by Trance-0`. Its checked-out revision
+  exactly matched that commit. No manual build or synthetic webhook was used.
+- Build #1 passed all five Node 22 tests and the isolated smoke container,
+  backed up the recording volume, deployed
+  `agent-dashboard:0.1.3-jenkins.1`, verified local/public health, and updated
+  the installed OpenClaw plugin. Original stream ID
+  `a6dc9887-8088-4989-ba23-89752fe15926` remained live across rollout.
+- Live Chromium checks verified SVG Pause while live, SVG Play when paused,
+  Go live, one audience member across two shared-cookie tabs plus a reload,
+  a second audience member in an independent browser context, and disconnect
+  cleanup back to the baseline. No browser errors were observed. Screenshot:
+  ignored `logs/dashboard-v0.1.3-jenkins-live.png`.
+- Invoked the installed OpenClaw `dashboard_stream` summary tool: description
+  appeared on the public page and persisted with a summary-change log event.
+  Tests also ensure a trusted owner can summarize an admin-started stream,
+  without changing stream ownership or exposing controls to public chat.
+- Retained durable NDJSON/metadata storage and rollback containers; a separate
+  database container was unnecessary for these changes. Backups and private
+  deploy env are outside SCM in the existing DockerVolumes layout.
+- Prepared and fast-forwarded the container's isolated dashboard checkout from
+  GitHub. A dedicated deploy key and pinned host key are configured locally.
+  The owner explicitly deferred container GitHub write permission to a future
+  test-account setup; no shared host private key was copied into the container.
+- Evidence: ignored `logs/jenkins-agent-dashboard-1.log`. Final summary-scope
+  correction and this verification record are pushed together for the next
+  automatic webhook build, whose result will be checked before handoff.

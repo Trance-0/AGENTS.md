@@ -35,8 +35,9 @@ export function mountOpenClaw(app, broadcast) {
     res.json({ recording: broadcast.stop("openclaw") });
   }));
   app.post("/api/openclaw/stream/summary", authenticate, route((req, res) => {
-    const { summary, recordingId, sessionRef } = req.body || {};
-    if (!broadcast.active || broadcast.active.id !== recordingId || broadcast.active.sessionRef !== sessionRef) return res.status(409).json({ error: "Summary cannot be updated: dashboard/openclaw control — this session does not own the live recording." });
+    const { summary, recordingId, sessionRef, agentId } = req.body || {};
+    if (!broadcast.active || broadcast.active.id !== recordingId) return res.status(409).json({ error: "Summary cannot be updated: dashboard/openclaw control — target recording is no longer live." });
+    if (agentId !== "main" || !/^[a-f0-9]{64}$/.test(sessionRef || "")) return res.status(403).json({ error: "Summary cannot be updated: dashboard/openclaw control — the trusted main-agent controller is required." });
     if (typeof summary !== "string" || !summary.trim() || summary.length > 4000) return res.status(400).json({ error: "Summary cannot be updated: dashboard/stream summary — enter between 1 and 4000 characters." });
     res.json({ stream: broadcast.summarize(summary.trim()) });
   }));

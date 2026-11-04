@@ -58,7 +58,7 @@ export default function register(api) {
     return {
       name: "dashboard_stream",
       label: "Dashboard stream",
-      description: "Start, summarize, inspect, or end the public dashboard stream at live.trance-0.com. Use start only when the owner asks to broadcast: subsequent assistant text in this session becomes public. Logs and chat are recorded. Other sessions remain private. End saves the recording; admins curate it in the dashboard.",
+      description: "Start, summarize, inspect, or end the public dashboard stream at live.trance-0.com. Use start only when the owner asks to broadcast: subsequent assistant text in this session becomes public. Logs and chat are recorded. Other sessions remain private. Summary sets the current live description, including an administrator-started stream. End saves the recording; admins curate it in the dashboard.",
       parameters: { type: "object", additionalProperties: false, required: ["action"], properties: { action: { type: "string", enum: ["start", "status", "summary", "end"] }, title: { type: "string", maxLength: 160 }, summary: { type: "string", maxLength: 4000 } } },
       async execute(_id, params) {
         const sessionRef = reference(context);
@@ -67,7 +67,7 @@ export default function register(api) {
           data = await request("/api/openclaw/stream/start", { title: params.title || "OpenClaw Live", sessionRef, agentId: context.agentId });
         } else if (params.action === "summary") {
           const current = await request("/api/openclaw/stream");
-          data = await request("/api/openclaw/stream/summary", { recordingId: current.stream?.id, sessionRef, summary: params.summary });
+          data = await request("/api/openclaw/stream/summary", { recordingId: current.stream?.id, sessionRef, agentId: context.agentId, summary: params.summary });
         } else if (params.action === "end") {
           const current = await request("/api/openclaw/stream");
           data = await request("/api/openclaw/stream/end", { recordingId: current.stream?.id, sessionRef });
