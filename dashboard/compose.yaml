@@ -1,0 +1,28 @@
+services:
+  dashboard:
+    image: agent-dashboard:0.1.0
+    container_name: agent-dashboard-v0.1.0
+    build:
+      context: .
+    network_mode: host
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HOST: 127.0.0.1
+      PORT: "14143"
+    volumes:
+      - dashboard-state:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:14143/healthz', {signal: AbortSignal.timeout(3000)}).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  dashboard-state:

@@ -6,9 +6,10 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import express from "express";
 import session from "express-session";
+import createMemoryStore from "memorystore";
 
 import { config, hasDashboardToken } from "./config.js";
-import { initOidc, oidcReady, loginUrl, handleCallback, isAuthorized, groupsOf } from "./oidc.js";
+import { initOidc, loginUrl, handleCallback, isAuthorized, groupsOf } from "./oidc.js";
 import { registerPanel, snapshot, isEnabled, setEnabled, getPanel } from "./registry.js";
 import { emit, getEvents, subscribe, uptimeSeconds } from "./log-bus.js";
 
@@ -42,16 +43,19 @@ async function loadPanels() {
 await loadPanels();
 await initOidc();
 
+const MemoryStore = createMemoryStore(session);
 const app = express();
 app.disable("x-powered-by");
-app.set("trust proxy", false);
+app.set("trust proxy", "loopback");
+app.use(express.json());
 
 app.use(
   session({
+    store: new MemoryStore({ checkPeriod: 60000, max: 1000 }),
     secret: config.sessionSecret,
     resave: false,
     saveUninitialized: false,
-    cookie: { httpOnly: true, sameSite: "lax", secure: false },
+    cookie: { maxAge: 12 * 60 * 60 * 1000, httpOnly: true, sameSite: "lax", secure: config.oidc.redirectUri.startsWith("https://") },
   }),
 );
 
@@ -64,15 +68,18 @@ app.get("/auth/callback", async (req, res, next) => {
   try {
     const { userinfo } = await handleCallback(req);
     if (!isAuthorized(userinfo)) {
-      emit({ source: "dashboard", level: "warn", msg: `OIDC denied (groups=${groupsOf(userinfo).join(",")})` });
-      return res.status(403).send("Access denied: missing required group.");
+      emit({ source: "dashboard", level: "warn", msg: "Unable to sign in: dashboard/group authorization — account lacks the required group" });
+      return res.status(403).send("Unable to sign in: dashboard/group authorization — account lacks the required group.");
     }
+    await new Promise((resolve, reject) => req.session.regenerate((err) => err ? reject(err) : resolve()));
     req.session.user = {
       sub: userinfo.sub,
+      isAdmin: groupsOf(userinfo).includes(config.oidc.adminGroup),
       name: userinfo.name ?? userinfo.preferred_username ?? userinfo.sub,
       email: userinfo.email,
     };
-    emit({ source: "dashboard", level: "info", msg: `sign-in: ${req.session.user.name}` });
+    emit({ source: "dashboard", level: "info", msg: "Dashboard access granted: dashboard/sign-in — OIDC identity and required group verified" });
+    await new Promise((resolve, reject) => req.session.save((err) => err ? reject(err) : resolve()));
     res.redirect("/");
   } catch (err) {
     next(err);
@@ -89,17 +96,20 @@ app.get("/auth/user", (req, res) => {
 
 function requireAuth(req, res, next) {
   if (req.session?.user) return next();
-  if (req.path.startsWith("/api/")) return res.status(401).json({ error: "unauthorized" });
+  if (req.path.startsWith("/api/")) return res.status(401).json({ error: "Dashboard data unavailable: dashboard/session authorization — sign-in session is missing or expired." });
   res.redirect("/auth/login");
 }
 
 function requireToken(req, res, next) {
+  if (!req.session.user.isAdmin) {
+    return res.status(403).json({ error: "Panel cannot be changed: dashboard/admin authorization — account lacks the required administrator group." });
+  }
   if (!hasDashboardToken) {
-    return res.status(503).json({ error: "dashboard token not configured" });
+    return res.status(503).json({ error: "Panel cannot be changed: dashboard/mutation authorization — dashboard token is not configured." });
   }
   const header = req.headers.authorization ?? "";
   if (header !== `Bearer ${config.dashboardToken}`) {
-    return res.status(401).json({ error: "invalid token" });
+    return res.status(401).json({ error: "Panel cannot be changed: dashboard/mutation authorization — bearer token is missing or incorrect." });
   }
   next();
 }
@@ -109,18 +119,18 @@ app.get("/api/panels", requireAuth, async (_req, res) => res.json({ panels: awai
 
 app.get("/api/panels/:id/data", requireAuth, async (req, res) => {
   const panel = getPanel(req.params.id);
-  if (!panel) return res.status(404).json({ error: "unknown panel" });
-  if (!(await isEnabled(panel.id))) return res.status(404).json({ error: "panel disabled" });
+  if (!panel) return res.status(404).json({ error: "Panel unavailable: dashboard/panel lookup — panel ID is not registered." });
+  if (!(await isEnabled(panel.id))) return res.status(404).json({ error: "Panel unavailable: dashboard/panel lookup — panel is disabled." });
   const data = typeof panel.data === "function" ? await panel.data() : {};
   res.json(data ?? {});
 });
 
 app.post("/api/panels/:id/toggle", requireAuth, requireToken, async (req, res) => {
   const panel = getPanel(req.params.id);
-  if (!panel) return res.status(404).json({ error: "unknown panel" });
+  if (!panel) return res.status(404).json({ error: "Panel unavailable: dashboard/panel lookup — panel ID is not registered." });
   const enabled = req.body?.enabled !== false;
   await setEnabled(panel.id, enabled);
-  emit({ source: "dashboard", level: "info", msg: `panel ${panel.id} ${enabled ? "enabled" : "disabled"}` });
+  emit({ source: "dashboard", level: "info", msg: `Panel state updated: dashboard/panel toggle — ${panel.id} is ${enabled ? "enabled" : "disabled"}` });
   res.json({ id: panel.id, enabled });
 });
 
@@ -129,6 +139,7 @@ app.get("/api/uptime", requireAuth, (_req, res) => res.json({ uptimeSeconds: upt
 
 app.get("/api/stream", requireAuth, (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("X-Accel-Buffering", "no");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
@@ -138,18 +149,25 @@ app.get("/api/stream", requireAuth, (req, res) => {
   req.on("close", unsubscribe);
 });
 
+app.use((err, _req, res, _next) => {
+  const cause = err.error || err.code || err.type || err.message.split(",")[0];
+  const message = `Request could not complete: dashboard/request handling — ${cause}. Retry sign-in or check the request.`;
+  emit({ source: "dashboard", level: "warn", msg: message });
+  res.status(400).json({ error: message });
+});
+
 // --- Static frontend ---
 app.use(express.static(PUBLIC_DIR));
 
 app.listen(config.port, config.host, () => {
-  emit({ source: "dashboard", level: "info", msg: `dashboard listening on http://${config.host}:${config.port}` });
-  emit({ source: "dashboard", level: "info", msg: `oidc issuer ${config.oidc.issuer} group ${config.oidc.requiredGroup}` });
-  emit({ source: "openclaw", level: "info", msg: `configured endpoint ${config.openclaw.endpoint}` });
-  emit({ source: "astrbot", level: "info", msg: `configured endpoint ${config.astrbot.endpoint}` });
-  emit({ source: "jenkins", level: "info", msg: `configured endpoint ${config.jenkins.endpoint}` });
+  emit({ source: "dashboard", level: "info", msg: `Dashboard is ready: dashboard/startup — listening on http://${config.host}:${config.port}` });
+  emit({ source: "dashboard", level: "info", msg: `Sign-in is configured: dashboard/startup — issuer ${config.oidc.issuer}, required group ${config.oidc.requiredGroup}` });
+  emit({ source: "openclaw", level: "info", msg: `Service monitoring is configured: dashboard/startup — endpoint ${config.openclaw.endpoint}` });
+  emit({ source: "astrbot", level: "info", msg: `Service monitoring is configured: dashboard/startup — endpoint ${config.astrbot.endpoint}` });
+  emit({ source: "jenkins", level: "info", msg: `Service monitoring is configured: dashboard/startup — endpoint ${config.jenkins.endpoint}` });
 });
 
 // Seed a heartbeat so the progress bar always has movement even when quiet.
 setInterval(() => {
-  emit({ source: "dashboard", level: "info", msg: `heartbeat @ ${uptimeSeconds()}s` });
+  emit({ source: "dashboard", level: "info", msg: `Dashboard is running: dashboard/heartbeat — uptime ${uptimeSeconds()}s` });
 }, 30000);

@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 const panels = new Map();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const STATE_FILE = path.join(__dirname, "panels", "panels-state.json");
+const STATE_FILE = path.join(process.env.NODE_ENV === "production" ? "/app/data" : path.join(__dirname, "panels"), "panels-state.json");
 
 async function readState() {
   try {
@@ -33,7 +33,7 @@ async function writeState(state) {
 
 export function registerPanel(panel) {
   if (!panel?.id || !panel?.title) {
-    throw new Error("panel requires id and title");
+    throw new Error("Panel cannot be registered: dashboard/panel registration — panel ID or title is missing.");
   }
   panels.set(panel.id, panel);
 }
@@ -49,7 +49,7 @@ export async function isEnabled(id) {
 
 export async function setEnabled(id, enabled) {
   if (!panels.has(id)) {
-    throw new Error(`unknown panel: ${id}`);
+    throw new Error(`Panel state cannot be changed: dashboard/panel lookup — ${id} is not registered.`);
   }
   const state = await readState();
   state[id] = { ...state[id], enabled: Boolean(enabled) };

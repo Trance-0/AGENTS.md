@@ -42,7 +42,7 @@ async function probe(ctx) {
     const res = await ctx.fetch(config.openclaw.endpoint + "/healthz", { timeout: 4000 });
     return res.ok;
   } catch (err) {
-    emit({ source: "openclaw", level: "warn", msg: `probe failed: ${err.message}` });
+    emit({ source: "openclaw", level: "warn", msg: `Gateway status unavailable: openclaw/health probe — ${err.message}` });
     return false;
   }
 }

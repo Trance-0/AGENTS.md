@@ -19,6 +19,11 @@ self-hosted AI platform (AstrBot, OpenClaw, PCP, Claude Code) with a
 self-evolving, rollback-safe CI/CD loop. It is docs and check-script stubs
 only.
 
+[`dashboard/`](dashboard/README.md) is the agent dashboard behind Casdoor OIDC.
+The local Docker deployment is available at <https://live.trance-0.com>, through
+the existing frpc container on remote port 6018. See the
+[deployment runbook](docs/deployment/dashboard.md) for setup and verification.
+
 ## The plugins
 
 | Plugin | What it does |

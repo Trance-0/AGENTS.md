@@ -36,7 +36,7 @@ async function probe(ctx) {
     const res = await ctx.fetch(config.jenkins.endpoint + "/login", { timeout: 4000 });
     return res.ok;
   } catch (err) {
-    emit({ source: "jenkins", level: "warn", msg: `probe failed: ${err.message}` });
+    emit({ source: "jenkins", level: "warn", msg: `Build status unavailable: build-status/health probe — ${err.message}` });
     return false;
   }
 }

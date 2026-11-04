@@ -310,3 +310,43 @@ bullets specific: filenames, command names, outcomes.
   No code paths changed. Verified with `bash -n` on every check script and a
   publish-safety scan of the branch diff. The check scripts themselves were not
   run: they target the owner's platform host, which doesn't exist yet.
+- 2026-11-03: Deployed dashboard version 0.1.0 using
+  `dashboard/compose.yaml` on loopback port 14143 and the existing local frpc
+  container's remote TCP port 6018, serving `https://live.trance-0.com`.
+  Verified the port before assignment. Backed up the FRP config privately and
+  preserved existing proxies; the private FRP config remains a local change in
+  its separate checkout because it contains authentication material.
+- 2026-11-03: Created a distinct Casdoor dashboard OIDC application based on
+  Gitea's claim/signing setup, plus application and administrator groups.
+  Assigned both groups to the requested existing administrator, preserving
+  original memberships and verifying the Gitea application was unchanged.
+  Creating groups with `users` alone did not update the existing user's
+  `groups`; explicitly updating that membership fixed access.
+- 2026-11-03: Fixed missing login-state rejection and userinfo subject binding
+  in `dashboard/server/oidc.js:37`, HTTPS cookie/proxy configuration and JSON
+  toggle parsing in `dashboard/server/index.js:49`, and session regeneration
+  at `dashboard/server/index.js:74`. Added an administrator group gate for
+  mutations, bounded expiring sessions, durable panel state, and structured
+  logs. Fixed the false AstrBot outage from probing an absent `/api/health`
+  route in `dashboard/server/panels/astrbot.js:34`; probe the verified web root.
+  Added `X-Accel-Buffering: no` for SSE after public streaming timed out behind
+  the remote proxy's response buffering.
+- 2026-11-03: Passed `npm test --prefix dashboard`, the same signed-token OIDC
+  integration test under the production image's Node 22 runtime, JavaScript
+  syntax checks, Docker image build, Compose configuration validation, FRP
+  validation, `git diff --check`, and public HTTPS/remote-port health checks.
+  Live Casdoor checks confirmed admin access, viewer mutation denial, denial
+  without the application group, logout, bearer-token enforcement, panel
+  toggles, immediate SSE delivery, and all three upstream availability probes.
+  The temporary auth-check account was removed, panel state restored, and
+  temporary credential snapshots deleted. Evidence is retained in the ignored
+  `logs/dashboard-verification-20261104T033049Z.log`.
+- 2026-11-03: Updated `README.md`, `docs/readme.md`, `dashboard/README.md`, and
+  `docs/deployment/dashboard.md`. Checked ignored environment/log files,
+  staged sizes/secrets, changed-file line limits, and unrelated changes.
+  No lint/typecheck scripts are configured for this JavaScript service; those
+  checks were skipped. Jenkins was not run because this deployment uses local
+  Compose; its earlier scaffold needs alignment before use. No browser UI
+  automation was run because no browser tool is available; public HTTP,
+  authentication, panel APIs, and streaming were exercised directly. Work is
+  committed locally on the existing feature branch; no push was requested.

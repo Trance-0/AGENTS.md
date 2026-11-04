@@ -17,7 +17,7 @@ export function createAstrbotPanel(ctx) {
     status: async () => {
       const ok = await probe(ctx);
       return [
-        { label: "API", value: ok ? "up" : "down", tone: ok ? "ok" : "error" },
+        { label: "Dashboard", value: ok ? "up" : "down", tone: ok ? "ok" : "error" },
         { label: "Account", value: config.astrbot.username || "(unset)", tone: "neutral" },
       ];
     },
@@ -31,16 +31,10 @@ export function createAstrbotPanel(ctx) {
 
 async function probe(ctx) {
   try {
-    const res = await ctx.fetch(config.astrbot.endpoint + "/api/health", { timeout: 4000 });
+    const res = await ctx.fetch(config.astrbot.endpoint, { timeout: 4000 });
     return res.ok;
-  } catch {
-    // AstrBot has no single /api/health; a TCP reach on the base is enough signal.
-    try {
-      const res = await ctx.fetch(config.astrbot.endpoint, { timeout: 4000 });
-      return true;
-    } catch (err) {
-      emit({ source: "astrbot", level: "warn", msg: `probe failed: ${err.message}` });
-      return false;
-    }
+  } catch (err) {
+    emit({ source: "astrbot", level: "warn", msg: `AstrBot status unavailable: astrbot/dashboard probe — ${err.message}` });
+    return false;
   }
 }

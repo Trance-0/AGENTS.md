@@ -6,7 +6,7 @@ import "dotenv/config";
 function required(name) {
   const value = process.env[name]?.trim();
   if (!value) {
-    throw new Error(`Missing required env var: ${name}`);
+    throw new Error(`Dashboard cannot start: dashboard/configuration — required environment variable ${name} is empty`);
   }
   return value;
 }
@@ -15,7 +15,7 @@ export const config = {
   host: process.env.HOST || "127.0.0.1",
   port: Number(process.env.PORT || 14141),
   dashboardToken: process.env.DASHBOARD_TOKEN || "",
-  sessionSecret: process.env.SESSION_SECRET || "dev-insecure-session-secret",
+  sessionSecret: required("SESSION_SECRET"),
 
   oidc: {
     issuer: required("OIDC_ISSUER"),
@@ -23,6 +23,7 @@ export const config = {
     clientSecret: required("OIDC_CLIENT_SECRET"),
     redirectUri: process.env.OIDC_REDIRECT_URI || "http://127.0.0.1:14141/auth/callback",
     requiredGroup: process.env.OIDC_REQUIRED_GROUP || "trance-0/app-agent",
+    adminGroup: process.env.OIDC_ADMIN_GROUP || "trance-0/admin-agent",
   },
 
   openclaw: {

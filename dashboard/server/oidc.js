@@ -34,13 +34,16 @@ export function loginUrl(req) {
 }
 
 export async function handleCallback(req) {
+  if (!req.session?.oidc?.state || !req.session?.oidc?.nonce) {
+    throw new Error("Unable to sign in: dashboard/token exchange — login state is missing or expired; start sign-in again.");
+  }
   const params = client.callbackParams(req);
   const tokenSet = await client.callback(config.oidc.redirectUri, params, {
     state: req.session?.oidc?.state,
     nonce: req.session?.oidc?.nonce,
   });
   delete req.session?.oidc;
-  const userinfo = await client.userinfo(tokenSet.access_token);
+  const userinfo = await client.userinfo(tokenSet);
   return { userinfo, tokenSet };
 }
 

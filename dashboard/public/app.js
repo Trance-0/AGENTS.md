@@ -16,7 +16,7 @@ async function api(path, opts = {}) {
   const res = await fetch(path, opts);
   if (res.status === 401 && !path.startsWith("/auth/")) {
     window.location.href = "/auth/login";
-    throw new Error("unauthorized");
+    throw new Error("Dashboard data unavailable: dashboard/session authorization — sign-in session is missing or expired.");
   }
   return res;
 }

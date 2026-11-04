@@ -42,7 +42,10 @@ agent:  group-claim groups, required value trance-0/app-agent
 
 In Casdoor, create an application for the dashboard (copy the Gitea app) and set
 its **Groups** requirement to `trance-0/app-agent`, then configure the redirect
-URI `http://127.0.0.1:14141/auth/callback`. The client id/secret go in `.env`.
+URI `https://live.trance-0.com/auth/callback`. Create `trance-0/admin-agent`
+as well; administrators need both groups, and mutations also require the
+dashboard bearer token. Verify memberships on the user record. The generated
+client ID and secret go in the gitignored `.env`.
 
 ## Configuration
 
@@ -54,7 +57,8 @@ Copy `.env.example` to `.env` (gitignored) and fill in real values:
 | `ASTRBOT_ENDPOINT` / `ASTRBOT_USERNAME` / `ASTRBOT_PASSWORD` | AstrBot API + dashboard login. |
 | `OIDC_*` | Casdoor issuer, client id/secret, redirect URI, required group. |
 | `JENKINS_ENDPOINT` / `JENKINS_USER` / `JENKINS_TOKEN` | Read-only build status. |
-| `DASHBOARD_TOKEN` | Required by every mutating endpoint. |
+| `DASHBOARD_TOKEN` | Required by every mutating endpoint, along with an admin session. |
+| `SESSION_SECRET` | Required session signing secret; generate a random value. |
 
 Secrets never enter git. In Jenkins the same values are bound from credentials
 (see `dashboard/Jenkinsfile`), and `.env` is only for local runs.
@@ -68,13 +72,39 @@ npm install
 npm start              # http://127.0.0.1:14141
 ```
 
+For local HTTP development, allow and set
+`OIDC_REDIRECT_URI=http://127.0.0.1:14141/auth/callback` in the development
+Casdoor application. The public deployment uses Secure cookies and HTTPS.
+
+## Public test deployment
+
+The dashboard is served at <https://live.trance-0.com>. From the repository root,
+after filling in `dashboard/.env`:
+
+```sh
+npm ci --prefix dashboard
+npm test --prefix dashboard
+docker compose -f dashboard/compose.yaml up -d --build
+curl --fail --max-time 10 https://live.trance-0.com/healthz
+```
+
+Compose binds `127.0.0.1:14143`; the existing local frpc container maps it to
+remote TCP port 6018. Panel toggles persist in a named volume. Sessions expire
+after 12 hours and reset on restart. Settings fields currently display values;
+they do not save upstream configuration. See the
+[deployment runbook](../docs/deployment/dashboard.md) for OIDC groups, tunnel
+setup, logs, and rollback.
+
 ## CI/CD
 
-`dashboard/Jenkinsfile` builds the image, smoke-tests it, deploys it on the
+`dashboard/Jenkinsfile` is an earlier scaffold that builds the image, smoke-tests it, deploys it on the
 docker build node, and rolls back on failure. Credential IDs used:
 
 - `dashboard-oidc-client-secret`, `dashboard-session-secret`, `dashboard-token`
 - `openclaw-gateway-token`, `astrbot-password`
 
-An internal agent may edit the dashboard and push; the webhook triggers this
-pipeline, so UI/feature changes ship through CI the same way as any component.
+Once configured, the SCM webhook can trigger this pipeline to deploy UI and
+feature changes through CI.
+
+This scaffold was not used for the public test deployment and must be aligned
+with the Compose configuration before enabling it.

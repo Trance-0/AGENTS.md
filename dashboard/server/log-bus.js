@@ -1,6 +1,9 @@
 // Live log/event bus that feeds the streaming window.
 // One in-memory ring buffer, one startedAt clock, and a set of SSE subscribers.
 
+import logger from "loglevel";
+
+logger.setLevel("info");
 const MAX_EVENTS = 2000;
 
 const startedAt = Date.now();
@@ -22,6 +25,7 @@ export function emit({ source = "dashboard", level = "info", msg = "" }) {
     level,
     msg: String(msg),
   };
+  logger[level](JSON.stringify({ time: new Date(event.ts).toISOString(), level: level.toUpperCase(), source, msg: event.msg }));
   events.push(event);
   if (events.length > MAX_EVENTS) {
     events.splice(0, events.length - MAX_EVENTS);
