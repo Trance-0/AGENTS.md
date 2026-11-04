@@ -16,6 +16,7 @@ import { BroadcastStore } from "./broadcast.js";
 import { mountOpenClaw } from "./openclaw-routes.js";
 import { mountBroadcast } from "./broadcast-routes.js";
 import { avatarUrl, serveAvatar } from "./avatar.js";
+import { watchActivity } from "./openclaw-activity.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
@@ -48,6 +49,23 @@ await loadPanels();
 await initOidc();
 
 const broadcast = new BroadcastStore(path.join(config.dataDir, "recordings"));
+if (config.openclaw.activityDir) {
+  let activityRecordingId = broadcast.active?.id;
+  const activityEvents = new Set(broadcast.active ? broadcast.readEvents(broadcast.active.id, Math.max(0, broadcast.active.eventCount - 2000), 2000).map(event => event.eventRef) : []);
+  watchActivity({
+    directory: config.openclaw.activityDir,
+    cursorFile: path.join(config.dataDir, "openclaw-activity-cursor.json"),
+    publish: event => {
+      if (!broadcast.active || event.activityTimestamp < broadcast.active.startedAt) return;
+      if (activityRecordingId !== broadcast.active.id) { activityRecordingId = broadcast.active.id; activityEvents.clear(); }
+      if (activityEvents.has(event.eventRef)) return;
+      broadcast.publish(event);
+      activityEvents.add(event.eventRef);
+      if (activityEvents.size > 2000) activityEvents.delete(activityEvents.values().next().value);
+    },
+    warn: msg => emit({ source: "openclaw", level: "warn", msg }),
+  });
+}
 const MemoryStore = createMemoryStore(session);
 const app = express();
 app.disable("x-powered-by");

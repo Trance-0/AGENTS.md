@@ -59,6 +59,9 @@ def main():
     old_name = old
     name = f"agent-dashboard-v{version}"
     volume = "dashboard_dashboard-state"
+    activity_dir = Path(os.environ.get("OPENCLAW_ACTIVITY_HOST_DIR", "/home/motuariki/Documents/DockerVolumes/openclaw/activity"))
+    if not activity_dir.is_dir():
+        raise RuntimeError("Deployment cannot start: dashboard/activity mount — shared OpenClaw activity directory is absent.")
     created = None
     try:
         if old:
@@ -78,6 +81,8 @@ def main():
             run("docker", "volume", "create", volume)
         created = subprocess.check_output(["docker", "create", "--name", name, "--restart", "unless-stopped", "--network", "host",
             "--env-file", str(env_file), "-e", "HOST=127.0.0.1", "-e", "PORT=14143",
+            "-e", "OPENCLAW_ACTIVITY_DIR=/var/log/openclaw-activity",
+            "--mount", f"type=bind,src={activity_dir},dst=/var/log/openclaw-activity,readonly",
             "--mount", f"type=volume,src={volume},dst=/app/data", "--log-opt", "max-size=10m", "--log-opt", "max-file=3",
             "--label", "com.trance0.service=agent-dashboard", "--label", f"org.opencontainers.image.version={version}",
             "--health-cmd", "node -e \"fetch('http://127.0.0.1:14143/healthz',{signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",

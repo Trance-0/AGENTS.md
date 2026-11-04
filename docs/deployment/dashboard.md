@@ -1,5 +1,31 @@
 # Agent dashboard: local Docker and remote HTTPS
 
+## Shared OpenClaw activity logs
+
+Create the shared host directory before deploying:
+`/home/motuariki/Documents/DockerVolumes/openclaw/activity` (owned by UID/GID
+1000, mode 0750). Both containers bind it at `/var/log/openclaw-activity`:
+OpenClaw has read/write access; the dashboard uses a read-only mount. Override
+the host location with `OPENCLAW_ACTIVITY_HOST_DIR` in Compose or the Jenkins
+deployment environment. Set the gateway's `dashboard-stream` plugin config
+`activityDir` to `/var/log/openclaw-activity` and dashboard env
+`OPENCLAW_ACTIVITY_DIR` to that same container path.
+
+The plugin writes `activity-YYYY-MM-DD.jsonl`. Only agent/model/tool lifecycle
+metadata and read/write/edit target paths are exported, with sensitive file
+names masked. Commands, file contents, raw provider errors, credentials, and
+session transcripts stay private. Owner-session assistant text retains its
+existing authorized HTTP delivery. The dashboard only reads the shared files;
+its ingestion cursor and stream recordings remain in its own data volume.
+
+The reader checks for new records every 500 ms and resumes after restart.
+First attachment skips historical activity; events produced before the current
+stream began cannot enter that stream. Truncation, daily rotation, and partial
+UTF-8 lines are handled. Stream start/end remains owner/admin controlled.
+The existing recording and ID survive deployment. Verify Docker reports
+`RW=false` for the dashboard activity mount and that a live `read` tool call
+shows both its starting and completed file-path events in the public player.
+
 The browser connects to `https://live.trance-0.com`. Its remote reverse proxy
 terminates TLS and routes HTTP to FRP remote TCP port 6018. The existing local
 `frpc` container uses host networking and forwards requests to

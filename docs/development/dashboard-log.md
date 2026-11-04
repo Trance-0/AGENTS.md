@@ -213,3 +213,22 @@ Verification and deployment:
 - Evidence: ignored `logs/jenkins-agent-dashboard-1.log`. Final summary-scope
   correction and this verification record are pushed together for the next
   automatic webhook build, whose result will be checked before handoff.
+
+## Shared file activity repair
+
+The deployed dashboard had only its own data volume. OpenClaw's stream plugin
+forwarded tool names over HTTP, omitting file arguments, so the player could
+not show which file was being read. The plugin now writes allowlisted metadata
+to daily shared JSONL files, and the dashboard tails those files through a
+read-only bind mount. File paths are available at tool start and completion;
+file contents, arbitrary arguments, and raw errors are excluded. Cursor state
+lives outside the shared mount. Owner-session assistant text keeps the existing
+HTTP authorization boundary.
+
+Verified seven server tests, an isolated read-only container, the public HTTPS
+feed, and Chromium rendering of real OpenClaw file-read events. The existing
+live recording ID survived deployment. The gateway's CPA Claude signature bug
+was fixed separately in its provider capability registry and checked with two
+real turns, including a persisted-history follow-up. Current runtime is a
+local repair; Jenkins retains its GitHub checkout workflow and needs a push of
+this commit before its next rollout can retain the new integration.

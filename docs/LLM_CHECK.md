@@ -423,3 +423,20 @@ bullets specific: filenames, command names, outcomes.
   Container checkout is prepared; owner deferred its GitHub write permission.
   Final summary-scope correction and these results are pushed for another
   webhook build. No local-source snapshot or manual build was used.
+
+- 2026-11-04: Fixed missing live OpenClaw file activity. The dashboard had no
+  shared log mount and HTTP lifecycle events omitted tool paths. Added a
+  daily JSONL writer, bounded reader with durable cursors, and read-only
+  dashboard mount. Only file-tool target paths and lifecycle metadata enter
+  the feed; contents, commands, credentials, and private assistant text do not.
+- 2026-11-04: All seven Node 22 server tests passed, including partial UTF-8
+  records, rotation, truncation, restart cursors, and sensitive-field exclusion.
+  An isolated container emitted read start/completion events and rejected a
+  shared-directory write with EROFS. Production health, mounts, preserved live
+  recording ID, and Chromium rendering of a real Claude file-read turn passed.
+  A second real CPA Claude turn with stored reasoning history also completed.
+- 2026-11-04: Applied a local runtime repair with prior container, image, config,
+  plugin, and recording backups retained. Jenkins deployment source now includes
+  the same read-only mount, but no GitHub push or Jenkins build was requested.
+  Python syntax, Compose validation, diff checks, and changed-file size audit
+  passed. Updated README, architecture overview, env example, and runbook.

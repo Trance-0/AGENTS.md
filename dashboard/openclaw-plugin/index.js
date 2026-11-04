@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
+import { writeActivity } from "./activity-log.js";
 
 const reference = context => createHash("sha256").update(context.sessionKey || context.sessionId || "unknown").digest("hex");
 
@@ -23,6 +24,12 @@ export default function register(api) {
   let pending = 0;
   function record(type, event, context) {
     if (!context.agentId || (!context.sessionKey && !context.sessionId)) return;
+    if (api.pluginConfig.activityDir) {
+      try { writeActivity(api.pluginConfig.activityDir, type, event, context); }
+      catch { api.logger.warn("Activity not recorded: dashboard-stream/file logging — shared log directory could not be written; agent continues."); }
+      // Assistant text still uses the existing owner-session authorization path.
+      if (type !== "model_output") return;
+    }
     if (pending >= 256) { api.logger.warn("Event not forwarded: dashboard-stream/event queue — 256 pending events reached; dashboard is too slow."); return; }
     pending++;
     // Snapshot the target at hook arrival; queued events cannot drift into a later stream.
@@ -35,6 +42,7 @@ export default function register(api) {
         const stream = (await snapshot)?.stream;
         if (!stream) return;
         const sessionRef = reference(context);
+        if (api.pluginConfig.activityDir && (stream.sessionRef !== sessionRef || !event.assistantTexts?.some(text => text.trim()))) return;
         await request("/api/openclaw/events", {
           type, recordingId: stream.id, sessionRef, agentId: context.agentId, eventId: randomUUID(),
           ...(event.toolName ? { toolName: event.toolName } : {}),

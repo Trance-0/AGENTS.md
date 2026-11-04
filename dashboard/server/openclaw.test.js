@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import express from "express";
@@ -23,7 +23,8 @@ test("OpenClaw owner control records hooks and excludes private session content"
   const endpoint = `http://127.0.0.1:${server.address().port}`;
   const tokenFile = path.join(directory, "stream-token"); await writeFile(tokenFile, process.env.OPENCLAW_STREAM_TOKEN, { mode: 0o600 });
   const hooks = new Map(); let factory;
-  register({ pluginConfig: { endpoint, tokenFile }, logger: { warn() {} }, on: (name, handler) => hooks.set(name, handler), registerTool: handler => { factory = handler; } });
+  const pluginConfig = { endpoint, tokenFile };
+  register({ pluginConfig, logger: { warn() {} }, on: (name, handler) => hooks.set(name, handler), registerTool: handler => { factory = handler; } });
   const owner = { agentId: "main", senderIsOwner: true, sessionKey: "agent:main:owner-session" };
   const other = { agentId: "main", sessionKey: "agent:main:private-session" };
   const request = (url, body, token = process.env.OPENCLAW_STREAM_TOKEN) => fetch(endpoint + url, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
@@ -71,6 +72,14 @@ test("OpenClaw owner control records hooks and excludes private session content"
     await anotherOwner.execute("summary", { action: "summary", summary: "Admin-started stream summary" });
     assert.equal(store.status().summary, "Admin-started stream summary");
     assert.equal(store.active.id, second.id);
+    pluginConfig.activityDir = path.join(directory, "activity");
+    const before = store.active.eventCount;
+    await hooks.get("before_tool_call")({ toolName: "read", params: { path: "/workspace/example.txt" } }, other);
+    await hooks.get("llm_output")({ model: "test-model", assistantTexts: ["PRIVATE RESPONSE"] }, other);
+    assert.equal(store.active.eventCount, before, "file mode must not duplicate metadata over HTTP or expose private text");
+    const activity = await readFile(path.join(pluginConfig.activityDir, (await readdir(pluginConfig.activityDir))[0]), "utf8");
+    assert.ok(activity.includes("/workspace/example.txt"));
+    assert.ok(!activity.includes("PRIVATE RESPONSE"));
   } finally {
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
     await rm(directory, { recursive: true, force: true });

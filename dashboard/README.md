@@ -108,7 +108,11 @@ curl --fail --max-time 10 https://live.trance-0.com/healthz
 ```
 
 Compose binds `127.0.0.1:14143`; the existing local frpc container maps it to
-remote TCP port 6018. Panel toggles and stream recordings persist in a named volume. Sessions expire
+remote TCP port 6018. OpenClaw activity uses a shared host directory mounted
+read-only in the dashboard; prepare it and configure the plugin as described
+in the deployment runbook. The live player shows file-tool target paths and
+start/completion events without file contents. Panel toggles and stream
+recordings persist in a named volume. Sessions expire
 after 12 hours and reset on restart. Settings fields currently display values;
 they do not save upstream configuration. See the
 [deployment runbook](../docs/deployment/dashboard.md) for OIDC groups, tunnel

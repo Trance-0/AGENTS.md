@@ -26,7 +26,12 @@ OpenClaw, AstrBot, and Jenkins are monitored through local HTTP endpoints.
 The OpenClaw `dashboard-stream` plugin gives the owner-facing main agent a
 scoped stream-control tool. Agent/model/tool lifecycle events are saved in the
 recording. Assistant text is public only for the session that starts a stream;
-private prompts, tool arguments, and tool results are excluded.
+private prompts and tool results are excluded. File tools publish only their
+target path, lifecycle stage, and duration; credential filenames are masked.
+OpenClaw writes daily JSONL activity files to a host-backed shared directory.
+The dashboard mounts that directory read-only and tails it into the live
+recording; cursors persist separately in dashboard storage. A first attachment
+starts at the current end of the logs. Later restarts resume the saved cursor.
 
 ### Jenkins, Docker, and FRP deployment
 

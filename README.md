@@ -25,6 +25,8 @@ the existing frpc container on remote port 6018. Guests can watch live streams
 and replay visible recordings; signed-in viewers can chat with the OpenClaw
 host. Administrators start/end streams and curate recordings; the owner can
 also ask OpenClaw to start a broadcast, record activity, and set its summary.
+OpenClaw writes file-read progress to a shared directory that the dashboard
+mounts read-only; live recordings show file paths and start/completion events.
 The Jenkins `agent-dashboard` job deploys GitHub pushes to `ai-infra-v0`. See the
 [deployment runbook](docs/deployment/dashboard.md) for setup and verification.
 

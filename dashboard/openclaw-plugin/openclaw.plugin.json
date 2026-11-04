@@ -9,7 +9,8 @@
     "required": ["endpoint", "tokenFile"],
     "properties": {
       "endpoint": { "type": "string" },
-      "tokenFile": { "type": "string" }
+      "tokenFile": { "type": "string" },
+      "activityDir": { "type": "string" }
     }
   }
 }

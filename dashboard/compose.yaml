@@ -10,8 +10,10 @@ services:
     environment:
       HOST: 127.0.0.1
       PORT: "14143"
+      OPENCLAW_ACTIVITY_DIR: /var/log/openclaw-activity
     volumes:
       - dashboard-state:/app/data
+      - ${OPENCLAW_ACTIVITY_HOST_DIR:-/home/motuariki/Documents/DockerVolumes/openclaw/activity}:/var/log/openclaw-activity:ro
     logging:
       driver: json-file
       options:

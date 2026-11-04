@@ -33,6 +33,7 @@ export const config = {
     token: process.env.OPENCLAW_TOKEN || "",
     agent: process.env.OPENCLAW_AGENT || "dashboard-host",
     streamToken: process.env.OPENCLAW_STREAM_TOKEN || "",
+    activityDir: process.env.OPENCLAW_ACTIVITY_DIR || "",
   },
 
   astrbot: {
