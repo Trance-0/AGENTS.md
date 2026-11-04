@@ -11,7 +11,10 @@ import createMemoryStore from "memorystore";
 import { config, hasDashboardToken } from "./config.js";
 import { initOidc, loginUrl, handleCallback, isAuthorized, groupsOf } from "./oidc.js";
 import { registerPanel, snapshot, isEnabled, setEnabled, getPanel } from "./registry.js";
-import { emit, getEvents, subscribe, uptimeSeconds } from "./log-bus.js";
+import { emit, uptimeSeconds } from "./log-bus.js";
+import { BroadcastStore } from "./broadcast.js";
+import { mountBroadcast } from "./broadcast-routes.js";
+import { avatarUrl, serveAvatar } from "./avatar.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
@@ -43,11 +46,12 @@ async function loadPanels() {
 await loadPanels();
 await initOidc();
 
+const broadcast = new BroadcastStore(path.join(config.dataDir, "recordings"));
 const MemoryStore = createMemoryStore(session);
 const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", "loopback");
-app.use(express.json());
+app.use(express.json({ limit: "16kb" }));
 
 app.use(
   session({
@@ -76,7 +80,7 @@ app.get("/auth/callback", async (req, res, next) => {
       sub: userinfo.sub,
       isAdmin: groupsOf(userinfo).includes(config.oidc.adminGroup),
       name: userinfo.name ?? userinfo.preferred_username ?? userinfo.sub,
-      email: userinfo.email,
+      avatarUrl: avatarUrl(userinfo),
     };
     emit({ source: "dashboard", level: "info", msg: "Dashboard access granted: dashboard/sign-in — OIDC identity and required group verified" });
     await new Promise((resolve, reject) => req.session.save((err) => err ? reject(err) : resolve()));
@@ -91,19 +95,34 @@ app.get("/auth/logout", (req, res) => {
 });
 
 app.get("/auth/user", (req, res) => {
-  res.json(req.session?.user ?? null);
+  const user = req.session?.user;
+  res.set("Cache-Control", "no-store").json(user ? { sub: user.sub, name: user.name, isAdmin: user.isAdmin, avatar: user.avatarUrl ? "/auth/avatar" : null } : null);
 });
 
 function requireAuth(req, res, next) {
   if (req.session?.user) return next();
-  if (req.path.startsWith("/api/")) return res.status(401).json({ error: "Dashboard data unavailable: dashboard/session authorization — sign-in session is missing or expired." });
+  if (req.path.startsWith("/api/") || req.path === "/auth/avatar") return res.status(401).json({ error: "Dashboard data unavailable: dashboard/session authorization — sign-in session is missing or expired." });
   res.redirect("/auth/login");
 }
 
-function requireToken(req, res, next) {
+function requireAdmin(req, res, next) {
   if (!req.session.user.isAdmin) {
     return res.status(403).json({ error: "Panel cannot be changed: dashboard/admin authorization — account lacks the required administrator group." });
   }
+  next();
+}
+
+function requireCsrf(req, res, next) {
+  if (req.get("X-Dashboard-Request") !== "1" || (req.get("Origin") && req.get("Origin") !== new URL(config.oidc.redirectUri).origin)) {
+    return res.status(403).json({ error: "Request cannot be accepted: dashboard/request origin — use the dashboard page on its configured origin." });
+  }
+  next();
+}
+
+app.get("/auth/avatar", requireAuth, serveAvatar);
+mountBroadcast(app, broadcast, { requireAuth, requireAdmin, requireCsrf });
+
+function requireToken(req, res, next) {
   if (!hasDashboardToken) {
     return res.status(503).json({ error: "Panel cannot be changed: dashboard/mutation authorization — dashboard token is not configured." });
   }
@@ -125,7 +144,7 @@ app.get("/api/panels/:id/data", requireAuth, async (req, res) => {
   res.json(data ?? {});
 });
 
-app.post("/api/panels/:id/toggle", requireAuth, requireToken, async (req, res) => {
+app.post("/api/panels/:id/toggle", requireAuth, requireAdmin, requireToken, async (req, res) => {
   const panel = getPanel(req.params.id);
   if (!panel) return res.status(404).json({ error: "Panel unavailable: dashboard/panel lookup — panel ID is not registered." });
   const enabled = req.body?.enabled !== false;
@@ -137,23 +156,11 @@ app.post("/api/panels/:id/toggle", requireAuth, requireToken, async (req, res) =
 // --- Live stream ---
 app.get("/api/uptime", requireAuth, (_req, res) => res.json({ uptimeSeconds: uptimeSeconds() }));
 
-app.get("/api/stream", requireAuth, (req, res) => {
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("X-Accel-Buffering", "no");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders();
-  const send = (event) => res.write(`data: ${JSON.stringify(event)}\n\n`);
-  for (const e of getEvents().slice(-100)) send(e);
-  const unsubscribe = subscribe(send);
-  req.on("close", unsubscribe);
-});
-
 app.use((err, _req, res, _next) => {
-  const cause = err.error || err.code || err.type || err.message.split(",")[0];
+  const cause = err.error || err.code || err.type || (err.message?.includes(": dashboard/") ? err.message.split(" — ").at(-1) : "request validation or upstream operation failed");
   const message = `Request could not complete: dashboard/request handling — ${cause}. Retry sign-in or check the request.`;
   emit({ source: "dashboard", level: "warn", msg: message });
-  res.status(400).json({ error: message });
+  res.status(err.status || 400).json({ error: message });
 });
 
 // --- Static frontend ---
@@ -170,4 +177,5 @@ app.listen(config.port, config.host, () => {
 // Seed a heartbeat so the progress bar always has movement even when quiet.
 setInterval(() => {
   emit({ source: "dashboard", level: "info", msg: `Dashboard is running: dashboard/heartbeat — uptime ${uptimeSeconds()}s` });
+  broadcast.publish({ source: "stream", msg: "Stream is running: dashboard/broadcast heartbeat — waiting for the next viewer message." });
 }, 30000);

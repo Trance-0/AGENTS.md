@@ -2,6 +2,7 @@
 // keys are referenced here so the backend never embeds a secret value.
 
 import "dotenv/config";
+import path from "node:path";
 
 function required(name) {
   const value = process.env[name]?.trim();
@@ -12,6 +13,7 @@ function required(name) {
 }
 
 export const config = {
+  dataDir: process.env.DASHBOARD_DATA_DIR || (process.env.NODE_ENV === "production" ? "/app/data" : path.resolve(".data")),
   host: process.env.HOST || "127.0.0.1",
   port: Number(process.env.PORT || 14141),
   dashboardToken: process.env.DASHBOARD_TOKEN || "",
@@ -29,6 +31,7 @@ export const config = {
   openclaw: {
     endpoint: process.env.OPENCLAW_ENDPOINT || "http://127.0.0.1:18789",
     token: process.env.OPENCLAW_TOKEN || "",
+    agent: process.env.OPENCLAW_AGENT || "dashboard-host",
   },
 
   astrbot: {

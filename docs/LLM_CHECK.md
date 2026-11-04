@@ -350,3 +350,29 @@ bullets specific: filenames, command names, outcomes.
   automation was run because no browser tool is available; public HTTP,
   authentication, panel APIs, and streaming were exercised directly. Work is
   committed locally on the existing feature branch; no push was requested.
+
+- 2026-11-04: Shipped dashboard 0.1.1 public viewing, timed recording playback,
+  hover previews, three display modes, fetched Casdoor avatars, side chat,
+  OpenClaw host replies in the main log player, and admin Start/End plus
+  recording visibility/recommendation scores. Detailed root causes and dev
+  evidence are in `docs/development/dashboard-log.md`. Public broadcast data
+  is separate from private operational logs; panel APIs stay authenticated.
+- 2026-11-04: Passed server/storage/preview tests locally and in the Node 22
+  production image; passed Playwright Chromium guest/admin/mobile, hover,
+  replay, avatar, screen mode, chat, and moderation checks. Built the Docker
+  image, validated Compose and OpenClaw config, checked JavaScript syntax and
+  `git diff --check`. Live Casdoor/FRP/HTTPS checks and a real OpenClaw reply
+  passed. Test account/cookies were removed; test recording is hidden for
+  admin review. Evidence is under ignored `logs/dashboard-v0.1.1-*` paths.
+- 2026-11-04: Deployed to the existing loopback port 14143 and remote port
+  6018, preserving `dashboard_dashboard-state` and the FRP config. Backed up
+  prior state/config and retained the 0.1.0 image. The isolated OpenClaw host
+  uses a separate workspace, no tools, and no memory search. No gateway
+  restart or changes to other agents/bindings were required. Private gateway
+  token is only in ignored `.env`; no operational snapshots are staged.
+- 2026-11-04: Reopened and synchronized `README.md`, `docs/readme.md`, dashboard
+  README, and the deployment runbook. Checked changed-file line limits, sizes,
+  ignored secrets/state/logs, doc links, version/config consistency, and
+  unrelated changes. Lint/typecheck and Jenkins were skipped because no
+  corresponding service scripts or configured pipeline exist. Work is
+  committed locally on the feature branch; no push was requested.

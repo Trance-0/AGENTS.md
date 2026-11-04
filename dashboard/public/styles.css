@@ -308,3 +308,65 @@ table.data-table { width: 100%; border-collapse: collapse; margin-top: 16px; }
   .sidebar.collapsed { width: 220px; }
   .sidebar.collapsed .nav-item span, .sidebar.collapsed .nav-section { display: inline; }
 }
+
+[hidden], .guest .members-only, body:not(.guest) .guests-only,
+body:not(.admin) .admin-only { display: none !important; }
+.topbar-spacer { flex: 1; }
+.brand { color: var(--text); text-decoration: none; }
+.avatar { overflow: hidden; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.player-actions { flex-wrap: wrap; align-items: center; }
+button, input, textarea { font: inherit; }
+button:disabled { opacity: .45; cursor: default; }
+.screen-surface { background: #000; border-radius: 12px; padding-bottom: 8px; }
+.screen-surface .progress-wrap, .screen-surface .player-actions { margin-left: 12px; margin-right: 12px; }
+.log-line { animation: none; opacity: 1; transform: none; white-space: normal; flex-shrink: 0; }
+.log-line .msg { white-space: pre-wrap; overflow-wrap: anywhere; }
+.stream-log { padding-top: 48px; padding-bottom: 48px; }
+.tooltip { width: min(440px, calc(100vw - 16px)); max-width: 440px; max-height: 260px; overflow: hidden; }
+.tooltip .log-line { font-size: 11px; margin: 4px 0; }
+.tooltip .src { min-width: 55px; }
+.progress-bar { touch-action: none; }
+.rec-card { background: transparent; color: var(--text); border: 1px solid transparent; border-radius: 10px; padding: 6px; text-align: left; width: 100%; }
+.rec-card:focus-visible { border-color: var(--accent); }
+.rec-meta, .rec-title, .rec-sub { display: block; }
+.rec-thumb { width: 120px; }
+.chat-panel { border: 1px solid var(--border); border-radius: 12px; margin-bottom: 24px; padding: 16px; background: var(--surface); }
+.chat-panel h2 { margin: 0 0 12px; font-size: 16px; }
+.chat-messages { height: 290px; overflow-y: auto; }
+.chat-message { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0; overflow-wrap: anywhere; }
+.chat-message time { color: var(--text-faint); font: 11px var(--mono); }
+.chat-message strong { color: var(--accent); }
+.chat-message span { flex-basis: 100%; white-space: pre-wrap; }
+textarea, .broadcast-controls input, .recording-row input[type=number] { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+#chat-input { display: block; width: 100%; margin: 8px 0; resize: vertical; }
+#chat-status { line-height: 1.5; }
+.status-message { padding: 12px; color: var(--warn); background: var(--surface-2); margin: 12px 20px; border-radius: 8px; }
+.broadcast-controls, .recording-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 0; }
+.recording-row { border-top: 1px solid var(--border); }
+.recording-row input[type=number] { width: 75px; }
+.recording-library { margin-top: 28px; }
+.recording-library h2 { font-size: 18px; }
+.theater #sidebar { display: none; }
+.theater #view-live-stream { max-width: none; grid-template-columns: minmax(0, 1fr) 320px; }
+.theater .player { aspect-ratio: auto; height: 65vh; }
+.web-fullscreen #screen-surface, #screen-surface:fullscreen { position: fixed; inset: 0; z-index: 200; width: 100vw; height: 100dvh; border-radius: 0; display: flex; flex-direction: column; }
+.web-fullscreen .player, #screen-surface:fullscreen .player { aspect-ratio: auto; flex: 1; min-height: 0; }
+#screen-surface:fullscreen .tooltip, .web-fullscreen .tooltip { z-index: 210; }
+@media (max-width: 1100px) {
+  .rec-col { display: block; }
+  .theater #view-live-stream { grid-template-columns: 1fr; }
+  .rec-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+}
+@media (max-width: 720px) {
+  .view { padding: 10px; }
+  .brand { font-size: 14px; }
+  .topbar { gap: 4px; padding: 0 8px; }
+  .player { min-height: 240px; }
+  .player-actions { gap: 4px; }
+  .action-btn { font-size: 12px; padding: 8px 10px; }
+  .log-line .src { min-width: 55px; }
+  .hint { line-height: 1.5; }
+}
+
+.offline .live-pulse { animation: none; background: var(--text-faint); }

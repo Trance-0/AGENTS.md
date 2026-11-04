@@ -1,66 +1,59 @@
-/* Agent Dashboard frontend: YouTube-style live window + plugin panels. */
+import { Player, formatTime } from "/player.js";
 
-const $ = (sel) => document.querySelector(sel);
+const $ = selector => document.querySelector(selector);
+const state = { user: null, panels: [], stream: null, recordings: [], loading: 0, viewingLive: true, liveEvents: new Map() };
+const player = new Player(renderChat);
 
-const state = {
-  panels: [],
-  user: null,
-  total: 0, // uptime seconds (the progress bar duration)
-  live: true,
-  scrubT: null, // timepoint being scrubbed (null = live)
-  events: [], // recent events (for timeline marks + tooltip)
-  maxLogLines: 160,
-};
-
-async function api(path, opts = {}) {
-  const res = await fetch(path, opts);
-  if (res.status === 401 && !path.startsWith("/auth/")) {
-    window.location.href = "/auth/login";
-    throw new Error("Dashboard data unavailable: dashboard/session authorization — sign-in session is missing or expired.");
+async function api(url, options = {}) {
+  const response = await fetch(url, { ...options, headers: { "Content-Type": "application/json", "X-Dashboard-Request": "1", ...options.headers } });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || `Request unavailable: dashboard/browser request — server returned HTTP ${response.status}.`);
   }
-  return res;
+  return response.json();
 }
 
-function fmtTime(s) {
-  s = Math.max(0, Math.floor(s));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+function report(error, element = $("#page-status")) {
+  element.hidden = false;
+  element.textContent = error.message || String(error);
 }
 
-/* ---------- Init ---------- */
 async function init() {
   try {
-    const [userRes, panelsRes, uptimeRes] = await Promise.all([
-      api("/auth/user"),
-      api("/api/panels"),
-      api("/api/uptime"),
-    ]);
-    state.user = await userRes.json();
-    const panelsBody = await panelsRes.json();
-    state.panels = panelsBody.panels ?? [];
-    const uptimeBody = await uptimeRes.json();
-    state.total = uptimeBody.uptimeSeconds ?? 0;
-  } catch (e) {
-    return;
-  }
-
-  renderAvatar();
-  renderSidebar();
-  renderRecommended();
-  wireChrome();
-  startLiveStream();
-  startClock();
+    state.user = await api("/auth/user");
+    document.body.classList.toggle("guest", !state.user);
+    document.body.classList.toggle("admin", !!state.user?.isAdmin);
+    renderAvatar();
+    if (state.user) {
+      state.panels = (await api("/api/panels")).panels;
+      renderSidebar();
+    }
+    const { stream, viewers } = await api("/api/broadcast");
+    $("#viewer-count").textContent = viewers;
+    state.stream = stream;
+    if (stream) await loadRecording(stream.id, true);
+    await loadCatalog();
+    wireChrome();
+    connectStream();
+    updateControls();
+  } catch (error) { report(error); }
 }
 
-/* ---------- Avatar + user ---------- */
 function renderAvatar() {
-  const name = state.user?.name || "A";
-  $("#avatar").textContent = name.slice(0, 1).toUpperCase();
+  if (!state.user) return;
+  const avatar = $("#avatar");
+  const fallback = () => { avatar.textContent = (state.user.name || "User").slice(0, 1).toUpperCase(); };
+  fallback();
+  avatar.title = state.user.name;
+  if (state.user.avatar) {
+    const image = new Image();
+    image.alt = `${state.user.name}'s avatar`;
+    image.onload = () => avatar.replaceChildren(image);
+    image.onerror = fallback;
+    image.src = state.user.avatar;
+  }
 }
 
-/* ---------- Sidebar ---------- */
 function renderSidebar() {
   const nav = $("#panel-nav");
   nav.innerHTML = "";
@@ -133,11 +126,8 @@ async function renderPanelView(panel) {
 
   // Extra data table for panels that expose it
   try {
-    const res = await api(`/api/panels/${encodeURIComponent(panel.id)}/data`);
-    if (res.ok) {
-      const data = await res.json();
-      renderPanelData(body, data);
-    }
+    const data = await api(`/api/panels/${encodeURIComponent(panel.id)}/data`);
+    renderPanelData(body, data);
   } catch {}
 }
 
@@ -181,228 +171,186 @@ function renderPanelData(body, data) {
   }
 }
 
-/* ---------- Recommended (placeholder) ---------- */
-function renderRecommended() {
-  const items = [
-    { t: "OpenClaw config manager", s: "Placeholder · recommended", cls: "t1" },
-    { t: "Model backend status", s: "Placeholder · recommended", cls: "t2" },
-    { t: "PCP context feed", s: "Placeholder · recommended", cls: "t3" },
-    { t: "Build & LKG history", s: "Placeholder · recommended", cls: "t4" },
-    { t: "AstrBot relay health", s: "Placeholder · recommended", cls: "t1" },
-  ];
-  const wrap = $("#rec-cards");
-  wrap.innerHTML = "";
-  for (const it of items) {
-    const card = document.createElement("div");
-    card.className = "rec-card";
-    card.innerHTML = `<div class="rec-thumb ${it.cls}">▶</div><div class="rec-meta"><div class="rec-title">${esc(it.t)}</div><div class="rec-sub">${esc(it.s)}</div></div>`;
-    wrap.appendChild(card);
+
+async function loadCatalog() {
+  state.recordings = (await api("/api/recordings")).recordings;
+  const cards = $("#rec-cards");
+  cards.replaceChildren();
+  if (state.stream) cards.append(recordingCard(state.stream, true));
+  for (const recording of state.recordings) cards.append(recordingCard(recording));
+  if (!cards.children.length) cards.textContent = "No recordings yet. Completed streams will appear here.";
+  if (state.user?.isAdmin) await renderLibrary();
+}
+
+function recordingCard(recording, live = false) {
+  const button = document.createElement("button");
+  button.className = "rec-card";
+  button.dataset.recordingId = recording.id;
+  button.innerHTML = `<span class="rec-thumb">${live ? "LIVE" : formatTime(recording.duration)}</span><span class="rec-meta"><span class="rec-title">${esc(recording.title)}</span><span class="rec-sub">${live ? "Watch now" : `${recording.eventCount} events · Score ${recording.score}`}</span></span>`;
+  button.onclick = () => loadRecording(recording.id, live).catch(report);
+  return button;
+}
+
+async function loadRecording(id, live = false) {
+  const generation = ++state.loading;
+  const events = [];
+  let offset = 0;
+  let page;
+  do {
+    page = await api(`/api/recordings/${encodeURIComponent(id)}/events?offset=${offset}`);
+    if (generation !== state.loading) return;
+    events.push(...page.events);
+    offset = page.nextOffset;
+    if (page.more) report(new Error(`Playback is loading: dashboard/recording fetch — ${events.length} events downloaded; fetching the next page.`));
+  } while (page.more);
+  $("#page-status").hidden = true;
+  state.viewingLive = live;
+  const merged = new Map(events.map(event => [event.id, event]));
+  if (live) for (const event of state.liveEvents.values()) if (event.recordingId === id) merged.set(event.id, event);
+  player.load(page.recording, [...merged.values()].sort((a, b) => a.id - b.id));
+  showLive();
+  updateControls();
+}
+
+async function renderLibrary() {
+  const { recordings } = await api("/api/admin/recordings");
+  const library = $("#admin-recordings");
+  library.replaceChildren();
+  for (const recording of recordings.filter(item => item.status !== "live")) {
+    const form = document.createElement("form");
+    form.className = "recording-row";
+    const title = document.createElement("button");
+    title.type = "button";
+    title.className = "action-btn";
+    title.textContent = recording.title;
+    title.onclick = () => loadRecording(recording.id).catch(report);
+    const hidden = document.createElement("input");
+    hidden.type = "checkbox";
+    hidden.checked = recording.hidden;
+    const score = document.createElement("input");
+    score.type = "number"; score.min = "0"; score.max = "100"; score.required = true; score.value = recording.score;
+    const hiddenLabel = document.createElement("label"); hiddenLabel.append(hidden, "Hidden");
+    const scoreLabel = document.createElement("label"); scoreLabel.append("Score ", score);
+    const save = document.createElement("button"); save.className = "action-btn"; save.textContent = "Save";
+    form.append(title, hiddenLabel, scoreLabel, save);
+    form.onsubmit = async event => {
+      event.preventDefault(); save.disabled = true;
+      try { await api(`/api/recordings/${recording.id}`, { method: "PATCH", body: JSON.stringify({ hidden: hidden.checked, score: Number(score.value) }) }); await loadCatalog(); }
+      catch (error) { report(error); }
+      finally { save.disabled = false; }
+    };
+    library.append(form);
   }
 }
 
-/* ---------- Chrome wiring ---------- */
+function connectStream() {
+  const stream = new EventSource("/api/stream");
+  stream.addEventListener("status", async event => {
+    const next = JSON.parse(event.data);
+    const previous = state.stream;
+    state.stream = next;
+    if (previous?.id !== next?.id) state.liveEvents.clear();
+    if (next && state.viewingLive && next.id !== player.recording?.id) {
+      state.loading++;
+      player.load(next, []);
+    } else if (!next && previous && player.recording?.id === previous.id) {
+      player.recording = { ...previous, status: "ended", duration: player.duration(), endedAt: Date.now() };
+      player.follow = false;
+      player.render();
+    }
+    updateControls();
+    try { await loadCatalog(); } catch (error) { report(error); }
+  });
+  stream.addEventListener("viewers", event => { $("#viewer-count").textContent = JSON.parse(event.data).count; });
+  stream.addEventListener("event", event => {
+    const data = JSON.parse(event.data);
+    state.liveEvents.set(data.id, data);
+    if (state.liveEvents.size > 1000) state.liveEvents.delete(state.liveEvents.keys().next().value);
+    if (state.viewingLive) player.add(data);
+  });
+  stream.addEventListener("catalog", async event => {
+    const { id } = JSON.parse(event.data);
+    try {
+      await loadCatalog();
+      if (!state.user?.isAdmin && player.recording?.id === id && !state.recordings.some(recording => recording.id === id)) {
+        state.loading++; player.load(null, []); report(new Error("Playback stopped: dashboard/recording visibility — the administrator hid this recording."));
+      }
+    } catch (error) { report(error); }
+  });
+  stream.onerror = () => report(new Error("Live updates delayed: dashboard/event connection — connection interrupted; reconnecting automatically."));
+  stream.onopen = () => { $("#page-status").hidden = true; };
+}
+
+let chatKey;
+function renderChat(events) {
+  const key = `${player?.recording?.id}:${events.at(-1)?.id}:${events.length}`;
+  if (key === chatKey) return;
+  chatKey = key;
+  const messages = $("#chat-messages");
+  messages.replaceChildren(...events.slice(-100).map(event => {
+    const line = document.createElement("div"); line.className = "chat-message";
+    const author = document.createElement("strong"); author.textContent = event.author || "Viewer";
+    const text = document.createElement("span"); text.textContent = event.msg;
+    const time = document.createElement("time"); time.textContent = formatTime(event.t);
+    line.append(time, author, text);
+    return line;
+  }));
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function updateControls() {
+  const canChat = !!state.user && !!state.stream && state.viewingLive && player.recording?.id === state.stream.id;
+  $("#chat-input").disabled = !canChat;
+  $("#chat-send").disabled = !canChat;
+  $("#chat-input").placeholder = !state.user ? "Sign in to join the chat" : !state.stream ? "Chat is closed while offline" : "Say something to the host";
+  $("#btn-start").disabled = !!state.stream;
+  $("#btn-end").disabled = !state.stream;
+  $("#broadcast-title").disabled = !!state.stream;
+  $("#stream-started").textContent = state.stream ? "· Stream is live" : "· Stream is offline";
+}
+
 function wireChrome() {
-  $("#hamburger").addEventListener("click", () => {
-    const sb = $("#sidebar");
-    sb.classList.toggle("collapsed");
-    sb.classList.toggle("open");
-  });
-  $(".nav-item[data-view='live-stream']").addEventListener("click", (e) => {
-    e.preventDefault();
-    showLive();
-  });
-  $("#btn-settings").addEventListener("click", () => {
-    if (state.panels.some((p) => p.id === "settings")) showPanel("settings");
-  });
-  $("#btn-like").addEventListener("click", () => {
-    $("#btn-like").classList.add("liked");
-    $("#btn-like").querySelector("span").textContent = "Liked";
-  });
-  $("#btn-live").addEventListener("click", goLive);
-}
-
-/* ---------- Live stream (SSE) ---------- */
-function startLiveStream() {
-  const log = $("#stream-log");
-  const es = new EventSource("/api/stream");
-  es.onmessage = (ev) => {
-    let event;
-    try { event = JSON.parse(ev.data); } catch { return; }
-    state.events.push(event);
-    if (state.events.length > 400) state.events.shift();
-    state.total = Math.max(state.total, event.t || 0);
-    appendLogLine(event);
-    updateCaptions(event);
-    markEvent(event);
+  $("#hamburger").onclick = () => { $("#sidebar").classList.toggle("collapsed"); $("#sidebar").classList.toggle("open"); };
+  $(".nav-item[data-view='live-stream']").onclick = event => { event.preventDefault(); showLive(); };
+  $("#broadcast-controls").onsubmit = async event => {
+    event.preventDefault(); $("#btn-start").disabled = true;
+    try { const { stream } = await api("/api/broadcast/start", { method: "POST", body: JSON.stringify({ title: $("#broadcast-title").value }) }); state.stream = stream; await loadRecording(stream.id, true); }
+    catch (error) { report(error); } finally { updateControls(); }
   };
-  es.onerror = () => { /* EventSource auto-reconnects */ };
-}
-
-function appendLogLine(event) {
-  const log = $("#stream-log");
-  const line = document.createElement("div");
-  line.className = `log-line ${event.level || "info"}`;
-  line.innerHTML = `<span class="t">${fmtTime(event.t)}</span><span class="src">${esc(event.source)}</span><span class="msg">${esc(event.msg)}</span>`;
-  log.appendChild(line);
-  while (log.children.length > state.maxLogLines) log.removeChild(log.firstChild);
-}
-
-function updateCaptions(event) {
-  const c = $("#captions");
-  if (event.level === "error") c.textContent = `⚠ ${event.msg}`;
-  else if (event.level === "warn") c.textContent = `● ${event.msg}`;
-  else c.textContent = "Streaming live logs…";
-}
-
-function markEvent(event) {
-  const marks = $("#event-marks");
-  const mark = document.createElement("div");
-  mark.className = `event-mark ${event.level || "info"}`;
-  marks.appendChild(mark);
-  while (marks.children.length > 300) marks.removeChild(marks.firstChild);
-  layoutMarks();
-}
-
-function layoutMarks() {
-  const bar = $("#progress-bar");
-  const marks = $("#event-marks");
-  const width = bar.clientWidth;
-  const total = state.total || 1;
-  Array.from(marks.children).forEach((m, i) => {
-    const e = state.events[state.events.length - marks.children.length + i];
-    if (!e) return;
-    const pct = (e.t / total) * 100;
-    m.style.left = `${Math.min(100, Math.max(0, pct))}%`;
-  });
-}
-
-/* ---------- Clock / progress ---------- */
-function startClock() {
-  setInterval(() => {
-    if (state.live) {
-      state.total += 1;
-    }
-    updateProgress();
-    updateUptimeChip();
-  }, 1000);
-}
-
-function updateProgress() {
-  const total = state.total || 1;
-  const scrub = state.scrubT != null ? state.scrubT : state.total;
-  $("#progress-elapsed").style.width = `${(scrub / total) * 100}%`;
-  $("#time-elapsed").textContent = fmtTime(scrub);
-  $("#time-total").textContent = fmtTime(state.total);
-  layoutMarks();
-}
-
-function updateUptimeChip() {
-  $("#uptime-chip").textContent = `up ${fmtTime(state.total)}`;
-}
-
-/* ---------- Timeline scrub (drag & draw) ---------- */
-function setupScrubber() {
-  const bar = $("#progress-bar");
-  let scrubbing = false;
-  let anchorT = null;
-
-  const tFromEvent = (e) => {
-    const rect = bar.getBoundingClientRect();
-    const ratio = (e.clientX - rect.left) / rect.width;
-    return Math.max(0, Math.min(state.total || 1, ratio * (state.total || 1)));
+  $("#btn-end").onclick = async () => {
+    $("#btn-end").disabled = true;
+    try { await api("/api/broadcast/end", { method: "POST", body: "{}" }); }
+    catch (error) { report(error); } finally { updateControls(); }
   };
-
-  bar.addEventListener("pointerdown", (e) => {
-    scrubbing = true;
-    anchorT = tFromEvent(e);
-    state.scrubT = anchorT;
-    state.live = false;
-    bar.classList.add("scrubbing");
-    bar.setPointerCapture(e.pointerId);
-    updateProgress();
-  });
-
-  bar.addEventListener("pointermove", (e) => {
-    if (!scrubbing) {
-      // Hover: preview tooltip at cursor timepoint
-      showTooltipAt(tFromEvent(e), e.clientX, e.clientY);
-      return;
-    }
-    const t = tFromEvent(e);
-    state.scrubT = t;
-    const lo = Math.min(anchorT, t);
-    const hi = Math.max(anchorT, t);
-    drawSelection(lo, hi);
-    showRangeTooltip(lo, hi, e.clientX, e.clientY);
-    updateProgress();
-  });
-
-  const end = () => {
-    if (!scrubbing) return;
-    scrubbing = false;
-    bar.classList.remove("scrubbing");
-    $("#selection").style.display = "none";
-    hideTooltip();
+  $("#chat-form").onsubmit = async event => {
+    event.preventDefault(); $("#chat-send").disabled = true;
+    try { await api("/api/chat", { method: "POST", body: JSON.stringify({ message: $("#chat-input").value }) }); $("#chat-input").value = ""; $("#chat-status").textContent = "Message sent. Watch the main stream for the host's reply."; }
+    catch (error) { report(error, $("#chat-status")); } finally { updateControls(); }
   };
-  bar.addEventListener("pointerup", end);
-  bar.addEventListener("pointercancel", end);
-  bar.addEventListener("pointerleave", () => {
-    if (!scrubbing) hideTooltip();
-  });
+  const surface = $("#screen-surface");
+  const exit = async () => {
+    document.body.classList.remove("web-fullscreen");
+    if (document.fullscreenElement) await document.exitFullscreen();
+    syncScreenButtons();
+  };
+  const syncScreenButtons = () => {
+    $("#btn-exit-screen").hidden = !document.body.classList.contains("web-fullscreen") && !document.fullscreenElement;
+    $("#btn-theater").setAttribute("aria-pressed", String(document.body.classList.contains("theater")));
+    $("#btn-web-fullscreen").setAttribute("aria-pressed", String(document.body.classList.contains("web-fullscreen")));
+  };
+  $("#btn-theater").onclick = () => { document.body.classList.toggle("theater"); syncScreenButtons(); };
+  $("#btn-web-fullscreen").onclick = () => { document.body.classList.toggle("web-fullscreen"); syncScreenButtons(); };
+  $("#btn-fullscreen").onclick = async () => {
+    try { if (document.fullscreenElement) await document.exitFullscreen(); else await surface.requestFullscreen(); }
+    catch (error) { report(new Error(`Full display unavailable: dashboard/screen mode — ${error.message}`)); }
+  };
+  $("#btn-exit-screen").onclick = () => exit().catch(report);
+  document.addEventListener("fullscreenchange", syncScreenButtons);
+  document.addEventListener("keydown", event => { if (event.key === "Escape") exit().catch(report); });
 }
 
-function drawSelection(lo, hi) {
-  const sel = $("#selection");
-  const total = state.total || 1;
-  sel.style.display = "block";
-  sel.style.left = `${(lo / total) * 100}%`;
-  sel.style.width = `${((hi - lo) / total) * 100}%`;
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
 }
 
-function eventsInRange(lo, hi) {
-  return state.events.filter((e) => e.t >= lo && e.t <= hi);
-}
-
-function showTooltipAt(t, x, y) {
-  const near = eventsInRange(Math.max(0, t - 2), t + 2).slice(-6);
-  if (near.length === 0) { hideTooltip(); return; }
-  renderTooltip(t, near, x, y);
-}
-
-function showRangeTooltip(lo, hi, x, y) {
-  const near = eventsInRange(lo, hi).slice(-10);
-  renderTooltip(lo, near, x, y);
-}
-
-function renderTooltip(t, events, x, y) {
-  const tip = $("#tooltip");
-  const lines = events.map((e) => `<div class="tt-line ${e.level}">${fmtTime(e.t)} [${esc(e.source)}] ${esc(e.msg)}</div>`).join("");
-  tip.innerHTML = `<div class="tt-time">⏱ ${fmtTime(t)} — ${events.length} event${events.length === 1 ? "" : "s"}</div>${lines || '<div class="tt-line">no events here</div>'}`;
-  tip.style.display = "block";
-  const pw = tip.offsetWidth;
-  const left = Math.min(window.innerWidth - pw - 16, Math.max(8, x + 12));
-  const top = y - tip.offsetHeight - 14;
-  tip.style.left = `${left}px`;
-  tip.style.top = `${Math.max(8, top)}px`;
-}
-
-function hideTooltip() {
-  $("#tooltip").style.display = "none";
-}
-
-function goLive() {
-  state.live = true;
-  state.scrubT = null;
-  $("#selection").style.display = "none";
-  updateProgress();
-}
-
-/* ---------- Utils ---------- */
-function esc(s) {
-  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
-
-document.addEventListener("DOMContentLoaded", () => {
-  init();
-  setupScrubber();
-});
+init();

@@ -9,3 +9,5 @@ node_modules/
 # Runtime state
 server/panels/panels-state.json
 *.log
+
+.data/
