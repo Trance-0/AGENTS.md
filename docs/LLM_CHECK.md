@@ -376,3 +376,26 @@ bullets specific: filenames, command names, outcomes.
   unrelated changes. Lint/typecheck and Jenkins were skipped because no
   corresponding service scripts or configured pipeline exist. Work is
   committed locally on the feature branch; no push was requested.
+
+- 2026-11-04: Added dashboard 0.1.2 OpenClaw integration: scoped machine
+  start/status/end API and owner-only `dashboard_stream` plugin tool, plus six
+  agent/model/tool lifecycle hooks. Events preserve the existing recording
+  schema, exclude private payloads, and bind to recording/session references.
+  Provider-error hooks emit warning metadata without raw errors. Detailed
+  implementation and dev evidence are in `docs/development/dashboard-log.md`.
+- 2026-11-04: Passed four server tests locally and under Node 22, Chromium
+  regression checks, Docker build, Compose/gateway config validation, installed
+  plugin/tool/hook inspection, syntax checks, public health/event checks, and
+  `git diff --check`. A real owner-agent tool call started OpenClaw Live. A real
+  logged-in viewer chat recorded one host reply plus native lifecycle events.
+  Stream is left live; temporary test identity removed. The main provider's
+  post-tool thinking-signature error remains an external limitation, recorded
+  in the development log; chat host and control tool both worked.
+- 2026-11-04: Backed up gateway config and dashboard state, retained the old
+  image, preserved mount/port/FRP state, and kept machine tokens out of Git.
+  Plugin config required gateway reload; clean exit under its existing
+  on-failure policy required `docker start`. Installed plugin path is pinned.
+  Updated README, docs/readme, dashboard README, runbook, and dev log. Audited
+  staged secrets/sizes, line limits, versions, doc links, and unrelated edits.
+  Lint/typecheck and Jenkins remain skipped because this service has no such
+  scripts or configured pipeline. Commit stays local; no push requested.

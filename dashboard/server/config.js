@@ -32,6 +32,7 @@ export const config = {
     endpoint: process.env.OPENCLAW_ENDPOINT || "http://127.0.0.1:18789",
     token: process.env.OPENCLAW_TOKEN || "",
     agent: process.env.OPENCLAW_AGENT || "dashboard-host",
+    streamToken: process.env.OPENCLAW_STREAM_TOKEN || "",
   },
 
   astrbot: {

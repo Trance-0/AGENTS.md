@@ -1,0 +1,15 @@
+{
+  "id": "dashboard-stream",
+  "name": "Dashboard Stream",
+  "version": "0.1.2",
+  "description": "Owner-controlled dashboard streaming and public lifecycle events.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["endpoint", "tokenFile"],
+    "properties": {
+      "endpoint": { "type": "string" },
+      "tokenFile": { "type": "string" }
+    }
+  }
+}

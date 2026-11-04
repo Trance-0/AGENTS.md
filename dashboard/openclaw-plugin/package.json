@@ -1,0 +1,7 @@
+{
+  "name": "dashboard-stream",
+  "version": "0.1.2",
+  "private": true,
+  "type": "module",
+  "openclaw": { "extensions": ["./index.js"] }
+}

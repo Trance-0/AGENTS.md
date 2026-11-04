@@ -3,8 +3,8 @@
 The browser connects to `https://live.trance-0.com`. Its remote reverse proxy
 terminates TLS and routes HTTP to FRP remote TCP port 6018. The existing local
 `frpc` container uses host networking and forwards requests to
-`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.1.1` using image
-`agent-dashboard:0.1.1`, with Node.js 22 as the unprivileged `node` user.
+`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.1.2` using image
+`agent-dashboard:0.1.2`, with Node.js 22 as the unprivileged `node` user.
 
 ## Casdoor setup
 
@@ -127,8 +127,8 @@ and without `admin-agent` must receive 403 for mutations even with a valid
 bearer token. Remove any temporary test identities after testing.
 
 ```sh
-docker logs --timestamps --tail 100 agent-dashboard-v0.1.1
-docker inspect agent-dashboard-v0.1.1 --format '{{.State.Health.Status}}'
+docker logs --timestamps --tail 100 agent-dashboard-v0.1.2
+docker inspect agent-dashboard-v0.1.2 --format '{{.State.Health.Status}}'
 ```
 
 Docker retains three rotated JSON log files of up to 10 MB each. Application
@@ -140,7 +140,7 @@ never be included in logs.
 
 Before a future update, retain the current image under a distinct local tag.
 To roll back, restore the previous source revision or retag the retained image
-as `agent-dashboard:0.1.1`, then run
+as `agent-dashboard:0.1.2`, then run
 `docker compose -f dashboard/compose.yaml up -d --no-build`. Keep the private
 environment file and state volume. To remove just the dashboard exposure,
 restore the saved FRP configuration, validate it, and restart `frpc`; other
@@ -223,3 +223,76 @@ covering guest access, hover content, timestamp replay, chat separation,
 responsive recommendations, screen modes, avatars, start/end, and moderation.
 `npm test --prefix dashboard` also checks restart recovery, Unicode NDJSON
 pagination, visibility/ranking, cross-stream reply isolation, and auth gates.
+
+
+## OpenClaw stream control and lifecycle events (0.1.2)
+
+The source plugin is `dashboard/openclaw-plugin/`. Copy that directory into
+`/home/node/.openclaw/extensions/dashboard-stream` in the gateway's persistent
+configuration mount. Generate a random machine token and place it in both the
+ignored dashboard `OPENCLAW_STREAM_TOKEN` environment variable and a private
+`/home/node/.openclaw/dashboard-stream.token` file (mode `0600`). This token
+is separate from the gateway bearer token, browser sessions, and panel token.
+Never put it in a prompt, tool argument, public log, or committed config.
+
+Add the plugin ID to `plugins.allow`, retain existing plugin entries, and set:
+
+```json
+{
+  "plugins": {
+    "load": { "paths": ["/home/node/.openclaw/extensions/dashboard-stream"] },
+    "entries": {
+      "dashboard-stream": {
+        "enabled": true,
+        "config": {
+          "endpoint": "http://127.0.0.1:14143",
+          "tokenFile": "/home/node/.openclaw/dashboard-stream.token"
+        }
+      }
+    }
+  }
+}
+```
+
+Append `dashboard_stream` to the main agent's `tools.alsoAllow`, preserving its
+existing policy. The tool factory additionally requires agent `main` and a
+trusted owner sender. The `dashboard-host` agent remains tool-denied, so public
+chat cannot operate stream controls. Config validation is read-only with:
+
+```sh
+docker exec openclaw-openclaw-gateway-1 node dist/index.js config validate
+```
+
+Plugin changes require a gateway restart. On this host its configured
+`on-failure` restart policy does not restart an orderly exit with status 0;
+a plugin-triggered respawn left it stopped. Recover with
+`docker start openclaw-openclaw-gateway-1` after confirming the state, then
+check `/healthz` and `plugins list --json`. No volumes or existing agents need
+recreation. The installed plugin directory is pinned in `plugins.load.paths`
+to preserve explicit source provenance.
+
+Ask the owner-facing OpenClaw agent to use `dashboard_stream` with
+`action: start` and a title. `status` reports the stream; `end` saves it.
+Repeated starts from the same session return the existing stream; a different
+session cannot take over or end it. Browser administrators retain their
+Start/End controls and recording moderation.
+
+The machine API is `/api/openclaw/stream` (GET),
+`/api/openclaw/stream/start` and `/api/openclaw/stream/end` (POST), and
+`/api/openclaw/events` (POST). Every route requires the separate bearer token.
+Event submissions target the recording ID and use unique event references to
+avoid duplicate delivery. Events for ended or replaced streams are rejected.
+
+Six native plugin hooks record agent start/end, model input/output milestones,
+and tool start/end. Public metadata includes agent/model/tool names, status,
+and duration. Prompts, system instructions, transcripts, tool parameters,
+results, and raw errors are never forwarded. The session that explicitly starts
+a broadcast may publish its assistant output as public log text; other sessions
+publish metadata only. Side-chat host text continues through the existing
+chat-response path, avoiding duplicate assistant text. These log events use the
+existing NDJSON envelope and replay automatically with the stream.
+
+The event queue serializes delivery with five-second request timeouts and a
+256-event pending limit. Dashboard failures are logged and do not terminate an
+agent run. Disconnected events can be lost; the bridge is not a durable replay
+of the gateway's private history. It records live activity while a stream is on.

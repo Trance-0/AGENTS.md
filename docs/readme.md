@@ -17,12 +17,16 @@ transfer workflow, format scope, and isolated verification commands.
 
 `dashboard/` is a Node.js 22 / Express service with a static browser UI, a
 public server-sent event stream, and timestamped recording playback. npm manages
-its dependencies. Casdoor
-provides OIDC identities; `app-agent` grants signed-in chat and panel access and `admin-agent`
-permits stream start/end and recording moderation. Panel mutations additionally
+its dependencies. Casdoor provides OIDC identities: `app-agent` grants signed-in
+chat and panel access; `admin-agent` permits stream start/end and recording
+moderation. Panel mutations additionally
 require the dashboard bearer token. Guests see the player, chat history, and
 selectable recommendations; manager panels remain private.
 OpenClaw, AstrBot, and Jenkins are monitored through local HTTP endpoints.
+The OpenClaw `dashboard-stream` plugin gives the owner-facing main agent a
+scoped stream-control tool. Agent/model/tool lifecycle events are saved in the
+recording. Assistant text is public only for the session that starts a stream;
+private prompts, tool arguments, and tool results are excluded.
 
 ### Local Docker and FRP deployment
 

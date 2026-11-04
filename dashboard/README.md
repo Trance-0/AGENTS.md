@@ -25,6 +25,13 @@ workspace. Sending chat requires sign-in, an active stream, and a same-origin
 request. Chat has a five-second per-user cooldown and one host response at a
 time; upstream calls time out after 90 seconds.
 
+The owner-facing OpenClaw main agent can also start/status/end broadcasts with
+`dashboard_stream`. Its `dashboard-stream` plugin records agent/model/tool
+lifecycle events using a separate stream-controller credential. Starting a
+stream makes subsequent assistant text in that session public; other sessions
+contribute only activity metadata. The public chat host retains its no-tools
+policy. See the deployment runbook for installation.
+
 ## Panels
 
 Panels are modules discovered from `server/panels/`. Each exports a
@@ -69,6 +76,7 @@ Copy `.env.example` to `.env` (gitignored) and fill in real values:
 | `OIDC_*` | Casdoor issuer, client id/secret, redirect URI, required group. |
 | `JENKINS_ENDPOINT` / `JENKINS_USER` / `JENKINS_TOKEN` | Read-only build status. |
 | `DASHBOARD_TOKEN` | Required by panel-toggle endpoints, along with an admin session. |
+| `OPENCLAW_STREAM_TOKEN` | Separate machine credential for the OpenClaw stream-control/event bridge. |
 | `SESSION_SECRET` | Required session signing secret; generate a random value. |
 
 Secrets never enter git. In Jenkins the same values are bound from credentials

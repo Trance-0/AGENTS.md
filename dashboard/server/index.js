@@ -13,6 +13,7 @@ import { initOidc, loginUrl, handleCallback, isAuthorized, groupsOf } from "./oi
 import { registerPanel, snapshot, isEnabled, setEnabled, getPanel } from "./registry.js";
 import { emit, uptimeSeconds } from "./log-bus.js";
 import { BroadcastStore } from "./broadcast.js";
+import { mountOpenClaw } from "./openclaw-routes.js";
 import { mountBroadcast } from "./broadcast-routes.js";
 import { avatarUrl, serveAvatar } from "./avatar.js";
 
@@ -121,6 +122,7 @@ function requireCsrf(req, res, next) {
 
 app.get("/auth/avatar", requireAuth, serveAvatar);
 mountBroadcast(app, broadcast, { requireAuth, requireAdmin, requireCsrf });
+mountOpenClaw(app, broadcast);
 
 function requireToken(req, res, next) {
   if (!hasDashboardToken) {

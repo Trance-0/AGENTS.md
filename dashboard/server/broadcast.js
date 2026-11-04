@@ -67,14 +67,14 @@ export class BroadcastStore {
     return () => this.listeners.delete(listener);
   }
 
-  start(title) {
+  start(title, origin = {}) {
     if (this.active) throw Object.assign(new Error("Stream cannot start: dashboard/broadcast start — another stream is already live."), { status: 409 });
-    const recording = { id: randomUUID(), title, startedAt: Date.now(), endedAt: null, duration: 0, eventCount: 0, status: "live", hidden: false, score: 0, schemaVersion: 1 };
+    const recording = { ...origin, id: randomUUID(), title, startedAt: Date.now(), endedAt: null, duration: 0, eventCount: 0, status: "live", hidden: false, score: 0, schemaVersion: 1 };
     fs.closeSync(fs.openSync(this.filename(recording.id, "ndjson"), "wx"));
     this.save(recording);
     this.active = recording;
     this.notify("status", this.status());
-    this.publish({ source: "stream", msg: "Stream is live: dashboard/broadcast — administrator started the stream." });
+    this.publish({ source: "stream", msg: `Stream is live: dashboard/broadcast — ${origin.origin === "openclaw" ? "OpenClaw" : "administrator"} started the stream.` });
     return this.status();
   }
 
@@ -91,9 +91,9 @@ export class BroadcastStore {
     return event;
   }
 
-  stop() {
+  stop(origin = "administrator") {
     if (!this.active) throw Object.assign(new Error("Stream cannot end: dashboard/broadcast end — no stream is live."), { status: 409 });
-    this.publish({ source: "stream", msg: "Stream has ended: dashboard/broadcast — administrator ended the stream; recording saved." });
+    this.publish({ source: "stream", msg: `Stream has ended: dashboard/broadcast — ${origin === "openclaw" ? "OpenClaw" : "administrator"} ended the stream; recording saved.` });
     const recording = { ...this.active, status: "ended", endedAt: Date.now() };
     recording.duration = (recording.endedAt - recording.startedAt) / 1000;
     this.save(recording);
