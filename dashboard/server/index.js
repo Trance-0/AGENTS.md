@@ -25,6 +25,10 @@ import { MetricsStore } from "./metrics/store.js";
 import { SecretStore } from "./metrics/secrets.js";
 import { watchUsage } from "./metrics/reader.js";
 import { mountMetrics } from "./metrics/routes.js";
+import { SceneStore } from "./scene/store.js";
+import { SceneService } from "./scene/service.js";
+import { MetricsBridge } from "./scene/bridge.js";
+import { mountScene, contentSecurityPolicy } from "./scene/routes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
@@ -79,10 +83,14 @@ if (config.openclaw.activityDir) {
     warn: msg => emit({ source: "openclaw", level: "warn", msg }),
   });
 }
+const sceneStore = new SceneStore(path.join(config.dataDir, "scene"));
+const scene = new SceneService({ broadcast, store: sceneStore, emit });
 const MemoryStore = createMemoryStore(session);
 const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", "loopback");
+// Strict CSP on every response; image widgets add only allowlisted HTTPS origins.
+app.use((_req, res, next) => { res.set("Content-Security-Policy", contentSecurityPolicy(sceneStore.settings().imageAllowlist)); next(); });
 // Small JSON bodies everywhere except the config editor, which parses its own (larger) body.
 const smallJson = express.json({ limit: "16kb" });
 app.use((req, res, next) => (req.path === CONFIG_ROUTE ? next() : smallJson(req, res, next)));
@@ -160,7 +168,9 @@ const configStore = config.openclaw.configFile
   ? new OpenClawConfigStore({ file: config.openclaw.configFile, backupDir: path.join(config.dataDir, "openclaw-config-backups") })
   : null;
 mountOpenClawConfig(app, configStore, { requireAuth, requireAdmin, requireCsrf, isEnabled });
-mountMetrics(app, { store: metrics, secrets: metricsSecrets, requireAuth, requireAdmin, requireCsrf, isEnabled });
+const quota = mountMetrics(app, { store: metrics, secrets: metricsSecrets, requireAuth, requireAdmin, requireCsrf, isEnabled });
+mountScene(app, { scene, store: sceneStore, streamToken: config.openclaw.streamToken, requireCsrfOrToken });
+new MetricsBridge({ scene, broadcast, metrics, quota, secrets: metricsSecrets, isEnabled, emit }).start();
 
 function requireToken(req, res, next) {
   if (!hasDashboardToken) {
@@ -218,6 +228,8 @@ app.use((err, _req, res, _next) => {
 });
 
 // --- Static frontend ---
+// Scene assets carry content hashes in their names, so they never change in place.
+app.use("/scene/assets", express.static(path.join(PUBLIC_DIR, "scene", "assets"), { immutable: true, maxAge: "365d", fallthrough: false }));
 app.use(express.static(PUBLIC_DIR));
 
 app.listen(config.port, config.host, () => {

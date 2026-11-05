@@ -1,10 +1,15 @@
+import { SceneTimeline } from "./scene/reduce.js";
+
 export const formatTime = seconds => {
   const value = Math.max(0, Math.floor(seconds));
   return `${Math.floor(value / 3600)}:${String(Math.floor(value / 60) % 60).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
 };
 
+// Metric ticks update widgets only; every other scene event keeps its caption in the log.
+export const isLogEvent = event => event.kind !== "chat" && !(event.kind === "widget" && event.op === "metrics");
+
 export function previewAt(events, time) {
-  return events.filter(event => event.kind !== "chat" && event.t <= time).slice(-5);
+  return events.filter(event => isLogEvent(event) && event.t <= time).slice(-5);
 }
 
 const MARK_LEVELS = new Set(["warn", "error", "fatal", "critical"]);
@@ -71,6 +76,9 @@ export class Player {
     this.playing = false;
     this.rate = readStoredRate();
     this.onChat = onChat;
+    // Scene state is folded client-side with checkpoints (public/scene/reduce.js).
+    this.timeline = new SceneTimeline();
+    this.onScene = null;
     this.lastTick = performance.now();
     this.chrome = { pointerInside: false, lastActivity: performance.now(), scrubbing: false, hidden: false };
     this.setupTimeline();
@@ -123,6 +131,7 @@ export class Player {
   load(recording, events) {
     this.recording = recording;
     this.events = events;
+    this.timeline = new SceneTimeline(events);
     this.follow = recording?.status === "live";
     this.time = this.follow ? this.duration() : 0;
     this.playing = !!recording && !this.follow && readAutoplay();
@@ -134,8 +143,17 @@ export class Player {
   add(event) {
     if (event.recordingId !== this.recording?.id || this.events.some(item => item.id === event.id)) return;
     this.events.push(event);
+    this.timeline.push(event);
     if (this.follow) this.time = this.duration();
     this.render();
+  }
+
+  // Recording time between 200 ms ticks, for smooth canvas animation.
+  displayTime() {
+    if (!this.recording) return 0;
+    if (this.follow) return this.duration();
+    if (!this.playing) return this.time;
+    return advanceTime(this.time, (performance.now() - this.lastTick) / 1000, this.rate, this.duration());
   }
 
   goLive() {
@@ -188,7 +206,8 @@ export class Player {
     $("#progress-bar").setAttribute("aria-valuemax", String(Math.floor(duration)));
     $("#progress-bar").setAttribute("aria-valuenow", String(Math.floor(this.time)));
     const visible = this.events.filter(event => event.t <= this.time);
-    const logs = visible.filter(event => event.kind !== "chat").slice(-100);
+    const logs = visible.filter(isLogEvent).slice(-100);
+    this.onScene?.(this.timeline.stateAt(this.time));
     const key = `${this.recording?.id}:${logs.at(-1)?.id}:${logs.length}`;
     if (this.renderKey !== key) {
       this.renderKey = key;
@@ -217,7 +236,7 @@ export class Player {
       title.className = "tt-time";
       title.textContent = rangeStart === undefined ? `Preview at ${formatTime(time)}` : `${formatTime(Math.min(time, rangeStart))} – ${formatTime(Math.max(time, rangeStart))}`;
       tip.append(title);
-      const events = rangeStart === undefined ? previewAt(this.events, time) : this.events.filter(event => event.kind !== "chat" && event.t >= Math.min(time, rangeStart) && event.t <= Math.max(time, rangeStart)).slice(-5);
+      const events = rangeStart === undefined ? previewAt(this.events, time) : this.events.filter(event => isLogEvent(event) && event.t >= Math.min(time, rangeStart) && event.t <= Math.max(time, rangeStart)).slice(-5);
       for (const event of events) tip.append(logLine(event));
       if (!events.length) {
         const empty = document.createElement("p");

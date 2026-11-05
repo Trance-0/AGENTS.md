@@ -1,6 +1,8 @@
 # Design: stream scenes, widgets, and avatar events
 
-As of 2026-11-05. Status: owner decisions recorded in section 8; implementation pending. Builds on dashboard
+As of 2026-11-05. Status: owner decisions recorded in section 8; phase A
+implemented in dashboard 0.2.0 (section 10 records how it differs from the
+proposal). Builds on dashboard
 0.1.5 (`dashboard/`) and assumes the in-flight player fixes land first: a
 correct play/pause icon, control icons, auto-hiding controls with a thin
 progress bar, and a playback-rate control. "Current" below means what the code
@@ -566,6 +568,75 @@ These override any conflicting proposal above.
     only the avatar layer behind the same expression events (idle, blink,
     talk, think, sleepy). The bongo-cat is a separate lightweight canvas widget
     and stays canvas-drawn.
+
+## 10. Phase A as implemented (dashboard 0.2.0)
+
+Owner requests after section 8 added an **admin canvas widget editor** and
+**admin-placed widgets** on top of decision 8 ("admins do setup"). Where the
+implementation differs from sections 2–7, this section wins.
+
+- **Widget model.** Widgets are free-positioned instances
+  `{ id, type, x, y, w, h, z, props }` instead of a fixed slot catalog.
+  Geometry is normalized to a 16:9 stage (0–1) that the renderer letterboxes
+  inside the player, so layouts match in normal, theater, web full screen, and
+  full display. Types v1: `text`, `metric`, `avatar` (1:1 default box),
+  `cat` (lower-right default), `clock` (stream uptime or UTC wall clock),
+  `image` (URL must start with an admin-allowlisted HTTPS prefix). Media,
+  gifts, and Live2D remain out of scope.
+- **One validator** (`public/scene/schema.js`) is used by the admin routes, the
+  OpenClaw routes, the saved layout, and the editor form. Unknown types,
+  fields, and props (including prototype keys) are rejected; strings have
+  length limits and no control or bidi-override characters; at most 24 widgets
+  and 1.5 KiB per widget; events at most 2 KiB.
+- **Events.** `kind: "widget"`, `sv: 1`, `op` one of `create` / `update` /
+  `delete` (data `{ widget }`, the full widget after the change, target = widget
+  ID) and `metrics` (data `{ values }`, target `metrics`). `msg` is a
+  server-side template that never contains producer text. Metric ticks are
+  hidden from the log; other widget events keep their caption.
+- **Reducer** (`public/scene/reduce.js`) is shared by the browser and the
+  server's live-scene tracking. Event time is the running maximum of `t`
+  (the server now also clamps `t` at publish), so the visible set is always a
+  prefix. Client checkpoints every 250 events; no server snapshots
+  (decision 9). Tests assert seek-from-checkpoint == fold-from-zero and
+  identical state at every playback rate.
+- **Derived pictures** (`public/scene/derive.js`): avatar `think` from
+  `model_start` until output or while tools run, `talk` for about 18
+  characters per second after a host `model_output` (1.5–10 s), a seeded
+  periodic `blink`, `idle`, and `sleepy` while the latest host `model_output`
+  provider is `openai` or a pooled Codex window is 0% (decision 10). The cat
+  taps on `tool_start` / `tool_end` / `model_output`, drums while busy, and
+  sleeps after 5 minutes without activity. Only `source: "openclaw"` activity
+  counts; AstrBot relay traffic does not move the avatar.
+- **Avatar layer** (`public/scene/avatar.js`) is pluggable: a renderer gets
+  `{ expression, frame, t, reduced, mirror }` and draws on its canvas. Phase A
+  draws the owner's witch frames (vendored under `public/scene/assets/` with
+  content-hashed names, cached immutable); Live2D would replace only this
+  renderer. The cat (`public/scene/cat.js`) is our own canvas drawing in the
+  witch's navy-line, flat-fill, hard-shadow style.
+- **Persistence.** A saved default layout (`/app/data/scene/scene-layout.json`,
+  validated, `version` incremented on every save, stale `baseVersion`
+  rejected) is replayed as opening `create` events when a stream starts. Until
+  the first save the built-in layout (avatar + cat) is used. Admin edits always
+  update the saved layout and, while a stream is live, are also recorded.
+  OpenClaw edits change only the live recording its session owns.
+- **APIs.** Admin: `GET/PUT /api/scene/layout` (PUT replaces the saved
+  layout only, never the live recording), `POST /api/scene/widgets`,
+  `PATCH/DELETE /api/scene/widgets/:id`, `GET/PUT /api/scene/settings`
+  (image allowlist). OpenClaw: `GET /api/openclaw/scene/layout`,
+  `POST /api/openclaw/scene/widgets`, `PATCH/DELETE
+  /api/openclaw/scene/widgets/:id`. A bulk OpenClaw layout replace was **not**
+  implemented: it would emit up to 48 events at once against the 2/s cap and
+  could wipe a public scene in one call; widget operations cover the need.
+  The OpenClaw plugin/tool is unchanged; see `docs/deployment/dashboard.md`.
+- **Rate limits.** Admin 5/s (burst 10), OpenClaw 2/s (burst 10), and a shared
+  10/s cap (burst 40) for scene events; opening layouts and metric ticks are
+  server-generated and bounded by the 24-widget limit and one event per refresh.
+- **CSP** ships as proposed, with `img-src` extended only by the allowlisted
+  image origins; the browser check fails on any violation.
+- **Metric widgets** follow decisions 1–3; details in
+  `docs/development/dashboard-metrics.md`. Metrics are published only while a
+  metric widget is on the live scene, and the 5-minute CPA refresh runs only
+  then (a narrower reading of decision 2 that avoids upstream calls nobody sees).
 
 ## 9. Original open questions (answered in section 8)
 

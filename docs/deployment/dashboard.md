@@ -29,8 +29,8 @@ shows both its starting and completed file-path events in the public player.
 The browser connects to `https://live.trance-0.com`. Its remote reverse proxy
 terminates TLS and routes HTTP to a private FRP remote TCP port. The existing local
 `frpc` container uses host networking and forwards requests to
-`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.1.8` using image
-`agent-dashboard:0.1.8`, with Node.js 22 as the unprivileged `node` user.
+`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.2.0` using image
+`agent-dashboard:0.2.0`, with Node.js 22 as the unprivileged `node` user.
 
 ## Casdoor setup
 
@@ -173,8 +173,8 @@ and without `admin-agent` must receive 403 for mutations, including panel
 toggles, even with a valid bearer token. Remove any temporary test identities after testing.
 
 ```sh
-docker logs --timestamps --tail 100 agent-dashboard-v0.1.8
-docker inspect agent-dashboard-v0.1.8 --format '{{.State.Health.Status}}'
+docker logs --timestamps --tail 100 agent-dashboard-v0.2.0
+docker inspect agent-dashboard-v0.2.0 --format '{{.State.Health.Status}}'
 ```
 
 Docker retains three rotated JSON log files of up to 10 MB each. Application
@@ -186,7 +186,7 @@ never be included in logs.
 
 Before a future update, retain the current image under a distinct local tag.
 To roll back, restore the previous source revision or retag the retained image
-as `agent-dashboard:0.1.8`, then run
+as `agent-dashboard:0.2.0`, then run
 `docker compose -f dashboard/compose.yaml up -d --no-build`. Keep the private
 environment file and state volume. To remove just the dashboard exposure,
 restore the saved FRP configuration, validate it, and restart `frpc`; other
@@ -596,3 +596,83 @@ retains read-only access to shared activity/usage logs.
 The [metrics design and reference notes](../development/dashboard-metrics.md)
 identify the CC Switch visualization/storage sources and explain accounting
 limits and tests.
+
+## Stream scenes and widgets (0.2.0)
+
+The Live player draws a scene over the log: widgets (`text`, `metric`,
+`avatar`, `cat`, `clock`, `image`) on a 16:9 stage. Everything is rendered in
+the browser from recorded `widget` events plus existing OpenClaw activity; the
+server only validates, stores, and relays. Design and event format:
+`ai-platform-design/stream-scenes.md` section 10.
+
+### Storage
+
+`/app/data/scene/` in the existing `dashboard_dashboard-state` volume:
+`scene-layout.json` (saved default layout, versioned) and `scene-settings.json`
+(image allowlist). Both are written atomically with mode 0600 and are covered
+by the existing pre-deploy backup of `/app/data`. Deleting `scene-layout.json`
+restores the built-in layout (avatar and cat). Older images ignore these files.
+
+### Editing
+
+Admins use **Edit scene** under the player. With no live stream, edits change
+only the saved layout; it is replayed as the opening scene of every new stream.
+While a stream is live, edits are recorded in the recording (so replay, seek,
+and speed show them) and also saved to the layout. Settings → Scene defaults
+holds the image allowlist (HTTPS prefixes) and a reset to the built-in layout.
+
+### Admin API
+
+Admin session required (401 signed out, 403 without `admin-agent`).
+Mutations also need the same-origin `X-Dashboard-Request: 1` header, or the
+`DASHBOARD_TOKEN` bearer with the admin session (a wrong bearer is 401).
+
+| Route | Effect |
+|---|---|
+| `GET /api/scene/layout` | `{ layout: { version, updatedAt, builtin, widgets }, live: { recordingId, widgets } \| null, settings }` |
+| `PUT /api/scene/layout` | `{ widgets, baseVersion }` replaces the saved layout only (409 if `baseVersion` is stale) |
+| `POST /api/scene/widgets` | `{ widget }` → 201 `{ widget, recorded, layoutVersion }` |
+| `PATCH /api/scene/widgets/:id` | `{ changes }` (geometry, `z`, individual `props`; never `id`/`type`) |
+| `DELETE /api/scene/widgets/:id` | removes from the live scene and/or saved layout |
+| `GET/PUT /api/scene/settings` | `{ imageAllowlist: [https prefixes] }`, at most 16 |
+
+### OpenClaw scene API (for the next phase)
+
+Not yet used by the `dashboard_stream` tool. Each request needs the
+stream-controller bearer (`OPENCLAW_STREAM_TOKEN`, timing-safe compare; 401
+otherwise) and `recordingId` + `sessionRef` (64 hex) of the **live recording
+its own session started** — the same ownership rule as
+`/api/openclaw/stream/end`. Streams started by an administrator, ended
+streams, and other sessions get 409; malformed IDs get 400. OpenClaw changes
+only the live recording, never the saved layout. Limit: 2 changes/s (burst
+10), plus the shared 10 scene events/s cap; over the limit returns 429.
+
+| Route | Body / query | Result |
+|---|---|---|
+| `GET /api/openclaw/scene/layout` | `?recordingId=&sessionRef=` | `{ recordingId, widgets }` |
+| `POST /api/openclaw/scene/widgets` | `{ recordingId, sessionRef, widget: { type, x, y, w, h, z?, id?, props? } }` | 201 `{ widget, recorded: true }` |
+| `PATCH /api/openclaw/scene/widgets/:id` | `{ recordingId, sessionRef, changes }` | `{ widget, recorded }` |
+| `DELETE /api/openclaw/scene/widgets/:id` | `{ recordingId, sessionRef }` | `{ id, recorded }` |
+
+Errors use the dashboard message shape, for example `Widget not created:
+dashboard/scene widgets — widget type 'iframe' is not supported.`
+
+### Content-Security-Policy
+
+Every response carries `default-src 'self'; script-src 'self'; style-src
+'self'; img-src 'self' data: <allowlisted image origins>; media-src 'self';
+connect-src 'self'; font-src 'self'; frame-src 'none'; object-src 'none';
+base-uri 'none'; form-action 'self'; frame-ancestors 'none'`. If the reverse
+proxy adds its own CSP, browsers enforce both, so keep the proxy's at least as
+permissive for images. `/scene/assets/` files have content-hashed names and
+are served with `Cache-Control: public, max-age=31536000, immutable`; only the
+hashed names exist.
+
+### Verification
+
+`scripts/scene-browser-check.mjs` (run with the other browser checks) draws
+widgets, exercises the left-click menu, drag, resize, keyboard, and undo,
+records live edits, replays them at seek times and 2x, drives avatar and cat
+states from recorded OpenClaw activity, checks guest read-only rendering, and
+fails on any CSP violation. After deployment, confirm the `Content-Security-Policy`
+header with `curl -sI https://live.trance-0.com/ | grep -i content-security`.

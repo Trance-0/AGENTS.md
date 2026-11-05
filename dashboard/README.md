@@ -32,6 +32,19 @@ stream makes subsequent assistant text in that session public; other sessions
 contribute only activity metadata. The public chat host retains its no-tools
 policy. See the deployment runbook for installation.
 
+## Stream scenes
+
+The player shows a scene over the log: text, metric, avatar (the owner's
+witch), desk cat, clock, and allowlisted image widgets. The avatar and cat
+react to recorded OpenClaw activity (think, talk, blink, sleepy on the paid
+fallback; paws on tool and output events). Admins use **Edit scene** under the
+player: drag on the stage to add a widget, left-click a widget for its menu,
+drag or use the corner handles and arrow keys, Delete to remove, Esc to exit,
+Ctrl+Z to undo. Offline edits change the saved default layout that opens every
+stream; live edits are also recorded, so replay shows them. See the
+[runbook](../docs/deployment/dashboard.md#stream-scenes-and-widgets-020) for
+the admin and OpenClaw scene APIs and the CSP.
+
 ## Usage and quota
 
 Administrators see the **Usage** group: Summary (pooled Codex quota with reset

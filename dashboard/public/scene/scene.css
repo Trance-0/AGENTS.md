@@ -1,0 +1,76 @@
+/* Scene stage over the player: a 16:9 box sized by renderer.js. */
+.scene-stage { position: absolute; z-index: 3; pointer-events: none; --scene-scale: 1; }
+.scene-widget { position: absolute; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; overflow: hidden; color: #fdf6f3; font-family: "Roboto", system-ui, sans-serif; line-height: 1.15; }
+.scene-widget canvas { width: 100%; height: 100%; display: block; }
+.scene-widget img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.scene-widget img[data-fit="cover"] { object-fit: cover; }
+.scene-label { font-size: calc(13px * var(--scene-scale)); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; opacity: .8; }
+.scene-label:empty, .scene-sub:empty { display: none; }
+.scene-value { font-weight: 700; overflow-wrap: anywhere; }
+.scene-sub { font-size: calc(13px * var(--scene-scale)); opacity: .85; margin-top: calc(4px * var(--scene-scale)); }
+
+/* Text: card or bare, font size in 720p units scaled to the stage. */
+.scene-text { padding: calc(8px * var(--scene-scale)) calc(14px * var(--scene-scale)); }
+.scene-text .scene-value { font-size: calc(var(--scene-font, 28) * 1px * var(--scene-scale)); font-weight: 600; text-shadow: 0 calc(2px * var(--scene-scale)) 0 #2d2f4e; }
+.scene-text.card, .scene-metric, .scene-clock {
+  background: rgba(45, 47, 78, .94); border: calc(2px * var(--scene-scale)) solid #2d2f4e;
+  border-radius: calc(12px * var(--scene-scale)); box-shadow: calc(4px * var(--scene-scale)) calc(4px * var(--scene-scale)) 0 rgba(20, 21, 40, .65);
+}
+.scene-text.card .scene-value { text-shadow: none; }
+.scene-text[data-align="center"] { text-align: center; }
+.scene-text[data-align="right"] { text-align: right; }
+.scene-metric, .scene-clock { padding: calc(8px * var(--scene-scale)) calc(14px * var(--scene-scale)); }
+.scene-metric .scene-value { font-size: calc(34px * var(--scene-scale)); }
+.scene-metric.empty .scene-value { color: #e2412b; }
+.scene-clock .scene-value { font-size: calc(var(--scene-font, 24) * 1px * var(--scene-scale)); font-family: var(--mono); }
+.scene-widget[data-color="snow"] { color: #fdf6f3; }
+.scene-widget[data-color="cream"] { color: #f6e9c8; }
+.scene-widget[data-color="mist"] { color: #dfdfe6; }
+.scene-widget[data-color="slate"] { color: #babbc8; }
+.scene-widget[data-color="ink"] { color: #2d2f4e; }
+.scene-widget[data-color="apple"] { color: #e2412b; }
+.scene-widget[data-color="blush"] { color: #f6b6b2; }
+.scene-widget[data-color="teal"] { color: #4fb6c8; }
+.scene-widget[data-color="leaf"] { color: #7da36c; }
+.scene-text[data-color="ink"].card, .scene-metric[data-color="ink"], .scene-clock[data-color="ink"] { background: rgba(253, 246, 243, .9); }
+
+/* Editor: stage takes pointer input, widgets get outlines and handles. */
+.scene-handle { display: none; position: absolute; width: 12px; height: 12px; background: #fdf6f3; border: 2px solid #3ea6ff; border-radius: 3px; }
+.scene-handle.nw { left: -1px; top: -1px; cursor: nwse-resize; }
+.scene-handle.ne { right: -1px; top: -1px; cursor: nesw-resize; }
+.scene-handle.sw { left: -1px; bottom: -1px; cursor: nesw-resize; }
+.scene-handle.se { right: -1px; bottom: -1px; cursor: nwse-resize; }
+.scene-stage.editing { pointer-events: auto; cursor: crosshair; outline: 2px dashed rgba(62, 166, 255, .7); outline-offset: -2px; touch-action: none; }
+.scene-stage.editing .scene-widget { cursor: move; outline: 1px dashed rgba(253, 246, 243, .55); }
+.scene-stage.editing .scene-widget:focus-visible, .scene-stage.editing .scene-widget.selected { outline: 2px solid #3ea6ff; }
+.scene-stage.editing .scene-widget.selected .scene-handle { display: block; }
+.scene-draw { position: absolute; border: 2px dashed #3ea6ff; background: rgba(62, 166, 255, .15); border-radius: 4px; pointer-events: none; }
+.scene-editing .player-chrome { display: none; }
+.scene-editing .stream-log { opacity: .35; }
+
+.scene-popup {
+  position: fixed; z-index: 220; min-width: 200px; max-width: min(340px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow-y: auto;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .45); padding: 6px;
+}
+.scene-popup-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; color: var(--text-faint); padding: 8px 10px 6px; }
+.scene-menu-item { display: block; width: 100%; text-align: left; padding: 9px 12px; border: none; background: none; color: var(--text); border-radius: 8px; cursor: pointer; font: inherit; }
+.scene-menu-item:hover, .scene-menu-item:focus-visible { background: var(--surface-2); outline: none; }
+.scene-menu-item.danger { color: var(--error); }
+.scene-form { padding: 6px 12px 12px; display: grid; gap: 10px; width: 320px; }
+.scene-field { display: grid; gap: 4px; font-size: 13px; color: var(--text-dim); }
+.scene-field.inline { grid-template-columns: auto 1fr; align-items: center; gap: 8px; }
+.scene-field.inline input { order: -1; width: 18px; height: 18px; }
+.scene-field input:not([type="checkbox"]), .scene-field select { height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font: inherit; }
+.scene-form-status { margin: 0; color: var(--error); font-size: 13px; }
+.scene-form-status:empty { display: none; }
+.scene-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.action-btn.primary { background: var(--accent); color: var(--on-accent); }
+
+.scene-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.scene-toolbar .scene-mode { flex-basis: 100%; margin: 4px 0 0; color: var(--text-dim); font-size: 13px; line-height: 1.5; }
+.scene-toolbar .scene-mode:empty { display: none; }
+#btn-edit-scene[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+.setting-row.stacked { flex-direction: column; align-items: stretch; }
+.allowlist-controls { display: grid; gap: 8px; justify-items: start; }
+.allowlist-controls textarea { width: 100%; font-family: var(--mono); font-size: 13px; resize: vertical; }

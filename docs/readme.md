@@ -19,9 +19,21 @@ transfer workflow, format scope, and isolated verification commands.
 public server-sent event stream, and timestamped recording playback. npm manages
 its dependencies. Casdoor provides OIDC identities: `app-agent` grants signed-in
 chat and panel access; `admin-agent` permits stream start/end and recording
-moderation. Panel mutations additionally
-require the dashboard bearer token. Guests see the player, chat history, and
-selectable recommendations; manager panels remain private.
+moderation. Panel mutations additionally require the same-origin request
+header (or the dashboard bearer token). Guests see the player, chat history,
+and selectable recommendations; manager panels remain private. Members see
+grouped, tabbed pages (OpenClaw, Usage, Adapters, Builds, Settings) laid out
+from registry metadata.
+
+The player draws a scene of widgets (text, pooled metrics, the witch avatar, a
+desk cat, clock, allowlisted images) entirely in the browser by folding
+recorded `widget` events and OpenClaw activity
+(`dashboard/public/scene/`). Admins edit the saved default layout, which opens
+every stream, with an on-stage editor; live edits are recorded for replay.
+OpenClaw has a token-protected scene API for its own live streams. Every
+response carries a strict Content-Security-Policy. See
+`ai-platform-design/stream-scenes.md` section 10.
+
 OpenClaw, AstrBot, and Jenkins are monitored through local HTTP endpoints.
 The OpenClaw `dashboard-stream` plugin gives the owner-facing main agent a
 scoped stream-control tool. Agent/model/tool lifecycle events are saved in the
@@ -33,7 +45,8 @@ The dashboard mounts that directory read-only and tails it into the live
 recording; cursors persist separately in dashboard storage. A first attachment
 starts at the current end of the logs. Later restarts resume the saved cursor.
 
-Administrator-only plugin panels provide CPA quota and OpenClaw usage metrics.
+The administrator-only Usage group provides a pooled summary, per-account CPA
+quota, and OpenClaw token metrics.
 The usage exporter records tokens by route/model in separate shared files; a
 SQLite database stores replay-safe events, pricing, and aggregation cursors.
 The CPA management key is encrypted with a separately mounted master key.

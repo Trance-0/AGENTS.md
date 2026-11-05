@@ -520,3 +520,58 @@ replace the "terrible" settings UI with a proper Settings page.
 - Chromium (Playwright image, isolated fixture): `browser-check.mjs`,
   `metrics-browser-check.mjs`, `ui-browser-check.mjs` (updated for group
   navigation), and the new `pages-browser-check.mjs` passed.
+
+## 2026-11-05 — Stream scenes phase A: renderer, widgets, admin editor (0.2.0)
+
+Implements `ai-platform-design/stream-scenes.md` phase A with the owner's
+section 8 decisions plus the requested admin canvas editor; section 10 of the
+design records the implementation and where it deviates.
+
+### Changes
+
+- Shared pure modules in `public/scene/`: `schema.js` (one validator for
+  every caller), `reduce.js` (deterministic fold and client checkpoints every
+  250 events), `derive.js` (avatar expression and cat pose as functions of
+  state and t), `format.js`.
+- Renderer (`renderer.js`): a letterboxed 16:9 stage over the player; text,
+  metric, clock, and image widgets in the DOM (textContent only); avatar and
+  cat on canvases in one 30 fps requestAnimationFrame loop that runs only while
+  visible. The witch frames are vendored as `public/scene/assets/witch-*.<sha256-8>.svg`
+  (owner's v3.1 art; generator and notes stay local) and drawn by a pluggable
+  avatar renderer (`avatar.js`). The cat (`cat.js`) is our own canvas drawing
+  in the same navy-line, flat, hard-shadow style.
+- Player: folds events into a `SceneTimeline` on load and on every live event;
+  metric ticks are hidden from the log; `displayTime()` interpolates between
+  ticks for animation. Old recordings have no widget events and render as before.
+- Editor (`editor.js`, `editor-popups.js`), admin only, toggled by Edit scene:
+  draw a rectangle then pick a type; left-click menu with Edit properties
+  (form generated from the schema), Create new, Duplicate, Bring forward,
+  Send back, Delete; drag, corner resize, arrow nudge (one change per burst),
+  Delete, Esc, Ctrl/Cmd+Z undo. Player controls step aside while editing.
+- Server: `server/scene/store.js` (versioned saved layout and image allowlist
+  under `/app/data/scene/`), `service.js` (operations, live-scene tracking,
+  opening layout on stream start, rate limits), `bridge.js` (pooled metric
+  values, one event per refresh, 5-minute CPA refresh while a CPA widget is
+  live, last value kept on failure), `routes.js` (admin and OpenClaw APIs,
+  CSP). Recorded `t` is now clamped so it never decreases. `/scene/assets/`
+  is served immutable. Settings gains Scene defaults (allowlist, reset).
+- Safer choices: OpenClaw gets no bulk layout replace; metrics and CPA
+  background refresh run only while a metric widget is live; admin
+  `PUT /api/scene/layout` changes only the saved layout; the offline stage is
+  empty (scenes come only from recorded events).
+
+### Verification
+
+- New tests: `scene-reduce.test.js` (no-mutation reducer, ignored unknown
+  kind/op/sv, seek from checkpoints == fold from zero at random probes
+  including a backwards clock step, identical state and pictures at 0.25x–2x,
+  avatar think/talk/blink/sleepy, cat paws and sleep), `scene-schema.test.js`
+  (unknown types/fields/prototype keys, ranges, bidi text, oversize, allowlist
+  prefix matching, CSP, editor rectangles), `scene-routes.test.js` (admin
+  401/403/cross-origin 403, offline layout edits and opening events, live
+  recording and fold equality, OpenClaw wrong token 401, admin-started or other
+  session 409, malformed 400, layout untouched, 429 rate limit, metric pooling
+  and publishing), and `auth.test.js` scene gates, CSP header, and immutable
+  asset caching through the real session pipeline.
+- `scripts/scene-browser-check.mjs` passed alongside the four existing checks
+  (results and counts in the round report).

@@ -17,7 +17,7 @@ export function renderSettings(body, { state, setPanelEnabled, onPanelsChanged, 
   const appearance = card("Appearance", "Applies to this browser immediately.");
   appearance.list.append(
     row("Theme", "System follows your device's light or dark setting.", segmented("setting-theme", THEME_LABELS, globalThis.dashboardTheme?.read() ?? "system", value => globalThis.dashboardTheme?.set(value))),
-    row("Motion", "Reduce turns off animated transitions and animations. System follows your device setting.", segmented("setting-motion", MOTION_LABELS, globalThis.dashboardMotion?.read() ?? "system", value => globalThis.dashboardMotion?.set(value))),
+    row("Motion", "Reduce turns off animated transitions, the avatar's breathing bob, and the cat's paw drumming. System follows your device setting.", segmented("setting-motion", MOTION_LABELS, globalThis.dashboardMotion?.read() ?? "system", value => globalThis.dashboardMotion?.set(value))),
   );
 
   const playback = card("Playback", "Used when you open a recording or rewind a live stream.");

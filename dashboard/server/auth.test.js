@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { writeUsage } from "../openclaw-plugin/usage-log.js";
 
-test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", { timeout: process.env.DASHBOARD_BROWSER_CHECK === "1" ? 180000 : 60000 }, async () => {
+test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", { timeout: process.env.DASHBOARD_BROWSER_CHECK === "1" ? 300000 : 60000 }, async () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const dir = await mkdtemp(path.join(os.tmpdir(), "dashboard-auth-"));
   const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -72,7 +72,7 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     await writeFile(metricsKeyFile, randomBytes(32), { mode: 0o400 });
     const usageDir = path.join(dir, "usage-logs");
     for (const [provider, model] of [["cpa", "claude-test"], ["openai", "gpt-test"]]) writeUsage(usageDir, { runId: provider, provider, model, usage: { input: 1000, output: 500, cacheRead: 200, cacheWrite: 100 }, lastAssistant: { timestamp: Date.now() } }, { agentId: "main" });
-    child = spawn(process.execPath, ["server/index.js"], { cwd: dir, env: { ...process.env, NODE_ENV: "test", HOST: "127.0.0.1", PORT: String(port), OIDC_ISSUER: issuer, OIDC_CLIENT_ID: "test-dashboard", OIDC_CLIENT_SECRET: "test-client-secret", OIDC_REDIRECT_URI: "https://live.example.test/auth/callback", OIDC_REQUIRED_GROUP: "trance-0/app-agent", SESSION_SECRET: "test-session-secret", DASHBOARD_TOKEN: "test-mutation-token", OPENCLAW_ENDPOINT: issuer, OPENCLAW_TOKEN: "test-gateway-token", ASTRBOT_ENDPOINT: issuer, JENKINS_ENDPOINT: issuer, OPENCLAW_CONFIG_FILE: configFile, METRICS_ENCRYPTION_KEY_FILE: metricsKeyFile, OPENCLAW_ACTIVITY_DIR: usageDir } });
+    child = spawn(process.execPath, ["server/index.js"], { cwd: dir, env: { ...process.env, NODE_ENV: "test", HOST: "127.0.0.1", PORT: String(port), OIDC_ISSUER: issuer, OIDC_CLIENT_ID: "test-dashboard", OIDC_CLIENT_SECRET: "test-client-secret", OIDC_REDIRECT_URI: "https://live.example.test/auth/callback", OIDC_REQUIRED_GROUP: "trance-0/app-agent", SESSION_SECRET: "test-session-secret", DASHBOARD_TOKEN: "test-mutation-token", OPENCLAW_ENDPOINT: issuer, OPENCLAW_TOKEN: "test-gateway-token", OPENCLAW_STREAM_TOKEN: "test-stream-token", ASTRBOT_ENDPOINT: issuer, JENKINS_ENDPOINT: issuer, OPENCLAW_CONFIG_FILE: configFile, METRICS_ENCRYPTION_KEY_FILE: metricsKeyFile, OPENCLAW_ACTIVITY_DIR: usageDir } });
     child.stdout.on("data", chunk => { output += chunk; });
     child.stderr.on("data", chunk => { output += chunk; });
     const base = `http://127.0.0.1:${port}`;
@@ -127,6 +127,17 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     assert.ok(!viewerPanels.some(panel => panel.id === "usage-summary"));
     assert.equal((await request("/api/admin/metrics/summary", { headers: viewerHeaders })).status, 403);
     assert.equal((await request("/api/admin/metrics/summary")).status, 401);
+    // Scene API: same session gates as other admin routes; machine routes need the stream token.
+    assert.equal((await request("/api/scene/layout")).status, 401);
+    assert.equal((await request("/api/scene/layout", { headers: viewerHeaders })).status, 403);
+    assert.equal((await request("/api/scene/widgets", { method: "POST", headers: { ...viewerHeaders, "x-dashboard-request": "1", "content-type": "application/json" }, body: JSON.stringify({ widget: { type: "text", x: 0, y: 0, w: 0.2, h: 0.1 } }) })).status, 403);
+    assert.equal((await request("/api/openclaw/scene/layout")).status, 401);
+    const page = await request("/");
+    assert.match(page.headers.get("content-security-policy"), /^default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:;/);
+    const asset = await request("/scene/assets/" + (await readFile(path.join(root, "public/scene/assets.js"), "utf8")).match(/witch-idle\.[a-f0-9]{8}\.svg/)[0]);
+    assert.equal(asset.status, 200);
+    assert.match(asset.headers.get("cache-control"), /max-age=31536000, immutable/);
+    assert.equal((await request("/scene/assets/witch-idle.svg")).status, 404, "only hashed asset names exist");
     const allowed = await login(["trance-0/app-agent", "trance-0/admin-agent"]);
     const callback = await request(`/auth/callback?code=${allowed.code}&state=${allowed.state}`, { headers: allowed.headers });
     assert.equal(callback.status, 302);
@@ -138,6 +149,11 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     assert.equal((await request("/auth/avatar", { headers })).headers.get("content-type"), "image/png");
     assert.equal((await request("/auth/avatar")).status, 401);
     const mutation = { ...headers, "x-dashboard-request": "1", "content-type": "application/json" };
+    const sceneWidget = { widget: { type: "text", x: 0.05, y: 0.05, w: 0.3, h: 0.1, props: { text: "Auth fixture" } } };
+    assert.equal((await request("/api/scene/widgets", { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(sceneWidget) })).status, 403, "scene edits need the same-origin header");
+    assert.equal((await request("/api/scene/widgets", { method: "POST", headers: { ...mutation, origin: "https://attacker.invalid" }, body: JSON.stringify(sceneWidget) })).status, 403, "cross-origin scene edits are refused");
+    assert.equal((await request("/api/scene/widgets", { method: "POST", headers: { ...mutation, authorization: "Bearer wrong" }, body: JSON.stringify(sceneWidget) })).status, 401);
+    assert.equal((await (await request("/api/scene/layout", { headers })).json()).layout.builtin, true);
     const adminPanels = (await (await request("/api/panels", { headers })).json()).panels;
     assert.ok(adminPanels.some(panel => panel.id === "usage-metrics"));
     assert.ok(adminPanels.some(panel => panel.id === "cpa-quota"));
@@ -226,6 +242,9 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
       const pagesCheck = spawn(process.execPath, [path.join(root, "scripts/pages-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie, DASHBOARD_VIEWER_COOKIE: viewerHeaders.cookie }, stdio: "inherit" });
       const [pagesCode] = await once(pagesCheck, "exit");
       assert.equal(pagesCode, 0);
+      const sceneCheck = spawn(process.execPath, [path.join(root, "scripts/scene-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie, DASHBOARD_VIEWER_COOKIE: viewerHeaders.cookie, DASHBOARD_STREAM_TOKEN: "test-stream-token" }, stdio: "inherit" });
+      const [sceneCode] = await once(sceneCheck, "exit");
+      assert.equal(sceneCode, 0);
     }
     const toggle = "/api/panels/settings/toggle";
     // Browser path: admin session + same-origin header. Automation path: admin session + bearer.

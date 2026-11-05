@@ -9,6 +9,7 @@ export class BroadcastStore {
     this.directory = directory;
     this.listeners = new Set();
     this.active = null;
+    this.lastT = 0;
     fs.mkdirSync(directory, { recursive: true });
     for (const name of fs.readdirSync(directory).filter(name => name.endsWith(".json"))) {
       const recording = JSON.parse(fs.readFileSync(path.join(directory, name), "utf8"));
@@ -31,7 +32,7 @@ export class BroadcastStore {
           if (complete !== size) fs.ftruncateSync(descriptor, complete);
         } finally { fs.closeSync(descriptor); }
         let count = 0;
-        for (const _event of this.scanEvents(recording.id)) count++;
+        for (const event of this.scanEvents(recording.id)) { count++; this.lastT = Math.max(this.lastT, Number.isFinite(event.t) ? event.t : 0); }
         recording.eventCount = count;
         this.active = recording;
         this.publish({ source: "stream", msg: "Stream resumed: dashboard/recording recovery — service restarted; existing recording and timestamps preserved." });
@@ -89,6 +90,7 @@ export class BroadcastStore {
     fs.closeSync(fs.openSync(this.filename(recording.id, "ndjson"), "wx"));
     this.save(recording);
     this.active = recording;
+    this.lastT = 0;
     this.notify("status", this.status());
     this.publish({ source: "stream", msg: `Stream is live: dashboard/broadcast — ${origin.origin === "openclaw" ? "OpenClaw" : "administrator"} started the stream.` });
     return this.status();
@@ -97,7 +99,10 @@ export class BroadcastStore {
   publish({ kind = "log", source = "stream", level = "info", msg, ...payload }, expectedId = this.active?.id) {
     if (!this.active || this.active.id !== expectedId) return null;
     const ts = Date.now();
-    const event = { ...payload, id: this.active.eventCount, recordingId: this.active.id, ts, t: (ts - this.active.startedAt) / 1000, kind, source, level, msg: String(msg) };
+    // `t` never decreases, even if the wall clock steps back, so players can
+    // binary-search events by time.
+    this.lastT = Math.max(this.lastT, (ts - this.active.startedAt) / 1000);
+    const event = { ...payload, id: this.active.eventCount, recordingId: this.active.id, ts, t: this.lastT, kind, source, level, msg: String(msg) };
     const descriptor = fs.openSync(this.filename(this.active.id, "ndjson"), "a");
     try { fs.writeSync(descriptor, JSON.stringify(event) + "\n"); fs.fsyncSync(descriptor); }
     finally { fs.closeSync(descriptor); }

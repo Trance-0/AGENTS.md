@@ -26,7 +26,7 @@ export function createSettingsPanel() {
         type: "select",
         scope: "browser",
         options: ["system", "reduce", "full"],
-        help: "Reduce turns off animated transitions and animations. System follows your device setting.",
+        help: "Reduce turns off animated transitions, the avatar's breathing bob, and the cat's paw drumming. System follows your device setting.",
       },
       {
         key: "autoplay",

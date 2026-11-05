@@ -1,9 +1,15 @@
 import { Player, formatTime } from "/player.js";
 import { $, api, report, esc } from "/api.js";
 import { createNavigator } from "/nav.js";
+import { SceneRenderer } from "/scene/renderer.js";
+import { SceneEditor } from "/scene/editor.js";
 
 const state = { user: null, panels: [], groups: [], stream: null, recordings: [], loading: 0, viewingLive: true, liveEvents: new Map() };
 const player = new Player(renderChat);
+// Scene widgets over the player for everyone; the editor is admin-only.
+const scene = new SceneRenderer($("#player"), () => ({ t: player.displayTime(), startedAt: player.recording?.startedAt }));
+player.onScene = state => scene.update(state);
+const editor = new SceneEditor({ renderer: scene, api, report, toolbar: { toggle: $("#btn-edit-scene"), undo: $("#btn-scene-undo"), done: $("#btn-scene-done"), mode: $("#scene-mode") } });
 const nav = createNavigator({
   state, report, setPanelEnabled, showLive,
   closeMobileSidebar: () => closeMobileSidebar(),
@@ -203,6 +209,8 @@ function connectStream() {
     const previous = state.stream;
     state.stream = next;
     if (previous?.id !== next?.id) state.liveEvents.clear();
+    // The editor's target (saved layout vs. live scene) depends on the stream.
+    if (previous?.id !== next?.id && editor.active) { editor.close(); report(new Error(`Scene editor closed: dashboard/scene editor — the stream ${next ? "started" : "ended"}; reopen Edit scene to continue.`)); }
     if (next && player.recording?.id === next.id) { player.recording = next; player.render(); }
     if (next && state.viewingLive && next.id !== player.recording?.id) {
       state.loading++;

@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/styles.css" />
   <link rel="stylesheet" href="/metrics.css" />
   <link rel="stylesheet" href="/pages.css" />
+  <link rel="stylesheet" href="/scene/scene.css" />
 </head>
 <body class="guest">
   <div class="app">
@@ -74,6 +75,12 @@
               <h1 class="stream-title" id="stream-title">AI Platform Live Stream</h1>
               <div class="stream-stats"><span id="viewer-count">0</span> watching <span id="stream-started"></span></div>
               <p class="hint">Hover the timeline for a log preview. Drag to seek; use Play (k or Space) to replay events and chat at their recorded times, and the speed menu to replay faster or slower.</p>
+            </div>
+            <div class="admin-only scene-toolbar" id="scene-toolbar">
+              <button class="action-btn" id="btn-edit-scene" type="button" aria-pressed="false" aria-controls="player">Edit scene</button>
+              <button class="action-btn" id="btn-scene-undo" type="button" hidden disabled title="Undo the last scene edit (Ctrl+Z)">Undo</button>
+              <button class="action-btn" id="btn-scene-done" type="button" hidden>Done</button>
+              <p class="hint scene-mode" id="scene-mode" role="status"></p>
             </div>
             <form class="admin-only broadcast-controls" id="broadcast-controls">
               <label>Stream title <input id="broadcast-title" value="AI Platform Live Stream" maxlength="160" required /></label>

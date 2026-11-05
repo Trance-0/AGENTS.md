@@ -3,7 +3,14 @@
 The **Usage** group has three administrator-only tabs: **Summary**, **CPA
 quota**, and **Token metrics** (panels `usage-summary`, `cpa-quota`,
 `usage-metrics`). Both the panel registry and every metrics API check the
-Casdoor administrator role. Metrics never enter the public stream feed.
+Casdoor administrator role.
+
+**Public feed policy (changed in 0.2.0).** Raw metrics, per-account quota,
+prices, and costs never enter the public stream feed. The only metric values
+that do are the owner-approved pooled aggregates shown by scene **metric
+widgets** (see "Public metric widgets" below), and only while such a widget is
+on the live scene. Because every recorded event is public, those values stay in
+the recording for replay.
 
 ## Usage summary (pooled)
 
@@ -116,3 +123,31 @@ reload, and removal. It runs with the existing isolated OIDC browser fixture.
 The live CPA quota cannot be verified before an administrator supplies their
 management key in the panel. No existing private management credential is
 imported automatically. The initial connection state is intentionally empty.
+
+## Public metric widgets (0.2.0)
+
+A scene metric widget shows one of four sources, computed server-side by
+`server/scene/bridge.js` from the data above:
+
+| Source | Value published | Shown as |
+|---|---|---|
+| `cpa.codex.5h` | pooled mean remaining %, earliest reset, n, m, snapshot time | `62%`, `resets in 2h 14m · 3 of 4 accounts` |
+| `cpa.codex.week` | same, weekly window | `resets in 3d 5h 7m` |
+| `tokens.today` | tokens since 00:00 UTC, 3 significant figures | `1.23M` |
+| `tokens.7d` | tokens in the last 7 days, 3 significant figures | `12.3M` |
+
+- Pooling is the same as the admin Summary tab (`poolCodex`): equal weights,
+  windows classified by length, unknown windows excluded and counted as
+  "n of m accounts". No labels, IDs, emails, raw responses, or costs.
+- Only sources used by a metric widget in the live scene are published, as a
+  single `widget`/`metrics` event per refresh and only when a value changed.
+  A stream without metric widgets records no metrics.
+- While a CPA metric widget is on a live stream, the CPA quota is refreshed
+  every 5 minutes through the same single-flight refresher as the admin button
+  (30-second minimum interval). No background refresh runs while offline or
+  when the CPA quota panel is disabled. A failed refresh keeps the last
+  snapshot; the widget shows "as of N ago" once the value is older than
+  10 minutes.
+- Countdown and age are computed in the browser from the recorded reset time
+  and the playback time, so replay shows what viewers saw at that moment.
+
