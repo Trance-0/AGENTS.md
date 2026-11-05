@@ -41,6 +41,63 @@ def healthy(url: str, timeout: int = 60) -> bool:
     return False
 
 
+STATE_VOLUME = "dashboard_dashboard-state"
+DEFAULT_STATE_DIR = "/home/motuariki/Documents/DockerVolumes/agent-dashboard/state"
+
+
+def helper(image: str, *mounts: str, script: str) -> str:
+    """Run a shell snippet as root in a throwaway container of the new image.
+
+    Storage work goes through containers so it behaves the same whichever
+    user the Jenkins agent runs as, and can read the legacy named volume.
+    """
+    args = ["docker", "run", "--rm", "--user", "0", "--network", "none", "--entrypoint", "sh"]
+    for mount in mounts:
+        args += ["--mount", mount]
+    return subprocess.check_output([*args, image, "-c", script], text=True)
+
+
+def volume_exists(name: str) -> bool:
+    return subprocess.run(["docker", "volume", "inspect", name], capture_output=True).returncode == 0
+
+
+# Path, owner, mode, size, and SHA-256 of every entry: the copy must match exactly.
+MANIFEST = "cd /data && find . -mindepth 1 | LC_ALL=C sort | while IFS= read -r f; do if [ -f \"$f\" ]; then h=\"$(stat -c %s \"$f\") $(sha256sum \"$f\" | cut -d' ' -f1)\"; else h=-; fi; echo \"$(stat -c '%n %u:%g %a' \"$f\") $h\"; done"
+
+
+def prepare_state(image: str, state_dir: Path) -> None:
+    """Move dashboard state from the legacy named volume to the bind directory.
+
+    Runs after the backup, with the previous container stopped. Empty bind
+    directory + legacy data: copy with ownership preserved and verify the copy.
+    Both with data: the bind directory wins (logged). The legacy volume is never
+    removed, so a rollback to an older container still finds its data.
+    """
+    parent = state_dir.parent
+    helper(image, f"type=bind,src={parent},dst=/parent", script=f"mkdir -p /parent/{state_dir.name} && chown 1000:1000 /parent/{state_dir.name} && chmod 700 /parent/{state_dir.name}")
+    has_data = "find /data -mindepth 1 -print -quit"
+    bind_mount = f"type=bind,src={state_dir},dst=/data"
+    bind_has_data = bool(helper(image, bind_mount, script=has_data).strip())
+    legacy = volume_exists(STATE_VOLUME)
+    legacy_mount = f"type=volume,src={STATE_VOLUME},dst=/data,readonly"
+    legacy_has_data = legacy and bool(helper(image, legacy_mount, script=has_data).strip())
+    if legacy_has_data and not bind_has_data:
+        helper(image, f"type=volume,src={STATE_VOLUME},dst=/from,readonly", f"type=bind,src={state_dir},dst=/to", script="cp -a /from/. /to/")
+        source = helper(image, legacy_mount, script=MANIFEST).splitlines()
+        copied = helper(image, bind_mount, script=MANIFEST).splitlines()
+        if source != copied:
+            raise RuntimeError("Deployment stopped: dashboard/state migration — the copy in the bind directory does not match the legacy volume; nothing was started on it.")
+        files = sum(1 for line in source if not line.endswith(" -"))
+        log.info("State migrated: dashboard/state storage — %d entries (%d files) copied from volume %s to %s with owners, modes, and checksums verified; the volume is kept for rollback.", len(source), files, STATE_VOLUME, state_dir)
+    elif legacy_has_data:
+        log.info("State kept: dashboard/state storage — %s already has data, so it is used; volume %s also has data and is left untouched for rollback.", state_dir, STATE_VOLUME)
+    elif not bind_has_data:
+        log.info("State is new: dashboard/state storage — no legacy volume data; %s starts empty.", state_dir)
+    if legacy_has_data and not helper(image, bind_mount, script=has_data).strip():
+        raise RuntimeError("Deployment stopped: dashboard/state migration — the bind directory is empty while the legacy volume has data.")
+    helper(image, bind_mount, script="chown 1000:1000 /data && chmod 700 /data")
+
+
 def main():
     root = Path(__file__).resolve().parents[1]
     version = json.loads((root / "package.json").read_text())["version"]
@@ -58,7 +115,12 @@ def main():
     old = previous[0] if previous else None
     old_name = old
     name = f"agent-dashboard-v{version}"
-    volume = "dashboard_dashboard-state"
+    # Persistent state (recordings, scene layouts, panel state, config-editor
+    # backups, activity cursors) lives in a host bind directory. Before 0.2.6
+    # it was the named volume STATE_VOLUME, migrated by prepare_state().
+    state_dir = Path(os.environ.get("DASHBOARD_STATE_HOST_DIR", DEFAULT_STATE_DIR))
+    if not state_dir.is_absolute() or not state_dir.parent.is_dir():
+        raise RuntimeError("Deployment cannot start: dashboard/state storage — DASHBOARD_STATE_HOST_DIR must be an absolute path whose parent exists.")
     activity_dir = Path(os.environ.get("OPENCLAW_ACTIVITY_HOST_DIR", "/home/motuariki/Documents/DockerVolumes/openclaw/activity"))
     if not activity_dir.is_dir():
         raise RuntimeError("Deployment cannot start: dashboard/activity mount — shared OpenClaw activity directory is absent.")
@@ -98,14 +160,19 @@ def main():
     try:
         if old:
             details = json.loads(subprocess.check_output(["docker", "inspect", old]))[0]
-            if not any(m.get("Name") == volume and m["Destination"] == "/app/data" for m in details["Mounts"]):
-                raise RuntimeError("Deployment cannot start: dashboard/storage check — active container does not use the expected recording volume.")
+            data = next((m for m in details["Mounts"] if m["Destination"] == "/app/data"), None)
+            if data and data["Type"] == "volume" and data.get("Name") == STATE_VOLUME:
+                state_source = f"type=volume,src={STATE_VOLUME},dst=/data,readonly"
+            elif data and data["Type"] == "bind" and Path(data["Source"]) == state_dir:
+                state_source = f"type=bind,src={state_dir},dst=/data,readonly"
+            else:
+                raise RuntimeError("Deployment cannot start: dashboard/storage check — active container does not use the expected state volume or bind directory.")
             run("docker", "stop", "--time", "20", old)
             run("docker", "run", "--rm", "--user", "0", "--entrypoint", "tar",
-                "--mount", f"type=volume,src={volume},dst=/data,readonly",
+                "--mount", state_source,
                 "--mount", f"type=bind,src={backup_dir},dst=/backup",
                 image, "-C", "/data", "-cf", "/backup/data.tar", ".")
-            log.info("State backup saved: dashboard/deployment backup — recording volume archived privately.")
+            log.info("State backup saved: dashboard/deployment backup — the active state (%s) archived privately.", "legacy volume" if "type=volume" in state_source else "bind directory")
             run("docker", "run", "--rm", "--user", "0", "--entrypoint", "tar",
                 "--mount", f"type=bind,src={metrics_dir},dst=/metrics,readonly",
                 "--mount", f"type=bind,src={backup_dir},dst=/backup",
@@ -113,8 +180,7 @@ def main():
             if old == name:
                 old_name = f"{old}-before-{stamp}"
                 run("docker", "rename", old, old_name)
-        else:
-            run("docker", "volume", "create", volume)
+        prepare_state(image, state_dir)
         created = subprocess.check_output(["docker", "create", "--name", name, "--restart", "unless-stopped", "--network", "host",
             "--env-file", str(env_file), "-e", "HOST=127.0.0.1", "-e", "PORT=14143",
             "-e", "OPENCLAW_ACTIVITY_DIR=/var/log/openclaw-activity",
@@ -125,11 +191,14 @@ def main():
             "--mount", f"type=bind,src={metrics_key},dst=/run/secrets/metrics-encryption.key,readonly",
             "--mount", f"type=bind,src={activity_dir},dst=/var/log/openclaw-activity,readonly",
             "--mount", f"type=bind,src={config_dir},dst=/openclaw-config",
-            "--mount", f"type=volume,src={volume},dst=/app/data", *embed_args, "--log-opt", "max-size=10m", "--log-opt", "max-file=3",
+            "--mount", f"type=bind,src={state_dir},dst=/app/data", *embed_args, "--log-opt", "max-size=10m", "--log-opt", "max-file=3",
             "--label", "com.trance0.service=agent-dashboard", "--label", f"org.opencontainers.image.version={version}",
             "--health-cmd", "node -e \"fetch('http://127.0.0.1:14143/healthz',{signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
             "--health-interval", "30s", "--health-timeout", "5s", "--health-retries", "3", image], text=True).strip()
         run("docker", "start", created)
+        mounts = json.loads(subprocess.check_output(["docker", "inspect", created]))[0]["Mounts"]
+        if not any(m["Type"] == "bind" and m["Destination"] == "/app/data" and Path(m["Source"]) == state_dir for m in mounts):
+            raise RuntimeError("Deployment failed: dashboard/state storage — the new container does not bind-mount the state directory at /app/data.")
         if not healthy("http://127.0.0.1:14143/healthz") or not healthy("https://live.trance-0.com/healthz", 30):
             raise RuntimeError("Deployment failed: dashboard/health verification — local or public endpoint did not become ready.")
     except Exception:

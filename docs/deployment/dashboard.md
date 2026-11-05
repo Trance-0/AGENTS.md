@@ -119,8 +119,13 @@ curl --fail --max-time 10 http://127.0.0.1:14143/healthz
 
 Port 14143 must be free or already owned by this deployment. Port 14141 is used
 by a separate development instance on this host and is left intact.
-The `dashboard_dashboard-state` volume stores panel toggles at `/app/data`;
-do not remove it during updates. Sessions use a bounded in-memory store and
+Dashboard state (`/app/data`: panel toggles, recordings, scene layout and
+settings, config-editor backups, activity cursors) lives in the host directory
+`/home/motuariki/Documents/DockerVolumes/agent-dashboard/state` (owner
+1000:1000, mode 700; override with `DASHBOARD_STATE_HOST_DIR`), bind-mounted by
+both `compose.yaml` and `scripts/deploy.py`. Compose does not create it
+(`create_host_path: false`); see "Dashboard state storage (0.2.6)". Do not
+remove it during updates. Sessions use a bounded in-memory store and
 expire after 12 hours; restarting the container requires signing in again.
 
 ## FRP mapping
@@ -186,15 +191,60 @@ never be included in logs.
 
 Before a future update, retain the current image under a distinct local tag.
 To roll back, restore the previous source revision or retag the retained image
-as `agent-dashboard:0.2.3`, then run
+as `agent-dashboard:0.2.6`, then run
 `docker compose -f dashboard/compose.yaml up -d --no-build`. Keep the private
-environment file and state volume. To remove just the dashboard exposure,
+environment file and the state directory. Images older than 0.2.6 expect the
+legacy `dashboard_dashboard-state` volume; see "Dashboard state storage (0.2.6)"
+for rolling back across the storage change. To remove just the dashboard exposure,
 restore the saved FRP configuration, validate it, and restart `frpc`; other
 services and the existing development dashboard do not need changing.
 
 `dashboard/Jenkinsfile` is the active Pipeline-from-SCM deployment. The job
 pulls GitHub branch `ai-infra-v0` and reads this file from the remote checkout.
 Local files supply runtime secrets only. See the Jenkins section below.
+
+
+## Dashboard state storage (0.2.6)
+
+`/app/data` is a bind mount of
+`/home/motuariki/Documents/DockerVolumes/agent-dashboard/state` (owner
+1000:1000, mode 700), overridable with `DASHBOARD_STATE_HOST_DIR` for both
+`scripts/deploy.py` and `compose.yaml`. It holds `recordings/`, `scene/`,
+`panels-state.json`, `openclaw-config-backups/`, and
+`openclaw-activity-cursor.json`. Metrics stay in their own bind directory.
+
+`scripts/deploy.py`, after it stops the previous container and archives the
+active state (`backups/<stamp>/data.tar`, from whichever of the volume or the
+directory that container used):
+
+1. creates the directory if missing (1000:1000, 700) through a root helper
+   container, so it works whatever user the Jenkins agent runs as;
+2. if the directory is empty and the legacy volume `dashboard_dashboard-state`
+   has data, copies it with `cp -a` (owners, modes, times preserved) and
+   compares a manifest of every entry (path, owner, mode, size, SHA-256) of
+   both sides; any difference stops the deploy and restarts the previous
+   container on its volume;
+3. if both have data, uses the directory and logs that the volume was left
+   alone;
+4. refuses to start when the directory is still empty while the volume has
+   data;
+5. after starting, checks that `docker inspect` shows a bind mount of the
+   directory at `/app/data`.
+
+The legacy volume is never deleted or written. Check with
+`docker inspect agent-dashboard-v<version> --format '{{range .Mounts}}{{.Type}} {{.Source}} -> {{.Destination}}{{println}}{{end}}'`.
+
+**Rollback across the storage change** (to an image older than 0.2.6): stop
+the 0.2.6+ container, then start the retained previous container (it still
+mounts the volume) with `docker start agent-dashboard-v<old>` or recreate it
+with `--mount type=volume,src=dashboard_dashboard-state,dst=/app/data`. The
+volume holds the state as of the migration; anything recorded afterwards is
+only in the directory. To carry it back, copy the directory into the volume
+with a root helper container
+(`docker run --rm --user 0 --entrypoint sh --mount type=bind,src=<state dir>,dst=/from,readonly --mount type=volume,src=dashboard_dashboard-state,dst=/to <image> -c 'cp -a /from/. /to/'`)
+while no dashboard container is running. Also restore
+`scene/scene-layout.v1.json` as `scene/scene-layout.json` if a saved layout
+was migrated (see "Stream scenes and widgets").
 
 
 ## OpenClaw public host
@@ -236,7 +286,9 @@ main player log events. It never delivers chat to external channels.
 
 Admins use Start stream / End stream on the main page. The default state after
 a fresh install is offline; ordinary process startup does not start a stream.
-Existing recordings survive container updates in `dashboard_dashboard-state`.
+Existing recordings survive container updates in the state directory
+(`/home/motuariki/Documents/DockerVolumes/agent-dashboard/state`; before 0.2.6,
+the `dashboard_dashboard-state` volume).
 Each recording has `recordings/<UUID>.json` metadata and a corresponding
 `recordings/<UUID>.ndjson` event file. Appends and metadata writes are synced to
 disk before events are broadcast. After a restart, the same live stream resumes with its original recording ID
@@ -259,7 +311,7 @@ and reconstructs the selected time without forcing the viewer back to live.
 
 Before an update, back up `/app/data` and retain the previous versioned image.
 Rollback uses the previous Compose source and image without removing the
-volume. Version 0.1.0 can run against the volume but does not expose recordings;
+state directory or the legacy volume. Version 0.1.0 can run against the volume but does not expose recordings;
 retain a version 0.1.1 backup to restore recording playback later.
 
 ## Browser verification
@@ -404,7 +456,9 @@ Stages: checkout remote → versioned image build → Node 22 server tests →
 isolated container health check → stop writes and back up state → deploy →
 local/public health verification → update installed OpenClaw plugin if changed.
 Images include the package version and Jenkins build number; containers include
-the software version. The existing `dashboard_dashboard-state` volume is reused.
+the software version. State is the bind directory
+`/home/motuariki/Documents/DockerVolumes/agent-dashboard/state` (0.2.6; it was
+the `dashboard_dashboard-state` volume before).
 Backups live under
 `/home/motuariki/Documents/DockerVolumes/agent-dashboard/backups/<UTC stamp>/`.
 The prior container and image are retained. A failed app rollout starts the
@@ -620,11 +674,23 @@ server only validates, stores, and relays. Design and event format:
 
 ### Storage
 
-`/app/data/scene/` in the existing `dashboard_dashboard-state` volume:
-`scene-layout.json` (saved default layout, versioned) and `scene-settings.json`
-(image allowlist). Both are written atomically with mode 0600 and are covered
-by the existing pre-deploy backup of `/app/data`. Deleting `scene-layout.json`
-restores the built-in layout (avatar and cat). Older images ignore these files.
+`/app/data/scene/` in the state directory: `scene-layout.json` (saved
+default layout, versioned, `schema: 2` since 0.2.6) and `scene-settings.json`
+(image allowlist, disabled embeds, widget defaults, built-in layout contents,
+metric refresh). Both are written atomically with mode 0600 and are covered by
+the pre-deploy backup of `/app/data`. Deleting `scene-layout.json` restores the
+built-in layout (avatar, cat, and the circtime backdrop when served).
+
+**Layout migration (0.2.6).** On the first start, a saved layout without
+`schema: 2` is migrated once: only the built-in circtime backdrop (id
+`backdrop`, `/embed/circtime/`, whole stage) moves to the log component; every
+other embed gets `attach: "stage"` and stays exactly where it was. The file's
+`version` goes up by one, the original is kept as `scene-layout.v1.json`, and
+the dashboard log says which widgets moved. Images older than 0.2.6 reject the
+new `attach`/`theme` props and drop embed widgets from a migrated layout; to
+roll back, restore `scene-layout.v1.json` as `scene-layout.json`. Embeds
+recorded in older recordings have no `attach` and replay on the stage exactly
+as before.
 
 ### Editing
 
@@ -633,16 +699,71 @@ only the saved layout; it is replayed as the opening scene of every new stream.
 While a stream is live, edits are recorded in the recording (so replay, seek,
 and speed show them) and also saved to the layout. The layout opens a stream
 only when it starts: a stream that was already live during an upgrade (or
-resumed after a restart) keeps running without an injected opening scene. Settings → Scene defaults
-holds the image allowlist (HTTPS prefixes) and a reset to the built-in layout.
+resumed after a restart) keeps running without an injected opening scene.
+**Settings → Canvas settings** is the settings view of the same layout and the
+scene configuration (below). Edit scene's widget menu also has **Hide on stream / Show on stream**.
+
+### Canvas settings (0.2.6)
+
+Administrators only: the section is rendered only for admins, and every route
+it calls requires the admin session plus the same-origin
+`X-Dashboard-Request: 1` header (members get 403, guests 401).
+
+- **Draft.** The section edits a local draft of the saved layout; nothing is
+  stored until **Save layout** or sent to viewers until **Apply to live
+  stream**. **Discard changes**, **Use built-in layout**, and (while live)
+  **Load live scene** reset the draft.
+- **Widget list.** Grouped by layer: *On the stage*, *Log component backdrop*,
+  *Stage backdrop*, top layer first. Each row shows type, ID and a summary,
+  position and size (percent of the stage, or of the log box for log embeds),
+  layer (`z`), and a visibility switch; buttons move it up/down a layer,
+  duplicate, or delete it. Choosing a row opens its properties: position,
+  size, layer, visible, and the type's props as a form generated from the
+  widget schema and checked with the shared validator (`public/scene/schema.js`)
+  as you type. An invalid widget is marked and blocks Save and Apply.
+- **Preview.** The draft drawn by the viewer renderer, scaled, with sample
+  metric values; a switch shows the live scene instead while a stream is live.
+  Hidden widgets are not drawn (viewers never see them).
+- **Save layout** → `PUT /api/scene/layout` with `baseVersion` (409 if the
+  layout changed elsewhere). It never touches the live recording.
+- **Apply to live stream** (only while live) lists the difference between the
+  draft and the live scene and asks for confirmation (Cancel has focus). It
+  then sends the operations one by one to the widget routes with
+  `?scope=live` (paced under the 5/s admin limit, retrying a 429), so each is a
+  recorded `widget` event exactly like an on-stage edit. With `scope=live` the
+  saved layout is not changed; Save layout is separate.
+- **Scene configuration** → `PUT /api/scene/settings` (partial saves merge):
+  image allowlist; which served embed pages are enabled (disabling one that a
+  widget uses asks first; such widgets drop out of the layout, and re-enabling
+  before the next save brings them back); embed defaults (attachment, opacity,
+  theme); metric defaults (source, colour) and refresh (every 2, 5, 10, 15,
+  30, or 60 minutes while a metric widget is live; CPA upstream refresh on or
+  off); avatar and cat mirroring; which widgets the built-in layout includes.
+  Defaults apply to widgets created without those props, by any editor.
 
 ### Embed widget (circtime)
 
-The `embed` widget shows a dashboard-served page behind the log: a sandboxed
-iframe (`sandbox="allow-scripts"`, `referrerpolicy="no-referrer"`, opaque
-origin), `pointer-events: none`, default full stage at 30% opacity, and part of
-the built-in layout when available. Its page must be on the server-side
-allowlist; today only `/embed/circtime/`, the circtime uptime radar.
+The `embed` widget shows a dashboard-served page behind the log text: a
+sandboxed iframe (`sandbox="allow-scripts"`, `referrerpolicy="no-referrer"`,
+opaque origin) with `pointer-events: none`, so log text above it stays
+selectable and copyable. Its page must be on the server-side allowlist; today
+only `/embed/circtime/`, the circtime uptime radar.
+
+- **Attachment (0.2.6).** Prop `attach`: `log` (default) makes the embed the
+  **log component's backdrop**: it lives in a layer that tracks the log
+  panel's box and sits directly before the log element at the same z-index,
+  so it is sized to the log region and moves with it in normal, theater, web
+  full screen, full display, and mobile layouts. Its `x/y/w/h` are fractions
+  of that box (default the whole box). `stage` puts it on the 16:9 stage's
+  back layer as in 0.2.2–0.2.3. Settable in Canvas settings and in Edit
+  scene's properties form. In Edit scene a log embed stays in the log box: a
+  click on empty stage opens its menu, Tab reaches it, arrow keys move it
+  within the log box.
+- **Theme (0.2.6).** Prop `theme`: `system` (default) follows the dashboard
+  theme helper (`public/theme.js`), passing the resolved theme in the URL and
+  later changes by message; `dark`/`light` fix it in the URL.
+- **Defaults.** Opacity 0.3, `attach: log`, `theme: system`, part of the
+  built-in layout (id `backdrop`) when the page is served.
 
 - **Mount.** Host directory `/home/motuariki/Documents/DockerVolumes/circtime/dist`
   (override with `CIRCTIME_EMBED_HOST_DIR`), mounted read-only at
@@ -687,9 +808,13 @@ Mutations also need the same-origin `X-Dashboard-Request: 1` header, or the
 | `GET /api/scene/layout` | `{ layout: { version, updatedAt, builtin, widgets }, live: { recordingId, widgets } \| null, settings }` |
 | `PUT /api/scene/layout` | `{ widgets, baseVersion }` replaces the saved layout only (409 if `baseVersion` is stale) |
 | `POST /api/scene/widgets` | `{ widget }` → 201 `{ widget, recorded, layoutVersion }` |
-| `PATCH /api/scene/widgets/:id` | `{ changes }` (geometry, `z`, individual `props`; never `id`/`type`) |
+| `PATCH /api/scene/widgets/:id` | `{ changes }` (geometry, `z`, `hidden`, individual `props`; never `id`/`type`) |
 | `DELETE /api/scene/widgets/:id` | removes from the live scene and/or saved layout |
-| `GET/PUT /api/scene/settings` | `{ imageAllowlist: [https prefixes] }`, at most 16 |
+| `…/widgets[/:id]?scope=live` | the three routes above, live scene only (409 if offline); the saved layout is untouched |
+| `GET/PUT /api/scene/settings` | `{ imageAllowlist, disabledEmbeds, defaults: { metric, avatar, cat, embed }, builtin: { avatar, cat, embed }, metricRefresh: { minutes, cpa } }`; PUT merges, unknown fields are 400. The response adds `embeds` (enabled) and `servedEmbeds` |
+
+A widget may carry `hidden: true` (omitted when visible): it stays in the
+scene and the recording but is not drawn for viewers.
 
 ### OpenClaw scene API
 
@@ -739,8 +864,12 @@ hashed names exist.
 `scripts/scene-browser-check.mjs` (run with the other browser checks) draws
 widgets, exercises the left-click menu, drag, resize, keyboard, and undo,
 records live edits, replays them at seek times and 2x, drives avatar and cat
-states from recorded OpenClaw activity, checks guest read-only rendering, and
-fails on any CSP violation. After deployment, confirm the `Content-Security-Policy`
+states from recorded OpenClaw activity, checks guest read-only rendering, the
+log-component backdrop in every screen mode, and fails on any CSP violation.
+`scripts/canvas-browser-check.mjs` covers Canvas settings: admin-only access,
+the widget list and keyboard use, preview, attachment, configuration, Save vs.
+Apply (confirmation, recorded events, saved layout untouched), both themes and
+390 px with a contrast and overflow audit. After deployment, confirm the `Content-Security-Policy`
 header with `curl -sI https://live.trance-0.com/ | grep -i content-security`.
 
 

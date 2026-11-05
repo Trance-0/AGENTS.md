@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { LIMITS, SCENE_SV, WIDGET_TYPES, mergeWidget, validateAvatarState, validateWidget } from "../../public/scene/schema.js";
+import { LIMITS, SCENE_SV, WIDGET_TYPES, mergeWidget, validateAvatarState, validateWidget, withDefaults } from "../../public/scene/schema.js";
 import { initialState, reduce } from "../../public/scene/reduce.js";
 
 // Scene widget operations shared by the admin editor and OpenClaw. The server
@@ -13,6 +13,9 @@ import { initialState, reduce } from "../../public/scene/reduce.js";
 //   decided by server/stream-control.js); they never rewrite the
 //   administrator's default layout.
 // - When a stream starts, the saved layout is replayed as opening events.
+// - Admin `scope: "live"` (Settings → Canvas settings, "Apply to live stream")
+//   records the change in the live scene only and leaves the saved layout
+//   alone; "Save layout" (PUT /api/scene/layout) is the other half.
 
 const fail = (status, consequence, reason) => Object.assign(new Error(`${consequence}: dashboard/scene ${status === 429 ? "rate limit" : "widgets"} — ${reason}.`), { status });
 
@@ -126,11 +129,21 @@ export class SceneService {
     return id;
   }
 
-  create(actor, input) {
+  // Which copies an operation touches: { live, layout } (either may be null).
+  targets(actor, scope, consequence) {
+    if (scope !== undefined && scope !== "live" && scope !== "both") throw fail(400, consequence, "scope must be 'live' or 'both'");
+    if (scope === "live" && actor !== "admin") throw fail(400, consequence, "only administrators choose a scope");
+    if (scope === "live" && !this.broadcast.active) throw fail(409, consequence, "no stream is live; save the layout instead");
+    const live = actor === "openclaw" || this.broadcast.active ? this.liveState() : null;
+    const layout = actor === "admin" && scope !== "live" ? this.store.layout() : null;
+    return { live, layout };
+  }
+
+  create(actor, input, { scope } = {}) {
     this.take(actor);
     if (!input || typeof input !== "object" || Array.isArray(input)) throw fail(400, "Widget not created", "send the widget as an object");
-    const live = actor === "openclaw" || this.broadcast.active ? this.liveState() : null;
-    const layout = actor === "admin" ? this.store.layout() : null;
+    const { live, layout } = this.targets(actor, scope, "Widget not created");
+    input = withDefaults(input, this.store.settings().defaults);
     const taken = new Set([...(live ? Object.keys(live.state.widgets) : []), ...(layout ? layout.widgets.map(widget => widget.id) : [])]);
     const id = input.id ?? this.newId(taken);
     if (taken.has(id)) throw fail(409, "Widget not created", `widget ID '${id}' already exists`);
@@ -147,10 +160,9 @@ export class SceneService {
     return { widget, recorded: !!live, layoutVersion: layout ? layout.version + 1 : undefined };
   }
 
-  update(actor, id, changes) {
+  update(actor, id, changes, { scope } = {}) {
     this.take(actor);
-    const live = actor === "openclaw" || this.broadcast.active ? this.liveState() : null;
-    const layout = actor === "admin" ? this.store.layout() : null;
+    const { live, layout } = this.targets(actor, scope, "Widget not changed");
     const current = live?.state.widgets[id] ?? layout?.widgets.find(widget => widget.id === id);
     if (!current) throw fail(404, "Widget not changed", `widget '${String(id).slice(0, 40)}' is not in the ${actor === "openclaw" ? "live scene" : "live scene or saved layout"}`);
     const widget = this.validate(() => mergeWidget(current, changes, this.options()), "Widget not changed");
@@ -162,10 +174,9 @@ export class SceneService {
     return { widget, recorded, layoutVersion };
   }
 
-  remove(actor, id) {
+  remove(actor, id, { scope } = {}) {
     this.take(actor);
-    const live = actor === "openclaw" || this.broadcast.active ? this.liveState() : null;
-    const layout = actor === "admin" ? this.store.layout() : null;
+    const { live, layout } = this.targets(actor, scope, "Widget not removed");
     const inLive = !!live?.state.widgets[id];
     const inLayout = !!layout?.widgets.some(widget => widget.id === id);
     if (!inLive && !inLayout) throw fail(404, "Widget not removed", `widget '${String(id).slice(0, 40)}' is not in the ${actor === "openclaw" ? "live scene" : "live scene or saved layout"}`);

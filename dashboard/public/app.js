@@ -34,7 +34,9 @@ async function init() {
     const { stream, viewers } = await api("/api/broadcast");
     $("#viewer-count").textContent = viewers;
     state.stream = stream;
-    if (stream) await loadRecording(stream.id, true);
+    // Opening the live stream in the background keeps a deep link (for
+    // example #settings) on its page instead of switching to Live.
+    if (stream) await loadRecording(stream.id, true, { show: false });
     await loadCatalog();
     connectStream();
     updateControls();
@@ -150,7 +152,7 @@ function recordingCard(recording, live = false) {
   return button;
 }
 
-async function loadRecording(id, live = false) {
+async function loadRecording(id, live = false, { show = true } = {}) {
   const generation = ++state.loading;
   const events = [];
   let offset = 0;
@@ -167,7 +169,7 @@ async function loadRecording(id, live = false) {
   const merged = new Map(events.map(event => [event.id, event]));
   if (live) for (const event of state.liveEvents.values()) if (event.recordingId === id) merged.set(event.id, event);
   player.load(page.recording, [...merged.values()].sort((a, b) => a.id - b.id));
-  showLive();
+  if (show) showLive();
   updateControls();
 }
 

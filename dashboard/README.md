@@ -162,7 +162,7 @@ a private FRP remote TCP port. OpenClaw activity uses a shared host directory mo
 read-only in the dashboard; prepare it and configure the plugin as described
 in the deployment runbook. The live player shows file-tool target paths and
 start/completion events without file contents. Panel toggles and stream
-recordings persist in a named volume. Sessions expire
+recordings persist in a host bind directory (`DASHBOARD_STATE_HOST_DIR`). Sessions expire
 after 12 hours and reset on restart. Panel settings rows display deployment
 values read-only; the Settings page's theme, motion, autoplay, and speed
 preferences are saved per browser only. See the

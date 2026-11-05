@@ -1,7 +1,7 @@
 services:
   dashboard:
-    image: agent-dashboard:0.2.5
-    container_name: agent-dashboard-v0.2.5
+    image: agent-dashboard:0.2.6
+    container_name: agent-dashboard-v0.2.6
     build:
       context: .
     network_mode: host
@@ -18,7 +18,15 @@ services:
       # directory becomes an empty mount point, which leaves the route off.
       CIRCTIME_EMBED_DIR: /embed-src/circtime
     volumes:
-      - dashboard-state:/app/data
+      # Dashboard state (recordings, scene layouts, panel state, config-editor
+      # backups, activity cursors): a host directory owned 1000:1000, mode 700.
+      # Until 0.2.6 this was the named volume dashboard_dashboard-state;
+      # scripts/deploy.py migrates it once and keeps the volume for rollback.
+      - type: bind
+        source: ${DASHBOARD_STATE_HOST_DIR:-/home/motuariki/Documents/DockerVolumes/agent-dashboard/state}
+        target: /app/data
+        bind:
+          create_host_path: false
       - type: bind
         source: ${METRICS_DATA_HOST_DIR:-/home/motuariki/Documents/DockerVolumes/agent-dashboard/metrics}
         target: /app/metrics
@@ -45,6 +53,3 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
-
-volumes:
-  dashboard-state:

@@ -86,7 +86,7 @@ if (config.openclaw.activityDir) {
     warn: msg => emit({ source: "openclaw", level: "warn", msg }),
   });
 }
-const sceneStore = new SceneStore(path.join(config.dataDir, "scene"), { embeds: embedPaths(config) });
+const sceneStore = new SceneStore(path.join(config.dataDir, "scene"), { embeds: embedPaths(config), log: msg => emit({ source: "dashboard", level: "info", msg }) });
 const scene = new SceneService({ broadcast, store: sceneStore, emit });
 const MemoryStore = createMemoryStore(session);
 const app = express();
@@ -176,7 +176,7 @@ const configStore = config.openclaw.configFile
   : null;
 mountOpenClawConfig(app, configStore, { requireAuth, requireAdmin, requireCsrf, isEnabled });
 mountScene(app, { scene, store: sceneStore, streamToken: config.openclaw.streamToken, requireCsrfOrToken, control });
-new MetricsBridge({ scene, broadcast, metrics, quota, secrets: metricsSecrets, isEnabled, emit }).start();
+new MetricsBridge({ scene, broadcast, metrics, quota, secrets: metricsSecrets, isEnabled, emit, settings: () => sceneStore.settings() }).start();
 
 function requireToken(req, res, next) {
   if (!hasDashboardToken) {

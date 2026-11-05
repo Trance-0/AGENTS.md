@@ -732,3 +732,81 @@ and fell back to `cpa/gpt-6-astra`; the agent said its thinking effort was low.
   - The usage line, rendered from production metrics and the quota snapshot without publishing, read `Codex pool 5h 100% left, resets in 4h 12m; weekly 20% left, resets in 3d 9h 17m (quota as of 49m ago) · today 1.5M tokens, est. cost unpriced; paid fallback 36.8K tokens`. No model prices are configured, so cost shows as unpriced.
   - A positive administrator-turn round trip and chat removal in production need a signed-in administrator, and no test account was available. Both are covered by the fixture and browser checks.
 - Host workspace instructions (`dashboard-host/AGENTS.md`, host-only) said "Do not use tools". They now describe the per-turn policy; the backup is in `~/.local/state/agent-dashboard/`.
+
+
+## 2026-11-05 — Canvas settings, log-component circtime, state bind mount (0.2.6)
+
+Owner requests: an admin Settings section for the streaming canvas; the
+circtime radar as the log component's backdrop instead of the whole stage;
+dashboard state out of the named volume into a host directory.
+
+### Canvas settings
+
+- `public/scene/canvas-settings.js` replaces the old "Scene defaults" card
+  (`settings-section.js`, removed). It works on a local draft of the saved
+  layout: grouped widget list (stage / log backdrop / stage backdrop, top layer
+  first) with add, schema-form edit (`field()` is now exported from
+  `editor-popups.js`), duplicate, delete, layer up/down, show/hide; a preview
+  drawn by `SceneRenderer` with sample metric values (and a live-scene view
+  while live); the scene configuration form.
+- Save layout is the versioned `PUT /api/scene/layout`. Apply to live stream
+  lists the difference (`public/scene/diff.js`, pure and unit-tested), asks
+  for confirmation in a modal `<dialog>` (Cancel focused, Esc cancels), then
+  sends the operations through the widget routes with the new `?scope=live`
+  (live scene only; 409 offline; 400 for other values), paced under 5/s with
+  429 retries. Each is a normal recorded `widget` event.
+- Schema: optional `hidden: true`; settings via `normalizeSettings` (merge,
+  strict keys, defaults validated with the widget prop specs) and
+  `withDefaults` (server fills missing props of new widgets); `builtinLayout`
+  takes the settings. `SceneStore.embeds` is served minus disabled.
+- `MetricsBridge` ticks every 30 s and cycles once the configured interval
+  passed; `metricRefresh.cpa: false` publishes the stored snapshot only.
+- Fixed while testing: opening the page while a stream was live always switched
+  to Live (init loaded the live recording with `showLive()`), so a `#settings`
+  deep link could not stay on Settings during a stream. Init now loads it in
+  the background. A blur-triggered `change` with no new value no longer
+  rebuilds the widget list (it swallowed the click that caused the blur).
+- Design audit in the browser check (no pixel review): WCAG AA contrast for
+  every text element of the section and no element outside its row or the
+  card, in light, dark, and at 390 px in both themes. It caught `--text-faint`
+  labels (3.3:1 on dark) and teal/red/green accents on light; those now use
+  `--text-dim` or `color-mix` with `--text`.
+
+### circtime in the log component
+
+- Embed props `attach` (`log` default / `stage`) and `theme` (`system`
+  default / `dark` / `light`). The renderer adds `.scene-log-back`, kept on the
+  `.stream-log` box (ResizeObserver on the player and the log) and inserted
+  right before the log at the same z-index, so the radar is the log panel's
+  backdrop in every screen mode and the log text stays on top, selectable and
+  copyable. Sandbox, CORS path, URL contract, and messages are unchanged; a
+  fixed theme goes in the URL and receives no theme messages.
+- Edit scene: a log embed stays in the log box (outlined); a click on empty
+  stage opens its menu, Tab/Enter reach it, arrows move it within the box; the
+  properties form has "Attached to" and "Theme". (Hide on stream / Show on stream and the `hidden` field arrived in the same version from the OpenClaw control work; both changes defined it identically.)
+- Migration: `migrateWidget` changes only the built-in backdrop (id
+  `backdrop`, circtime, 0,0,1,1) to `log`; other legacy embeds get `stage`.
+  `SceneStore` migrates a schema-1 `scene-layout.json` once at startup
+  (version +1, original kept as `scene-layout.v1.json`, logged); `mergeWidget`
+  migrates a legacy live widget before a PATCH. Recorded legacy embeds replay
+  on the stage. Production had no saved layout (built-in in use), so nothing
+  was rewritten there; the live stream that began before this deploy keeps
+  its recorded full-stage backdrop until an admin applies a change.
+
+### State storage
+
+- `scripts/deploy.py`: `/app/data` is a bind mount of
+  `DASHBOARD_STATE_HOST_DIR` (default
+  `/home/motuariki/Documents/DockerVolumes/agent-dashboard/state`). After the
+  existing stop-and-backup step, `prepare_state` creates the directory
+  (1000:1000, 700) via a root helper container, copies the legacy volume when
+  the directory is empty (`cp -a`, then a full path/owner/mode/size/SHA-256
+  manifest comparison of both sides), prefers the directory when both have
+  data (logged), refuses to start on an empty directory while the volume has
+  data, and verifies the new container's bind mount. The backup step archives
+  whichever store the previous container used. The volume is kept.
+- `compose.yaml`: the same bind with `create_host_path: false`; the named
+  volume declaration is gone (the volume itself is untouched).
+- Exercised before the push on a throwaway volume and directory on the host:
+  first run copied and verified (owners 1000:1000, file modes kept), second
+  run kept the directory; real data verification is in the deploy notes below.

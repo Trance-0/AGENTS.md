@@ -43,9 +43,12 @@ export function mountScene(app, { scene, store, streamToken, requireCsrfOrToken,
     store.saveLayout(widgets, baseVersion);
     res.json(view());
   }));
-  app.post("/api/scene/widgets", noStore, admin, requireCsrfOrToken, route((req, res) => res.status(201).json(scene.create("admin", body(req).widget))));
-  app.patch("/api/scene/widgets/:id", noStore, admin, requireCsrfOrToken, route((req, res) => res.json(scene.update("admin", req.params.id, body(req).changes))));
-  app.delete("/api/scene/widgets/:id", noStore, admin, requireCsrfOrToken, route((req, res) => res.json(scene.remove("admin", req.params.id))));
+  // ?scope=live: record in the live scene only (Canvas settings "Apply to live
+  // stream"); without it, the on-stage editor's both-copies behaviour.
+  const scope = req => (req.query.scope === undefined ? undefined : String(req.query.scope));
+  app.post("/api/scene/widgets", noStore, admin, requireCsrfOrToken, route((req, res) => res.status(201).json(scene.create("admin", body(req).widget, { scope: scope(req) }))));
+  app.patch("/api/scene/widgets/:id", noStore, admin, requireCsrfOrToken, route((req, res) => res.json(scene.update("admin", req.params.id, body(req).changes, { scope: scope(req) }))));
+  app.delete("/api/scene/widgets/:id", noStore, admin, requireCsrfOrToken, route((req, res) => res.json(scene.remove("admin", req.params.id, { scope: scope(req) }))));
   app.get("/api/scene/settings", noStore, admin, route((_req, res) => res.json(store.settings())));
   app.put("/api/scene/settings", noStore, admin, requireCsrfOrToken, route((req, res) => res.json(store.saveSettings(body(req)))));
 

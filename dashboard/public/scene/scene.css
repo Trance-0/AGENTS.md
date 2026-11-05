@@ -1,10 +1,14 @@
 /* Scene stage over the player: a 16:9 box sized by renderer.js. The back
-   layer (embeds) sits below the log (z-index 1); the stage sits above it. */
+   layer (stage-attached embeds) sits below the log (z-index 1); the stage
+   sits above it. The log layer tracks the log element's box and shares its
+   z-index, placed before it in the DOM, so log text paints above its embeds. */
 .scene-stage { position: absolute; z-index: 3; pointer-events: none; --scene-scale: 1; }
 .scene-back { position: absolute; z-index: 0; pointer-events: none; }
+.scene-log-back { position: absolute; z-index: 1; pointer-events: none; overflow: hidden; }
 .scene-embed iframe { width: 100%; height: 100%; border: 0; display: block; background: transparent; pointer-events: none; }
-.scene-back .scene-embed, .scene-back .scene-embed * { pointer-events: none !important; user-select: none; }
-.scene-stage.editing .scene-embed { outline: 2px dashed rgba(79, 182, 200, .8); outline-offset: -2px; }
+.scene-back .scene-embed, .scene-back .scene-embed *, .scene-log-back .scene-embed, .scene-log-back .scene-embed * { pointer-events: none !important; user-select: none; }
+.scene-stage.editing .scene-embed, .scene-log-back.editing .scene-embed { outline: 2px dashed rgba(79, 182, 200, .8); outline-offset: -2px; }
+.scene-log-back.editing .scene-embed:focus-visible, .scene-log-back.editing .scene-embed.selected { outline: 2px solid #3ea6ff; }
 .scene-widget { position: absolute; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; overflow: hidden; color: #fdf6f3; font-family: "Roboto", system-ui, sans-serif; line-height: 1.15; }
 .scene-widget[hidden] { display: none; }
 .scene-widget.scene-hidden { opacity: .4; outline: 2px dashed rgba(253, 246, 243, .7); }
@@ -78,6 +82,87 @@
 .scene-toolbar .scene-mode { flex-basis: 100%; margin: 4px 0 0; color: var(--text-dim); font-size: 13px; line-height: 1.5; }
 .scene-toolbar .scene-mode:empty { display: none; }
 #btn-edit-scene[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
-.setting-row.stacked { flex-direction: column; align-items: stretch; }
-.allowlist-controls { display: grid; gap: 8px; justify-items: start; }
-.allowlist-controls textarea { width: 100%; font-family: var(--mono); font-size: 13px; resize: vertical; }
+.visually-hidden { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+
+/* ---------- Settings → Canvas settings ---------- */
+.canvas-settings { display: grid; gap: 14px; }
+.canvas-settings > h2, .canvas-settings > .settings-card-note { margin-bottom: 0; }
+.canvas-heading { font-size: 14px; font-weight: 600; margin: 0; }
+.canvas-summary { display: flex; flex-wrap: wrap; gap: 6px; }
+.canvas-chip { font-size: 12px; font-weight: 500; padding: 3px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-dim); }
+.canvas-chip.tone-live { color: var(--error); border-color: color-mix(in srgb, var(--error) 50%, transparent); }
+.canvas-chip.tone-live::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--red); vertical-align: 1px; }
+.canvas-chip.tone-warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+.canvas-chip.tone-ok { color: color-mix(in srgb, var(--ok) 70%, var(--text)); }
+.canvas-chip.tone-error { color: var(--error); border-color: color-mix(in srgb, var(--error) 50%, transparent); }
+.canvas-toolbar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+.canvas-toolbar-group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.canvas-commit { margin-left: auto; }
+.canvas-toolbar select, .canvas-config select, .canvas-form select { height: 36px; border-radius: 8px; padding: 0 10px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); font: inherit; }
+.canvas-settings .action-btn:focus-visible, .canvas-settings select:focus-visible, .canvas-settings input:focus-visible, .canvas-settings textarea:focus-visible, .canvas-row-main:focus-visible, .canvas-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.canvas-status { margin: 0; font-size: 13px; color: var(--text-dim); line-height: 1.5; min-height: 1.5em; }
+.canvas-status[data-tone="error"] { color: var(--error); }
+.canvas-status[data-tone="ok"] { color: color-mix(in srgb, var(--ok) 70%, var(--text)); }
+.canvas-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "preview preview" "list editor"; gap: 16px; align-items: start; }
+.canvas-preview-wrap { grid-area: preview; margin: 0; display: grid; gap: 8px; }
+.canvas-preview { position: relative; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+.canvas-preview .canvas-preview-log { padding: 10px 12px; font-size: 10px; line-height: 1.5; pointer-events: none; }
+.canvas-preview .log-line .src, .canvas-preview .log-line .t { font-size: 9px; }
+.canvas-preview .log-line .src { min-width: 60px; }
+.canvas-preview .scene-widget.selected { outline: 2px solid #3ea6ff; outline-offset: -2px; }
+.canvas-preview-caption { margin: 0; font-size: 12px; color: var(--text-dim); }
+.canvas-preview-mode { justify-self: start; }
+.canvas-preview-mode input:disabled + label { opacity: .45; cursor: default; }
+.canvas-list-wrap { grid-area: list; display: grid; gap: 10px; min-width: 0; }
+.canvas-groups { display: grid; gap: 12px; }
+.canvas-group-title { margin: 0; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; color: var(--text-dim); }
+.canvas-group-help { margin: 2px 0 6px; font-size: 12px; color: var(--text-dim); line-height: 1.45; }
+.canvas-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.canvas-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "main actions" "geo visible" "layer visible" "problem problem"; gap: 2px 10px; align-items: center; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); border: 1px solid transparent; }
+.canvas-row.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface-2)); }
+.canvas-row.invalid { border-color: var(--error); }
+.canvas-row.is-hidden .canvas-row-main { opacity: .6; }
+.canvas-row-main { grid-area: main; display: flex; gap: 8px; align-items: center; min-width: 0; padding: 4px 2px; border: none; background: none; color: var(--text); text-align: left; cursor: pointer; font: inherit; border-radius: 6px; }
+.canvas-type { flex-shrink: 0; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; background: var(--surface-3); color: var(--text-dim); }
+.canvas-type[data-type="embed"] { color: color-mix(in srgb, #4fb6c8 55%, var(--text)); }
+.canvas-type[data-type="metric"] { color: color-mix(in srgb, var(--warn) 70%, var(--text)); }
+.canvas-name { display: flex; flex-direction: column; min-width: 0; }
+.canvas-name strong { font-size: 13px; font-family: var(--mono); font-weight: 500; }
+.canvas-desc { font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.canvas-geometry { grid-area: geo; font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.canvas-layer { grid-area: layer; font-size: 12px; color: var(--text-dim); }
+.canvas-visible { grid-area: visible; justify-self: end; font-size: 12px; color: var(--text-dim); gap: 6px; }
+.canvas-actions { grid-area: actions; display: flex; gap: 2px; justify-self: end; }
+.canvas-icon { width: 32px; height: 32px; display: inline-grid; place-items: center; border-radius: 8px; border: 1px solid transparent; background: none; color: var(--text-dim); cursor: pointer; }
+.canvas-icon:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+.canvas-icon.danger:hover:not(:disabled) { color: var(--error); }
+.canvas-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.canvas-problem { grid-area: problem; margin: 4px 0 0; font-size: 12px; color: var(--error); }
+.canvas-problem:empty { display: none; }
+.canvas-editor { grid-area: editor; display: grid; gap: 10px; background: var(--surface-2); border-radius: 12px; padding: 14px; min-width: 0; position: sticky; top: 12px; }
+.canvas-form, .canvas-config { display: grid; gap: 12px; }
+.canvas-fieldset { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px 12px; margin: 0; display: grid; gap: 10px; min-width: 0; }
+.canvas-fieldset legend { padding: 0 6px; font-size: 12px; font-weight: 600; color: var(--text-dim); }
+.canvas-geo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+.canvas-check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px 16px; }
+.canvas-settings .scene-field input:not([type="checkbox"]):not([type="range"]), .canvas-settings .scene-field select { width: 100%; box-sizing: border-box; height: 36px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; }
+.canvas-config .scene-field select, .canvas-config textarea { background: var(--surface-2); }
+.canvas-config textarea { width: 100%; box-sizing: border-box; font-family: var(--mono); font-size: 13px; resize: vertical; }
+.canvas-settings input[type="range"] { width: 100%; accent-color: var(--accent); }
+.canvas-output { font-variant-numeric: tabular-nums; color: var(--text); }
+.canvas-form-actions { display: flex; justify-content: flex-end; }
+.canvas-dialog { max-width: min(460px, calc(100vw - 32px)); border: 1px solid var(--border); border-radius: 14px; background: var(--surface); color: var(--text); padding: 20px; box-shadow: 0 16px 40px rgba(0, 0, 0, .45); }
+.canvas-dialog::backdrop { background: rgba(0, 0, 0, .55); }
+.canvas-dialog h3 { margin: 0 0 8px; font-size: 16px; }
+.canvas-dialog p { margin: 0 0 8px; line-height: 1.5; color: var(--text-dim); }
+.canvas-dialog-list { margin: 0 0 14px; padding-left: 18px; font-size: 13px; line-height: 1.6; }
+.canvas-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 720px) {
+  .canvas-workspace { grid-template-columns: minmax(0, 1fr); grid-template-areas: "preview" "list" "editor"; }
+  .canvas-editor { position: static; padding: 12px; }
+  .canvas-commit { margin-left: 0; }
+  .canvas-toolbar, .canvas-toolbar-group { width: 100%; }
+  .canvas-toolbar-group .action-btn { flex: 1 1 auto; }
+  .canvas-toolbar select { flex: 1 1 auto; min-width: 0; }
+  .canvas-geo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

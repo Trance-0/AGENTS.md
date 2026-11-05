@@ -23,11 +23,20 @@ export class SceneRenderer {
     this.stage.className = "scene-stage";
     this.stage.setAttribute("aria-label", "Stream scene");
     host.append(this.stage);
-    // Back layer for embeds: below the log (z-index 0) and never interactive.
+    // Back layer for stage-attached embeds: below the log (z-index 0) and never interactive.
     this.back = document.createElement("div");
     this.back.className = "scene-back";
     this.back.setAttribute("aria-hidden", "true");
     host.prepend(this.back);
+    // Log-component layer: embeds attached to the log panel are its backdrop.
+    // It tracks the log element's box (so it moves with the log in theater,
+    // full screen, and mobile layouts) and sits right before the log in the
+    // DOM at the same z-index, so the log text always paints above it.
+    this.log = host.querySelector(".stream-log");
+    this.logBack = document.createElement("div");
+    this.logBack.className = "scene-log-back";
+    this.logBack.setAttribute("aria-hidden", "true");
+    if (this.log) this.log.before(this.logBack); else host.prepend(this.logBack);
     addEventListener("dashboard-theme", () => this.postTheme());
     this.nodes = new Map();
     this.state = null;
@@ -35,7 +44,9 @@ export class SceneRenderer {
     this.selected = null;
     this.avatar = AVATAR_RENDERERS[avatar]();
     this.avatar.ready.then(() => this.draw(true));
-    new ResizeObserver(() => this.fit()).observe(host);
+    const resize = new ResizeObserver(() => this.fit());
+    resize.observe(host);
+    if (this.log) resize.observe(this.log);
     this.fit();
     this.loop = this.loop.bind(this);
     this.frame = null;
@@ -50,6 +61,10 @@ export class SceneRenderer {
     const { clientWidth: width, clientHeight: height } = this.host;
     const w = Math.min(width, height * 16 / 9), h = w * 9 / 16;
     for (const layer of [this.stage, this.back]) Object.assign(layer.style, { width: `${w}px`, height: `${h}px`, left: `${(width - w) / 2}px`, top: `${(height - h) / 2}px` });
+    const log = this.log;
+    Object.assign(this.logBack.style, log
+      ? { left: `${log.offsetLeft}px`, top: `${log.offsetTop}px`, width: `${log.offsetWidth}px`, height: `${log.offsetHeight}px` }
+      : { left: "0px", top: "0px", width: `${width}px`, height: `${height}px` });
     this.stage.style.setProperty("--scene-scale", String(h / 720));
     this.dirty = true;
     this.draw(true);
@@ -57,6 +72,15 @@ export class SceneRenderer {
 
   widgets() {
     return Object.values(this.override ?? this.state?.widgets ?? {}).sort((a, b) => a.z - b.z || a.id.localeCompare(b.id));
+  }
+
+  // Which layer a widget lives on. Embeds recorded before `attach` existed
+  // were on the stage, so old recordings replay exactly as they did.
+  layerOf(widget) {
+    if (!WIDGET_TYPES[widget.type]?.back) return this.stage;
+    if (widget.props.attach === "log") return this.logBack;
+    // Stage embeds join the stage while editing so they can be selected.
+    return this.override ? this.stage : this.back;
   }
 
   update(state) {
@@ -98,18 +122,18 @@ export class SceneRenderer {
       if (this.override) {
         el.tabIndex = 0;
         el.setAttribute("role", "button");
-        el.setAttribute("aria-label", `${widget.type} widget${widget.props.text ? `: ${widget.props.text}` : ""}. Enter for options, arrow keys to move, Delete to remove.`);
+        el.setAttribute("aria-label", `${widget.type} widget${widget.props.text ? `: ${widget.props.text}` : ""}${widget.props.attach === "log" ? " (log component backdrop)" : ""}${widget.hidden ? " (hidden)" : ""}. Enter for options, arrow keys to move, Delete to remove.`);
       } else {
         el.removeAttribute("tabindex");
         el.removeAttribute("role");
         el.removeAttribute("aria-label");
       }
-      // Embeds live on the back layer; while editing they join the stage so they can be selected.
       // Appending an element that is already in place would move it, which
       // reloads iframes; z-index, not DOM order, decides stacking.
-      const layer = WIDGET_TYPES[widget.type]?.back && !this.override ? this.back : this.stage;
+      const layer = this.layerOf(widget);
       if (el.parentNode !== layer) layer.append(el);
     }
+    this.logBack.classList.toggle("editing", !!this.override);
     for (const [id, node] of this.nodes) if (!seen.has(id)) { node.el.remove(); this.nodes.delete(id); }
   }
 
@@ -181,12 +205,16 @@ export class SceneRenderer {
         node.el.dataset.color = props.color;
         this.metric(node, props, state?.metrics?.[props.source], wallAt);
       } else if (widget.type === "embed") {
-        if (node.srcPath !== props.src) {
-          node.srcPath = props.src;
-          const src = this.embedSrc(props.src);
+        // A fixed theme is part of the URL; "system" follows the dashboard
+        // theme by postMessage without a reload.
+        const key = `${props.src}|${props.theme ?? "system"}`;
+        if (node.srcKey !== key) {
+          node.srcKey = key;
+          const src = this.embedSrc(props.src, props.theme);
           if (src) node.frame.src = src;
         }
         node.el.style.opacity = String(props.opacity);
+        node.el.dataset.attach = props.attach === "log" ? "log" : "stage";
       } else if (widget.type === "image") {
         if (node.img.getAttribute("src") !== props.url && /^https:\/\//.test(props.url)) node.img.src = props.url;
         node.img.alt = props.alt;
@@ -198,9 +226,12 @@ export class SceneRenderer {
   // Same-origin dashboard paths only. The embed contract (circtime): embed=1,
   // the resolved theme (the dark radar is faint on light), and parent_origin so
   // the opaque-origin frame can verify where theme messages come from.
-  embedSrc(path) {
+  // `theme`: the widget's theme prop; "system" (or absent) is the resolved
+  // dashboard theme from the theme helper (public/theme.js).
+  embedSrc(path, theme = "system") {
     if (typeof path !== "string" || !/^\/embed\/[a-z0-9-]+\/$/.test(path)) return null;
-    const params = new URLSearchParams({ embed: "1", theme: document.documentElement.dataset.theme || "dark", parent_origin: location.origin });
+    const resolved = theme === "dark" || theme === "light" ? theme : document.documentElement.dataset.theme || "dark";
+    const params = new URLSearchParams({ embed: "1", theme: resolved, parent_origin: location.origin });
     if (this.reduced()) params.set("motion", "reduce");
     return `${path}?${params}`;
   }
@@ -209,7 +240,10 @@ export class SceneRenderer {
     const theme = document.documentElement.dataset.theme || "dark";
     // The sandboxed frame's origin is "null", so "*" is the only target that
     // reaches it; the message carries nothing but the public theme name.
-    for (const node of this.nodes.values()) node.frame?.contentWindow?.postMessage({ type: "circtime-theme", theme }, "*");
+    for (const node of this.nodes.values()) {
+      if (!node.frame || (node.widget.props.theme ?? "system") !== "system") continue;
+      node.frame.contentWindow?.postMessage({ type: "circtime-theme", theme }, "*");
+    }
   }
 
   text(node, label, value, sub) {
@@ -253,7 +287,8 @@ export class SceneRenderer {
   // One requestAnimationFrame loop at most 30 fps, only while the tab is
   // visible and a canvas widget or clock is on stage.
   schedule() {
-    if (this.frame || document.hidden) return;
+    // A renderer whose host left the page (a closed settings preview) stops.
+    if (this.frame || document.hidden || !this.host.isConnected) return;
     if (![...this.nodes.values()].some(node => node.canvas || node.type === "clock" || node.type === "metric")) return;
     this.frame = requestAnimationFrame(this.loop);
   }

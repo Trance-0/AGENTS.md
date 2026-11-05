@@ -2,7 +2,7 @@
 
 As of 2026-11-05. Status: owner decisions recorded in section 8; phase A
 implemented in dashboard 0.2.0 (section 10 records how it differs from the
-proposal). Builds on dashboard
+proposal; 0.2.6 adds Canvas settings and the log-component embed). Builds on dashboard
 0.1.5 (`dashboard/`) and assumes the in-flight player fixes land first: a
 correct play/pause icon, control icons, auto-hiding controls with a thin
 progress bar, and a playback-rate control. "Current" below means what the code
@@ -617,7 +617,9 @@ implementation differs from sections 2–7, this section wins.
   validated, `version` incremented on every save, stale `baseVersion`
   rejected) is replayed as opening `create` events when a stream starts. Until
   the first save the built-in layout (avatar + cat) is used. Admin edits always
-  update the saved layout and, while a stream is live, are also recorded.
+  update the saved layout and, while a stream is live, are also recorded
+  (except Canvas settings' Apply to live stream, `?scope=live`, which records
+  only; 0.2.6).
   OpenClaw edits change only the live recording its session owns.
 - **APIs.** Admin: `GET/PUT /api/scene/layout` (PUT replaces the saved
   layout only, never the live recording), `POST /api/scene/widgets`,
@@ -652,8 +654,43 @@ implementation differs from sections 2–7, this section wins.
   changes `frame-src 'none'` to `frame-src 'self'`; embed pages get their own
   policy with `frame-ancestors 'self'` and no external origins. Because embeds
   always sit behind the log, their `z` orders them only among embeds.
+- **Log-component embed (0.2.6, owner request).** The embed gains `attach`
+  (`log` default, or `stage`) and `theme` (`system` default, `dark`,
+  `light`). `log` makes it the log panel's backdrop: the renderer keeps a
+  layer that tracks the `.stream-log` element's box and sits right before it
+  at the same z-index, so the radar is sized to the log region and moves with
+  it in every screen mode while the log text paints above it; geometry is
+  relative to that box. The sandbox, CORS path, URL contract, and
+  `parent_origin` hand-off are unchanged; `theme: system` keeps following the
+  dashboard theme by message. Migration touches only the built-in backdrop
+  (id `backdrop`, circtime, whole stage): saved layouts move it to `log`
+  once (schema 2, original kept as `scene-layout.v1.json`) and a PATCH of an
+  older live widget migrates it the same way; any other embed is pinned to
+  `stage`. Recorded embeds without `attach` replay on the stage as before.
+- **Canvas settings (0.2.6, owner request).** Settings → Canvas settings is
+  an admin settings view that complements Edit scene: a draft of the saved
+  layout with a widget list (type, ID and summary, position and size, layer,
+  visibility; add, schema-form edit with the shared validator, duplicate,
+  delete, reorder, show/hide), a scaled preview drawn by the viewer renderer,
+  and the scene configuration (image allowlist, enabled embeds, widget
+  defaults, built-in layout contents, metric refresh interval and CPA
+  refresh). **Save layout** is the versioned `PUT /api/scene/layout`. **Apply
+  to live stream** confirms, then replays the draft's difference from the live
+  scene through the widget routes with `?scope=live`, paced under the admin
+  limit, so each change is a recorded `widget` event exactly as from the
+  on-stage editor, while the saved layout stays as it is. Widgets gain an
+  optional `hidden: true` (omitted when visible, so older widget shapes and
+  events are unchanged); hidden widgets stay in the state but are not drawn
+  for viewers. No new event kinds, no bulk event route.
+- **State storage (0.2.6).** `/app/data` (recordings, the saved layout and
+  scene settings) is a host bind directory instead of a Docker named volume;
+  see "Dashboard state storage (0.2.6)" in `docs/deployment/dashboard.md`.
 - **Metric widgets** follow decisions 1–3; details in
-  `docs/development/dashboard-metrics.md`. Metrics are published only while a
+  `docs/development/dashboard-metrics.md`. Since 0.2.4 every quota reader
+  (pool, Usage Summary, CPA tab, these widgets) goes through
+  `normalizeQuota` (passed resets and unused weeks count as unused). Since
+  0.2.6 Canvas settings may set the refresh to 2–60 minutes (default 5) and
+  turn the CPA upstream refresh off (publish the stored snapshot only). Metrics are published only while a
   metric widget is on the live scene, and the 5-minute CPA refresh runs only
   then (a narrower reading of decision 2 that avoids upstream calls nobody sees).
 

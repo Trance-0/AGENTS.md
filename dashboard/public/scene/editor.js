@@ -3,6 +3,9 @@
 // properties, create new, duplicate, delete, bring forward, send back); drag
 // to move, corner handles to resize, arrow keys to nudge, Delete to remove,
 // Esc to close a menu or exit, Ctrl/Cmd+Z (or Undo) to revert the last edit.
+// An embed attached to the log component stays in the log's box: a click on
+// the stage where nothing else is opens its menu, the keyboard moves it within
+// the log box, and Settings → Canvas settings edits its numbers.
 //
 // Edits go through the admin scene API. With no live stream they change the
 // saved default layout; while live they are also recorded as widget events.
@@ -44,6 +47,7 @@ export class SceneEditor {
     this.live = !!view.live;
     this.allowlist = view.settings.imageAllowlist;
     this.embeds = view.settings.embeds || [];
+    this.defaults = view.settings.defaults || {};
     this.layoutVersion = view.layout.version;
     this.widgets = Object.fromEntries((view.live ? view.live.widgets : view.layout.widgets).map(widget => [widget.id, widget]));
     this.active = true;
@@ -53,6 +57,7 @@ export class SceneEditor {
     this.stage.tabIndex = -1;
     this.stage.addEventListener("pointerdown", this.onPointerDown);
     this.stage.addEventListener("keydown", this.onKeyDown);
+    this.renderer.logBack.addEventListener("keydown", this.onKeyDown);
     this.toolbar.toggle.setAttribute("aria-pressed", "true");
     this.toolbar.toggle.textContent = "Editing scene";
     this.toolbar.done.hidden = false;
@@ -77,6 +82,7 @@ export class SceneEditor {
     this.stage.removeAttribute("tabindex");
     this.stage.removeEventListener("pointerdown", this.onPointerDown);
     this.stage.removeEventListener("keydown", this.onKeyDown);
+    this.renderer.logBack.removeEventListener("keydown", this.onKeyDown);
     this.toolbar.toggle.setAttribute("aria-pressed", "false");
     this.toolbar.toggle.textContent = "Edit scene";
     this.toolbar.done.hidden = true;
@@ -163,7 +169,12 @@ export class SceneEditor {
       run: () => {
         if (type === "image" && !this.allowlist.length) return this.status("Image widget not added: dashboard/scene editor — no image allowlist is configured; add an HTTPS prefix in Settings → Scene defaults first.");
         if (type === "embed" && !this.embeds.length) return this.status("Embed widget not added: dashboard/scene editor — this deployment serves no embed pages (CIRCTIME_EMBED_DIR is not set).");
-        if (type === "embed") return this.guarded(this.create({ type, ...fitRect(rect, type), props: { src: this.embeds[0] } }));
+        // A new embed follows the administrator's default attachment; in the
+        // log component it fills the log box, on the stage it takes the drawn box.
+        if (type === "embed") {
+          const attach = this.defaults.embed?.attach ?? WIDGET_TYPES.embed.props.attach.default;
+          return this.guarded(this.create({ type, ...(attach === "log" ? defaultRect("embed") : fitRect(rect, type)), props: { src: this.embeds[0], attach } }));
+        }
         if (type === "image") return this.propertiesForm({ id: null, type, ...fitRect(rect, type), z: 100, props: {} });
         this.guarded(this.create({ type, ...fitRect(rect, type) }));
       },
@@ -249,11 +260,21 @@ export class SceneEditor {
       } else if (original) this.widgetMenu(id, target);
       else if (moved && rect.w >= MIN && rect.h >= MIN) this.typeMenu(rect, ghost || this.stage, rect);
       else if (backdrop) { this.render(backdrop.dataset.widgetId); this.widgetMenu(backdrop.dataset.widgetId, backdrop); }
+      else if (this.logBackdropAt(upEvent)) { const element = this.logBackdropAt(upEvent); this.render(element.dataset.widgetId); this.widgetMenu(element.dataset.widgetId, element); }
       else this.render(null);
     };
     this.stage.addEventListener("pointermove", move);
     this.stage.addEventListener("pointerup", up);
     this.stage.addEventListener("pointercancel", up);
+  }
+
+  // The topmost log-component embed under a pointer event (the log layer
+  // sits below the stage, so it never receives the pointer itself).
+  logBackdropAt(event) {
+    return [...this.renderer.logBack.querySelectorAll(".scene-widget")].reverse().find(element => {
+      const box = element.getBoundingClientRect();
+      return event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
+    }) || null;
   }
 
   // ---------- Keyboard ----------

@@ -9,7 +9,7 @@ import { renderUsage, renderQuota } from "/metrics.js";
 import { renderConfigEditor } from "/config-editor.js";
 import { renderSummary } from "/usage-summary.js";
 import { renderSettings } from "/settings-page.js";
-import { sceneSettingsSection } from "/scene/settings-section.js";
+import { canvasSettingsSection } from "/scene/canvas-settings.js";
 
 export const ICONS = {
   stream: '<rect x="2" y="5" width="20" height="14" rx="3"/><path d="M10 9l5 3-5 3z"/>',
@@ -279,5 +279,5 @@ const TAB_RENDERERS = {
   "usage-summary": { cards: false, render: (pane, { api: apiFn }) => renderSummary(pane, apiFn) },
   "cpa-quota": { cards: false, render: (pane, { api: apiFn }) => renderQuota(pane, apiFn) },
   "usage-metrics": { cards: false, render: (pane, { api: apiFn }) => renderUsage(pane, apiFn) },
-  settings: { cards: false, render: (pane, { state, ctx }) => renderSettings(pane, { state, setPanelEnabled: ctx.setPanelEnabled, onPanelsChanged: ctx.renderSidebar, extraAdminSections: [() => sceneSettingsSection(api)] }) },
+  settings: { cards: false, render: (pane, { state, ctx }) => renderSettings(pane, { state, setPanelEnabled: ctx.setPanelEnabled, onPanelsChanged: ctx.renderSidebar, extraAdminSections: [() => canvasSettingsSection(api)] }) },
 };

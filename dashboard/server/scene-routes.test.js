@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -210,16 +210,137 @@ test("metric widgets publish pooled public values once per refresh and keep the 
   } finally { await f.close(); }
 });
 
-test("embed widgets validate against the deployment's served pages and start on the back layer", async () => {
+test("embed widgets validate against the deployment's served pages and start behind the log", async () => {
   const f = await fixture({ embeds: ["/embed/circtime/"] });
   try {
     const view = await f.call("GET", "/api/scene/layout", undefined, { "x-test-role": "admin" });
     assert.deepEqual(view.body.settings.embeds, ["/embed/circtime/"]);
     assert.equal(view.body.layout.widgets[0].type, "embed", "the built-in layout includes the backdrop");
     const created = await f.call("POST", "/api/scene/widgets", { widget: { type: "embed", x: 0, y: 0, w: 0.5, h: 0.5, props: { src: "/embed/circtime/" } } }, f.admin);
-    assert.deepEqual([created.status, created.body.widget.z, created.body.widget.props.opacity], [201, 0, 0.3]);
+    assert.deepEqual([created.status, created.body.widget.z, created.body.widget.props.opacity, created.body.widget.props.attach, created.body.widget.props.theme], [201, 0, 0.3, "log", "system"]);
+    assert.deepEqual(view.body.layout.widgets[0].props, { src: "/embed/circtime/", attach: "log", opacity: 0.3, theme: "system" }, "the built-in backdrop belongs to the log component");
     assert.equal((await f.call("POST", "/api/scene/widgets", { widget: { type: "embed", x: 0, y: 0, w: 1, h: 1, props: { src: "/embed/unknown/" } } }, f.admin)).status, 400);
     assert.equal((await f.call("PATCH", `/api/scene/widgets/${created.body.widget.id}`, { changes: { props: { opacity: 0.6 } } }, f.admin)).body.widget.props.opacity, 0.6);
   } finally { await f.close(); }
 });
 
+
+test("Canvas settings: Apply to live (scope=live) records events and leaves the saved layout alone", async () => {
+  const f = await fixture();
+  try {
+    assert.equal((await f.call("POST", "/api/scene/widgets?scope=live", { widget: text() }, f.admin)).status, 409, "nothing is live");
+    assert.equal((await f.call("POST", "/api/scene/widgets?scope=layout", { widget: text() }, f.admin)).status, 400);
+    const saved = await f.call("PUT", "/api/scene/layout", { widgets: [{ id: "keep", ...text({ text: "Saved" }) }], baseVersion: 0 }, f.admin);
+    assert.equal(saved.body.layout.version, 1);
+    f.broadcast.start("Apply stream");
+    await flush();
+    const before = f.events().filter(event => event.kind === "widget").length;
+    const created = await f.call("POST", "/api/scene/widgets?scope=live", { widget: { id: "live-only", ...text({ text: "Live only" }), z: 150, hidden: true } }, f.admin);
+    assert.deepEqual([created.status, created.body.recorded, created.body.layoutVersion, created.body.widget.z, created.body.widget.hidden], [201, true, undefined, 150, true]);
+    const changed = await f.call("PATCH", "/api/scene/widgets/keep?scope=live", { changes: { x: 0.5, hidden: true } }, f.admin);
+    assert.deepEqual([changed.status, changed.body.recorded, changed.body.layoutVersion, changed.body.widget.hidden], [200, true, undefined, true]);
+    const shown = await f.call("PATCH", "/api/scene/widgets/keep?scope=live", { changes: { hidden: false } }, f.admin);
+    assert.equal("hidden" in shown.body.widget, false);
+    const removed = await f.call("DELETE", "/api/scene/widgets/live-only?scope=live", undefined, f.admin);
+    assert.deepEqual([removed.status, removed.body.recorded], [200, true]);
+    const widgetEvents = f.events().filter(event => event.kind === "widget");
+    assert.deepEqual(widgetEvents.slice(before).map(event => event.op), ["create", "update", "update", "delete"], "every applied change is a recorded widget event");
+    const view = await f.call("GET", "/api/scene/layout", undefined, f.admin);
+    assert.deepEqual([view.body.layout.version, view.body.layout.widgets.map(widget => [widget.id, widget.x, !!widget.hidden])], [1, [["keep", 0.1, false]]], "the saved layout did not change");
+    assert.deepEqual(view.body.live.widgets.map(widget => [widget.id, widget.x]), [["keep", 0.5]]);
+    // Without a scope the on-stage editor still changes both copies.
+    const both = await f.call("PATCH", "/api/scene/widgets/keep", { changes: { y: 0.4 } }, f.admin);
+    assert.deepEqual([both.body.recorded, both.body.layoutVersion], [true, 2]);
+    // A widget only in the saved layout is not in the live scene.
+    await f.call("PUT", "/api/scene/layout", { widgets: [...(await f.call("GET", "/api/scene/layout", undefined, f.admin)).body.layout.widgets, { id: "later", ...text() }], baseVersion: 2 }, f.admin);
+    assert.equal((await f.call("PATCH", "/api/scene/widgets/later?scope=live", { changes: { x: 0.2 } }, f.admin)).status, 404);
+    // The live scope is for administrators: OpenClaw already changes only the live scene.
+    assert.equal((await f.call("POST", "/api/scene/widgets?scope=live", { widget: text() }, { "x-test-role": "viewer", "x-dashboard-request": "1" })).status, 403);
+  } finally { await f.close(); }
+});
+
+test("scene settings: merged saves, widget defaults at creation, enabled embeds", async () => {
+  const f = await fixture({ embeds: ["/embed/circtime/"] });
+  try {
+    const first = await f.call("PUT", "/api/scene/settings", { imageAllowlist: ["https://img.example.com/stream"] }, f.admin);
+    assert.equal(first.status, 200);
+    const second = await f.call("PUT", "/api/scene/settings", { defaults: { embed: { opacity: 0.55, theme: "dark" }, metric: { source: "tokens.today", color: "teal" }, cat: { mirror: true } }, metricRefresh: { minutes: 15, cpa: false } }, f.admin);
+    assert.deepEqual([second.body.imageAllowlist, second.body.defaults.embed, second.body.metricRefresh], [["https://img.example.com/stream/"], { attach: "log", opacity: 0.55, theme: "dark" }, { minutes: 15, cpa: false }], "a partial save keeps the allowlist");
+    const bad = await f.call("PUT", "/api/scene/settings", { metricRefresh: { minutes: 3 } }, f.admin);
+    assert.equal(bad.status, 400);
+    assert.match(bad.body.error, /^Scene settings not saved: dashboard\/scene settings — metric refresh interval/);
+    const metric = await f.call("POST", "/api/scene/widgets", { widget: { type: "metric", x: 0, y: 0, w: 0.2, h: 0.1 } }, f.admin);
+    assert.deepEqual(metric.body.widget.props, { source: "tokens.today", label: "", color: "teal" });
+    const embed = await f.call("POST", "/api/scene/widgets", { widget: { type: "embed", x: 0, y: 0, w: 1, h: 1, props: { src: "/embed/circtime/" } } }, f.admin);
+    assert.deepEqual(embed.body.widget.props, { src: "/embed/circtime/", attach: "log", opacity: 0.55, theme: "dark" });
+    const builtin = (await f.call("GET", "/api/scene/layout", undefined, f.admin)).body;
+    assert.equal(builtin.layout.builtin, false);
+    // Persisted across a restart (a new store on the same directory).
+    const reopened = new SceneStore(f.store.directory, { embeds: ["/embed/circtime/"] });
+    assert.deepEqual(reopened.settings().defaults.embed, { attach: "log", opacity: 0.55, theme: "dark" });
+    // Disabling the embed page turns it off for validation and the built-in layout.
+    const off = await f.call("PUT", "/api/scene/settings", { disabledEmbeds: ["/embed/circtime/"] }, f.admin);
+    assert.deepEqual([off.body.embeds, off.body.servedEmbeds, off.body.disabledEmbeds], [[], ["/embed/circtime/"], ["/embed/circtime/"]]);
+    assert.equal((await f.call("POST", "/api/scene/widgets", { widget: { type: "embed", x: 0, y: 0, w: 1, h: 1, props: { src: "/embed/circtime/" } } }, f.admin)).status, 400);
+    assert.equal(f.store.builtin().some(widget => widget.type === "embed"), false);
+    await f.call("PUT", "/api/scene/settings", { disabledEmbeds: [] }, f.admin);
+    assert.ok(f.store.layout().widgets.some(widget => widget.id === embed.body.widget.id), "re-enabling before a save brings the widget back");
+  } finally { await f.close(); }
+});
+
+test("a saved 0.2.3 layout migrates once: only the default circtime backdrop moves to the log", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "scene-migrate-"));
+  try {
+    mkdirSync(path.join(dir, "scene"));
+    const legacy = { version: 7, updatedAt: 1, widgets: [
+      { id: "backdrop", type: "embed", x: 0, y: 0, w: 1, h: 1, z: 0, props: { src: "/embed/circtime/", opacity: 0.4 } },
+      { id: "radar", type: "embed", x: 0.5, y: 0.5, w: 0.5, h: 0.5, z: 1, props: { src: "/embed/circtime/", opacity: 0.8 } },
+      { id: "avatar", type: "avatar", x: 0.74, y: 0.1, w: 0.2, h: 0.3556, z: 100, props: { mirror: false } },
+    ] };
+    const file = path.join(dir, "scene", "scene-layout.json");
+    writeFileSync(file, JSON.stringify(legacy));
+    const logs = [];
+    const store = new SceneStore(path.join(dir, "scene"), { embeds: ["/embed/circtime/"], log: message => logs.push(message) });
+    const stored = JSON.parse(readFileSync(file, "utf8"));
+    assert.deepEqual([stored.schema, stored.version], [2, 8]);
+    assert.deepEqual(stored.widgets.map(widget => [widget.id, widget.props.attach, widget.props.opacity, widget.x]), [["backdrop", "log", 0.4, 0], ["radar", "stage", 0.8, 0.5], ["avatar", undefined, undefined, 0.74]]);
+    assert.deepEqual(JSON.parse(readFileSync(path.join(dir, "scene", "scene-layout.v1.json"), "utf8")), legacy, "the original is kept for rollback");
+    assert.match(logs[0], /^Scene layout migrated: dashboard\/scene layout — schema 2; embeds backdrop→log, radar→stage;/);
+    assert.deepEqual(store.layout().widgets.map(widget => [widget.id, widget.props.theme ?? null]), [["backdrop", "system"], ["radar", "system"], ["avatar", null]]);
+    // Idempotent: a second start changes nothing.
+    new SceneStore(path.join(dir, "scene"), { embeds: ["/embed/circtime/"], log: message => logs.push(message) });
+    assert.equal(JSON.parse(readFileSync(file, "utf8")).version, 8);
+    assert.equal(logs.length, 1);
+    // No saved layout: nothing to migrate, no backup file.
+    const empty = mkdtempSync(path.join(os.tmpdir(), "scene-migrate-empty-"));
+    new SceneStore(empty, { embeds: [] });
+    assert.equal(existsSync(path.join(empty, "scene-layout.v1.json")), false);
+    rmSync(empty, { recursive: true, force: true });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("the metric refresh follows Canvas settings: interval and CPA toggle", async () => {
+  const f = await fixture();
+  try {
+    let now = Date.UTC(2026, 10, 5, 12);
+    let refreshes = 0;
+    let settings = { metricRefresh: { minutes: 10, cpa: false } };
+    const quota = { snapshot: () => ({ updatedAt: now, accounts: [] }), refresh: async () => { refreshes++; } };
+    const bridge = new MetricsBridge({ scene: f.scene, broadcast: f.broadcast, metrics: { tokensBetween: () => 0 }, quota, secrets: { read: () => ({}) }, isEnabled: async () => true, now: () => now, settings: () => settings });
+    f.broadcast.start("Refresh stream");
+    await flush();
+    await f.call("POST", "/api/scene/widgets", { widget: { type: "metric", x: 0, y: 0, w: 0.2, h: 0.1, props: { source: "cpa.codex.5h" } } }, f.admin);
+    await bridge.running;
+    await bridge.cycle();
+    assert.equal(refreshes, 0, "CPA refresh off: publish the stored snapshot only");
+    settings = { metricRefresh: { minutes: 10, cpa: true } };
+    await bridge.cycle();
+    assert.equal(refreshes, 1);
+    now += 5 * 60000;
+    assert.equal(bridge.due(), false, "10 minutes have not passed");
+    now += 5 * 60000;
+    assert.equal(bridge.due(), true);
+    settings = null;
+    assert.equal(bridge.refreshSettings().intervalMs, 5 * 60000, "the default stays 5 minutes");
+  } finally { await f.close(); }
+});

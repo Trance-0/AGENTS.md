@@ -300,6 +300,9 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
       const controlCheck = spawn(process.execPath, [path.join(root, "scripts/control-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie, DASHBOARD_STREAM_TOKEN: "test-stream-token" }, stdio: "inherit" });
       const [controlCode] = await once(controlCheck, "exit");
       assert.equal(controlCode, 0);
+      const canvasCheck = spawn(process.execPath, [path.join(root, "scripts/canvas-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie, DASHBOARD_VIEWER_COOKIE: viewerHeaders.cookie }, stdio: "inherit" });
+      const [canvasCode] = await once(canvasCheck, "exit");
+      assert.equal(canvasCode, 0);
     }
     const toggle = "/api/panels/settings/toggle";
     // Browser path: admin session + same-origin header. Automation path: admin session + bearer.

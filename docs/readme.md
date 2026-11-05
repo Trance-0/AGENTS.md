@@ -57,7 +57,7 @@ See [metrics architecture and CC Switch references](development/dashboard-metric
 The Docker Compose service binds to host loopback on port 14143. The existing
 host-network frpc container forwards it to a private FRP remote TCP port; the remote
 HTTPS reverse proxy serves `https://live.trance-0.com`. Panel toggles persist in
-a named volume. The same volume holds durable recording metadata and NDJSON
+a host bind directory (a named volume before dashboard 0.2.6). The same directory holds durable recording metadata and NDJSON
 events containing public stream logs and viewer chat. Visible recordings sort
 by the administrator's recommendation score and date. The isolated OpenClaw
 `dashboard-host` agent answers authenticated chat through player log events,

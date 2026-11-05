@@ -75,8 +75,10 @@ export function openMenu(_stage, anchor, title, items, onClose) {
   return menu;
 }
 
-function field(key, spec, value, options = {}) {
-  const id = `scene-field-${key}`;
+// One schema-generated form field (shared with Settings → Canvas settings).
+// `options.prefix` keeps element IDs unique when both forms exist.
+export function field(key, spec, value, options = {}) {
+  const id = `${options.prefix || "scene-field"}-${key}`;
   const row = document.createElement("label");
   row.className = "scene-field";
   row.htmlFor = id;
@@ -101,7 +103,7 @@ function field(key, spec, value, options = {}) {
   input.name = key;
   row.append(caption, input);
   if (spec.type === "boolean") row.classList.add("inline");
-  return { row, read: () => (spec.type === "boolean" ? input.checked : spec.type === "number" ? Number(input.value) : input.value) };
+  return { row, input, read: () => (spec.type === "boolean" ? input.checked : spec.type === "number" ? Number(input.value) : input.value) };
 }
 
 export function openForm(_stage, anchor, widget, options, onSubmit) {

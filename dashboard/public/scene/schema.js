@@ -2,8 +2,11 @@
 // OpenClaw routes, saved layout) and the browser editor (form generation and
 // pre-checks). Pure ES module: no DOM, clock, or randomness.
 //
-// A widget is { id, type, x, y, w, h, z, props }. Geometry is normalized to the
-// 16:9 stage (0-1) so layouts work at any size. Every field is allowlisted per
+// A widget is { id, type, x, y, w, h, z, props } plus `hidden: true` when an
+// administrator hid it (omitted when visible, so older widgets keep their
+// shape). Geometry is normalized to the 16:9 stage (0-1) so layouts work at any
+// size; an embed attached to the log component is instead positioned within
+// the log panel's box (0-1 of that box). Every field is allowlisted per
 // type; unknown types or fields are rejected, never ignored. Strings are only
 // ever rendered with textContent / canvas fillText. Image URLs must be HTTPS
 // and start with an administrator-configured prefix.
@@ -68,12 +71,16 @@ export const WIDGET_TYPES = Object.freeze({
     },
   },
   // Same-origin HTML page from the server-side embed allowlist (dashboard-served
-  // paths only), shown in a sandboxed iframe on the back layer behind the log.
+  // paths only), shown in a sandboxed iframe behind the log text. `attach`
+  // picks the box it lives in: the log component (default; the embed is that
+  // panel's backdrop and moves with it in every screen mode) or the 16:9 stage.
   embed: {
     label: "Embed", rect: { x: 0, y: 0, w: 1, h: 1 }, z: 0, back: true,
     props: {
       src: { type: "embed", label: "Page", default: "" },
+      attach: { type: "enum", label: "Attached to", options: ["log", "stage"], labels: { log: "Log component (backdrop behind the log)", stage: "Whole stage (16:9)" }, default: "log" },
       opacity: { type: "number", label: "Opacity", min: 0.05, max: 1, step: 0.05, default: 0.3 },
+      theme: { type: "enum", label: "Theme", options: ["system", "dark", "light"], labels: { system: "System (follows the dashboard theme)", dark: "Dark", light: "Light" }, default: "system" },
     },
   },
   image: {
@@ -197,18 +204,36 @@ export function validateWidget(input, { allowlist = [], embeds = [] } = {}) {
     const required = (spec.type === "url" || spec.type === "embed") && value === "";
     props[key] = required ? fail(`${input.type} field 'props.${key}' is required`) : checkProp(input.type, key, spec, value, allowlist, embeds);
   }
-  // Hidden widgets stay in the scene (position, props) but are not drawn for viewers.
   const widget = { id: input.id, type: input.type, x, y, w, h, z, props, ...(input.hidden ? { hidden: true } : {}) };
   if (JSON.stringify(widget).length > LIMITS.widgetBytes) fail(`widget exceeds ${LIMITS.widgetBytes} bytes`);
   return widget;
 }
 
+// The built-in circtime backdrop as dashboard 0.2.2-0.2.3 created it: whole
+// stage, id "backdrop". Only this widget moves to the log component when an
+// older layout or live scene is migrated; every other embed keeps its place.
+export function isDefaultBackdrop(widget) {
+  return widget?.type === "embed" && widget.id === "backdrop" && widget.props?.src === "/embed/circtime/"
+    && widget.x === 0 && widget.y === 0 && widget.w === 1 && widget.h === 1;
+}
+
+// Embeds saved or recorded before `attach` existed were on the stage. The
+// default backdrop becomes the log component's backdrop; any other embed is
+// pinned to the stage, exactly where its administrator put it.
+export function migrateWidget(widget) {
+  if (widget?.type !== "embed" || !plain(widget.props) || widget.props.attach !== undefined) return widget;
+  return { ...widget, props: { ...widget.props, attach: isDefaultBackdrop(widget) ? "log" : "stage" } };
+}
+
 // PATCH semantics: geometry, z, visibility, and individual props may change; id and type never do.
-export function mergeWidget(existing, changes, options) {
+export function mergeWidget(existingInput, changes, options) {
   if (!plain(changes)) fail("widget changes must be an object");
   for (const key of Object.keys(changes)) if (!["x", "y", "w", "h", "z", "props", "hidden"].includes(key)) fail(key === "id" || key === "type" ? `widget field '${key}' cannot be changed` : `unknown widget field '${key}'`);
   if (changes.props !== undefined && !plain(changes.props)) fail("widget field 'props' must be an object");
-  return validateWidget({ ...existing, ...changes, props: { ...existing.props, ...(changes.props || {}) } }, options);
+  const existing = migrateWidget(existingInput);
+  const merged = { ...existing, ...changes, props: { ...existing.props, ...(changes.props || {}) } };
+  if (merged.hidden === false) delete merged.hidden;
+  return validateWidget(merged, options);
 }
 
 export function validateLayout(input, options) {
@@ -229,13 +254,96 @@ export function defaultRect(type) {
   return { ...(WIDGET_TYPES[type]?.rect || { x: 0.1, y: 0.1, w: 0.2, h: 0.2 }) };
 }
 
+// ---------- Scene settings (Settings → Canvas settings) ----------
+// Defaults for new widgets reuse the widget prop schemas above, so a default
+// can never hold a value the widget itself would reject.
+export const DEFAULT_PROPS = Object.freeze({ metric: ["source", "color"], avatar: ["mirror"], cat: ["mirror"], embed: ["attach", "opacity", "theme"] });
+export const REFRESH_MINUTES = Object.freeze([2, 5, 10, 15, 30, 60]);
+const EMBED_PATH = /^\/embed\/[a-z0-9-]+\/$/;
+
+export function defaultSettings() {
+  const defaults = {};
+  for (const [type, keys] of Object.entries(DEFAULT_PROPS)) defaults[type] = Object.fromEntries(keys.map(key => [key, WIDGET_TYPES[type].props[key].default]));
+  return {
+    imageAllowlist: [],
+    // Served embed paths the administrator switched off; empty = all served embeds enabled.
+    disabledEmbeds: [],
+    defaults,
+    // Which built-in widgets the built-in layout includes.
+    builtin: { avatar: true, cat: true, embed: true },
+    // Metric widgets: refresh interval while a metric widget is live, and
+    // whether that refresh also asks CPA for new quota (decision 2).
+    metricRefresh: { minutes: 5, cpa: true },
+  };
+}
+
+// Validates a settings change and merges it over `current` (missing keys keep
+// their current values). Unknown keys and values fail, like widgets.
+export function normalizeSettings(input, current = defaultSettings()) {
+  if (!plain(input)) fail("scene settings must be an object");
+  for (const key of Object.keys(input)) if (!["imageAllowlist", "disabledEmbeds", "defaults", "builtin", "metricRefresh"].includes(key)) fail(`unknown settings field '${key}'`);
+  const base = defaultSettings();
+  const next = {
+    imageAllowlist: input.imageAllowlist === undefined ? current.imageAllowlist ?? [] : normalizeAllowlist(input.imageAllowlist),
+    disabledEmbeds: current.disabledEmbeds ?? [],
+    defaults: Object.fromEntries(Object.entries(base.defaults).map(([type, values]) => [type, { ...values, ...(current.defaults?.[type] || {}) }])),
+    builtin: { ...base.builtin, ...(current.builtin || {}) },
+    metricRefresh: { ...base.metricRefresh, ...(current.metricRefresh || {}) },
+  };
+  if (input.disabledEmbeds !== undefined) {
+    if (!Array.isArray(input.disabledEmbeds) || input.disabledEmbeds.length > LIMITS.allowlist || !input.disabledEmbeds.every(item => typeof item === "string" && EMBED_PATH.test(item))) fail("disabled embeds must be a list of at most 16 dashboard embed paths such as /embed/circtime/");
+    next.disabledEmbeds = [...new Set(input.disabledEmbeds)];
+  }
+  if (input.defaults !== undefined) {
+    if (!plain(input.defaults)) fail("widget defaults must be an object");
+    for (const [type, values] of Object.entries(input.defaults)) {
+      if (!Object.hasOwn(DEFAULT_PROPS, type)) fail(`widget type '${String(type).slice(0, 40)}' has no defaults`);
+      if (!plain(values)) fail(`${type} defaults must be an object`);
+      for (const [key, value] of Object.entries(values)) {
+        if (!DEFAULT_PROPS[type].includes(key)) fail(`${type} defaults have no field '${String(key).slice(0, 40)}'`);
+        next.defaults[type][key] = checkProp(type, key, WIDGET_TYPES[type].props[key], value, [], []);
+      }
+    }
+  }
+  if (input.builtin !== undefined) {
+    if (!plain(input.builtin)) fail("built-in layout options must be an object");
+    for (const [key, value] of Object.entries(input.builtin)) {
+      if (!Object.hasOwn(base.builtin, key)) fail(`built-in layout has no option '${String(key).slice(0, 40)}'`);
+      if (typeof value !== "boolean") fail(`built-in layout option '${key}' must be true or false`);
+      next.builtin[key] = value;
+    }
+  }
+  if (input.metricRefresh !== undefined) {
+    if (!plain(input.metricRefresh)) fail("metric refresh must be an object");
+    for (const [key, value] of Object.entries(input.metricRefresh)) {
+      if (key === "minutes") { if (!REFRESH_MINUTES.includes(value)) fail(`metric refresh interval must be one of ${REFRESH_MINUTES.join(", ")} minutes`); }
+      else if (key === "cpa") { if (typeof value !== "boolean") fail("metric refresh field 'cpa' must be true or false"); }
+      else fail(`metric refresh has no field '${String(key).slice(0, 40)}'`);
+      next.metricRefresh[key] = value;
+    }
+  }
+  return next;
+}
+
+// Fills props a new widget left out with the administrator's defaults; the
+// validator fills anything else from the schema.
+export function withDefaults(input, defaults = {}) {
+  if (!plain(input) || typeof input.type !== "string" || !Object.hasOwn(DEFAULT_PROPS, input.type) || !plain(defaults[input.type])) return input;
+  const props = plain(input.props) ? { ...input.props } : input.props === undefined ? {} : input.props;
+  if (!plain(props)) return input;
+  for (const key of DEFAULT_PROPS[input.type]) if (props[key] === undefined && defaults[input.type][key] !== undefined) props[key] = defaults[input.type][key];
+  return { ...input, props };
+}
+
 // The built-in layout used until an administrator saves one: the avatar
 // top-right, the cat in its lower-right home, and (when the deployment serves
-// one) the first allowlisted embed across the whole stage behind everything.
-export function builtinLayout({ embeds = [] } = {}) {
+// one) the first enabled embed as the log component's backdrop, behind the log
+// text. `settings` (optional) supplies the administrator's defaults.
+export function builtinLayout({ embeds = [], settings = defaultSettings() } = {}) {
+  const defaults = settings.defaults || defaultSettings().defaults, include = { ...defaultSettings().builtin, ...(settings.builtin || {}) };
   return [
-    ...(embeds.length ? [{ id: "backdrop", type: "embed", ...defaultRect("embed"), z: 0, props: { src: embeds[0], opacity: 0.3 } }] : []),
-    { id: "avatar", type: "avatar", ...defaultRect("avatar"), z: 100, props: { mirror: false } },
-    { id: "cat", type: "cat", ...defaultRect("cat"), z: 101, props: { mirror: false } },
+    ...(embeds.length && include.embed ? [{ id: "backdrop", type: "embed", ...defaultRect("embed"), z: 0, props: { src: embeds[0], ...defaults.embed } }] : []),
+    ...(include.avatar ? [{ id: "avatar", type: "avatar", ...defaultRect("avatar"), z: 100, props: { ...defaults.avatar } }] : []),
+    ...(include.cat ? [{ id: "cat", type: "cat", ...defaultRect("cat"), z: 101, props: { ...defaults.cat } }] : []),
   ];
 }
