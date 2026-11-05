@@ -1,4 +1,5 @@
 import { Player, formatTime } from "/player.js";
+import { renderUsage, renderQuota } from "/metrics.js";
 
 const $ = selector => document.querySelector(selector);
 const state = { user: null, panels: [], stream: null, recordings: [], loading: 0, viewingLive: true, liveEvents: new Map() };
@@ -125,6 +126,8 @@ async function renderPanelView(panel) {
   }
 
   if (panel.id === "openclaw-config") return renderConfigEditor(body);
+  if (panel.id === "cpa-quota") return renderQuota(body, api);
+  if (panel.id === "usage-metrics") return renderUsage(body, api);
 
   // Extra data table for panels that expose it
   try {

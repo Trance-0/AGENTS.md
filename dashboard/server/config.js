@@ -18,6 +18,8 @@ export const config = {
   port: Number(process.env.PORT || 14141),
   dashboardToken: process.env.DASHBOARD_TOKEN || "",
   sessionSecret: required("SESSION_SECRET"),
+  metricsKeyFile: process.env.METRICS_ENCRYPTION_KEY_FILE || "",
+  metricsDir: process.env.METRICS_DATA_DIR || "",
 
   oidc: {
     issuer: required("OIDC_ISSUER"),

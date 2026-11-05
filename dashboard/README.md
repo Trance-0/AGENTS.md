@@ -32,6 +32,20 @@ stream makes subsequent assistant text in that session public; other sessions
 contribute only activity metadata. The public chat host retains its no-tools
 policy. See the deployment runbook for installation.
 
+## Usage and quota
+
+Administrators see **CPA quota** and **OpenClaw usage** in the plugin menu.
+Save your CPA remote dashboard management key in the quota panel; it is stored
+encrypted on the dashboard side. OpenClaw usage offers token and price views,
+route/model filters, trends, breakdowns, and editable rates. Usage without a
+known price is labeled unpriced. Collection starts with the installed plugin
+and does not depend on a public broadcast.
+
+See the [metrics design](../docs/development/dashboard-metrics.md) for the
+CC Switch source references and accounting semantics, and the
+[deployment runbook](../docs/deployment/dashboard.md#admin-usage-and-quota-metrics)
+for the separate encryption key and persistent SQLite storage.
+
 ## Panels
 
 Panels are modules discovered from `server/panels/`. Each exports a
@@ -108,7 +122,8 @@ Casdoor application. The public deployment uses Secure cookies and HTTPS.
 ## Public test deployment
 
 The dashboard is served at <https://live.trance-0.com>. From the repository root,
-after filling in `dashboard/.env`:
+after filling in `dashboard/.env` and preparing the metrics key/storage
+described in the deployment runbook:
 
 ```sh
 npm ci --prefix dashboard

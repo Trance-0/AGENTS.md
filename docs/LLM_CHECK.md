@@ -461,3 +461,26 @@ bullets specific: filenames, command names, outcomes.
   preservation were verified. CPA Opus 5.5 remains upstream-auth unavailable;
   official OpenAI GPT-6 Astra direct probe succeeded. Final evidence added to
   the development log; no unrelated runtime data or source was changed.
+
+- 2026-11-04: Added administrator-only CPA quota and OpenClaw usage plugins.
+  Reviewed CC Switch's UsageDashboard, UsageTrendChart, UsageHero/model tables,
+  and SQLite schema/rollup sources at ca58c031; exact links and design decisions
+  are in docs/development/dashboard-metrics.md. No upstream code was copied.
+- 2026-11-04: CPA management credentials use AES-256-GCM with a separately
+  mounted 32-byte key. Quota windows remain per account and unknown values are
+  preserved. OpenClaw exports attempt totals by route/model to private usage
+  JSONL, independently of broadcast state. SQLite commits events/cursors
+  atomically, deduplicates replay, and stores editable token-category prices.
+  Metrics and ciphertext use host-backed storage; the master key stays separate.
+- 2026-11-04: Passed all 20 Node 22 server tests, existing Chromium player
+  regressions, new admin/viewer/guest metrics tests, token/price filters,
+  quota/unknown displays, mobile layout checks, and encrypted credential save,
+  reload, and removal. The image builds; isolated production startup and guest
+  API denial pass. Key/log mount writes fail with EROFS. Python syntax,
+  Compose validation, diff checks, changed-file line limits, and secret/size
+  audits passed. No lint/typecheck scripts are configured for this JS service.
+- 2026-11-04: Updated README, dashboard README, architecture overview, env
+  example, deployment runbook, and reference notes. Runtime version unchanged.
+  No live CPA management key was imported: the administrator enters it after
+  deployment. Actual remaining quota is unverified until that setup. Jenkins
+  deployment changes are prepared; this round's push needs owner approval.

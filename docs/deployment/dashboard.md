@@ -527,3 +527,40 @@ credentials now live in `/home/node/.openclaw/credentials/git-credentials`
 `GIT_CONFIG_GLOBAL=/home/node/.openclaw/credentials/gitconfig`. The workspace
 `TOOLS.md`/`AGENTS.md` (injected into the system prompt) tell the agent where
 they are and how to test them before asking for a token.
+
+## Admin usage and quota metrics
+
+The plugin menu exposes **CPA quota** and **OpenClaw usage** to administrators
+only. Usage collection works while no public stream is running. Enter the CPA
+remote dashboard management key in its panel after deployment, then select
+**Refresh quota**. Enter route/model rates under **OpenClaw usage → Model
+prices** when OpenClaw does not have known rates. The price view labels unknown
+costs instead of presenting them as free.
+
+Jenkins prepares two persistent resources beside `secrets/deploy.env`:
+
+- `secrets/metrics-encryption.key`: 32 random bytes, UID/GID 1000, mode 0400.
+  The existing key is preserved on every deployment. It is mounted read-only
+  at `/run/secrets/metrics-encryption.key` in the dashboard only.
+- `metrics/`: UID/GID 1000, mode 0700. This host-backed directory contains
+  `metrics.sqlite` (including WAL files while running) and the encrypted CPA
+  credential. It mounts at `/app/metrics` and survives container/volume removal.
+
+The associated variables are `METRICS_ENCRYPTION_KEY_FILE` and
+`METRICS_DATA_DIR`. For Compose, prepare the resources first and set
+`METRICS_KEY_HOST_FILE` and `METRICS_DATA_HOST_DIR` if their default host paths
+are unsuitable. For local development, use a private 32-byte file generated
+with `openssl rand -out <private-key-file> 32`, set mode 0400, and point
+`METRICS_ENCRYPTION_KEY_FILE` to it. Never commit or print its contents.
+
+Deployment stops dashboard writes and archives the metrics directory alongside
+recording backups. Back up the master key separately in your private secret
+backup: ciphertext cannot be restored without the original key. Do not replace
+an existing key to fix a decryption error. Restoring a metrics snapshot requires
+its SQLite files and encrypted credential, plus the matching separate key.
+OpenClaw retains read-only access to its existing config, and the dashboard
+retains read-only access to shared activity/usage logs.
+
+The [metrics design and reference notes](../development/dashboard-metrics.md)
+identify the CC Switch visualization/storage sources and explain accounting
+limits and tests.

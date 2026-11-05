@@ -20,6 +20,8 @@ self-evolving, rollback-safe CI/CD loop. It is docs and check-script stubs
 only.
 
 [`dashboard/`](dashboard/README.md) is the agent dashboard behind Casdoor OIDC.
+Administrator-only plugins show CPA quota with encrypted management-key storage
+and OpenClaw token/cost usage by route and model.
 The local Docker deployment is available at <https://live.trance-0.com>, through
 the existing frpc container on remote port 6018. Guests can watch live streams
 and replay visible recordings; signed-in viewers can chat with the OpenClaw

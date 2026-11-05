@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { writeActivity } from "./activity-log.js";
+import { writeUsage } from "./usage-log.js";
 
 const reference = context => createHash("sha256").update(context.sessionKey || context.sessionId || "unknown").digest("hex");
 
@@ -23,6 +24,10 @@ export default function register(api) {
   let queue = Promise.resolve();
   let pending = 0;
   function record(type, event, context) {
+    if (type === "model_output") {
+      try { writeUsage(api.pluginConfig.activityDir, event, context, api.config); }
+      catch { api.logger.warn("Usage not recorded: dashboard-stream/metrics export — shared usage log could not be written; agent continues."); }
+    }
     if (!context.agentId || (!context.sessionKey && !context.sessionId)) return;
     if (api.pluginConfig.activityDir) {
       try { writeActivity(api.pluginConfig.activityDir, type, event, context); }

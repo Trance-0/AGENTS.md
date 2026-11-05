@@ -57,9 +57,10 @@ export async function setEnabled(id, enabled) {
 }
 
 // Strip server-side resolvers (children, run) so they never reach the browser.
-export async function snapshot() {
+export async function snapshot({ isAdmin = false } = {}) {
   const out = [];
   for (const panel of panels.values()) {
+    if (panel.adminOnly && !isAdmin) continue;
     const enabled = await isEnabled(panel.id);
     out.push({
       id: panel.id,
@@ -67,6 +68,7 @@ export async function snapshot() {
       description: panel.description ?? "",
       icon: panel.icon ?? "panel",
       enabled,
+      adminOnly: panel.adminOnly === true,
       settings: await safeCall(panel.settings),
       status: await safeCall(panel.status),
     });

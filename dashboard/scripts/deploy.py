@@ -65,6 +65,27 @@ def main():
     config_dir = Path(os.environ.get("OPENCLAW_CONFIG_HOST_DIR", "/home/motuariki/Documents/DockerVolumes/openclaw/config"))
     if not (config_dir / "openclaw.json").is_file():
         raise RuntimeError("Deployment cannot start: dashboard/config mount — shared OpenClaw config directory has no openclaw.json.")
+    # Keep the encryption key outside recording/database backups and out of
+    # OpenClaw's mounts. Never regenerate an existing key during deployment.
+    metrics_key = env_file.parent / "metrics-encryption.key"
+    if not metrics_key.exists():
+        descriptor = os.open(metrics_key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(os.urandom(32))
+            output.flush()
+            os.fsync(output.fileno())
+        os.chown(metrics_key, 1000, 1000)
+        os.chmod(metrics_key, 0o400)
+    if metrics_key.stat().st_size != 32:
+        raise RuntimeError("Deployment cannot start: dashboard/metrics encryption — existing key must contain exactly 32 bytes.")
+    metrics_dir = env_file.parent.parent / "metrics"
+    if not metrics_dir.exists():
+        metrics_dir.mkdir(mode=0o700)
+        os.chown(metrics_dir, 1000, 1000)
+    run("docker", "run", "--rm", "--entrypoint", "node",
+        "--mount", f"type=bind,src={metrics_key},dst=/run/secrets/metrics-encryption.key,readonly",
+        "--mount", f"type=bind,src={metrics_dir},dst=/app/metrics",
+        image, "-e", "const fs=require('node:fs');if(fs.readFileSync('/run/secrets/metrics-encryption.key').length!==32)process.exit(1);fs.accessSync('/app/metrics',fs.constants.R_OK|fs.constants.W_OK)")
     created = None
     try:
         if old:
@@ -77,6 +98,10 @@ def main():
                 "--mount", f"type=bind,src={backup_dir},dst=/backup",
                 image, "-C", "/data", "-cf", "/backup/data.tar", ".")
             log.info("State backup saved: dashboard/deployment backup — recording volume archived privately.")
+            run("docker", "run", "--rm", "--user", "0", "--entrypoint", "tar",
+                "--mount", f"type=bind,src={metrics_dir},dst=/metrics,readonly",
+                "--mount", f"type=bind,src={backup_dir},dst=/backup",
+                image, "-C", "/metrics", "-cf", "/backup/metrics.tar", ".")
             if old == name:
                 old_name = f"{old}-before-{stamp}"
                 run("docker", "rename", old, old_name)
@@ -86,6 +111,10 @@ def main():
             "--env-file", str(env_file), "-e", "HOST=127.0.0.1", "-e", "PORT=14143",
             "-e", "OPENCLAW_ACTIVITY_DIR=/var/log/openclaw-activity",
             "-e", "OPENCLAW_CONFIG_FILE=/openclaw-config/openclaw.json",
+            "-e", "METRICS_ENCRYPTION_KEY_FILE=/run/secrets/metrics-encryption.key",
+            "-e", "METRICS_DATA_DIR=/app/metrics",
+            "--mount", f"type=bind,src={metrics_dir},dst=/app/metrics",
+            "--mount", f"type=bind,src={metrics_key},dst=/run/secrets/metrics-encryption.key,readonly",
             "--mount", f"type=bind,src={activity_dir},dst=/var/log/openclaw-activity,readonly",
             "--mount", f"type=bind,src={config_dir},dst=/openclaw-config",
             "--mount", f"type=volume,src={volume},dst=/app/data", "--log-opt", "max-size=10m", "--log-opt", "max-file=3",

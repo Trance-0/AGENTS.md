@@ -21,6 +21,10 @@ import { watchActivity } from "./openclaw-activity.js";
 import { OpenClawConfigStore } from "./openclaw-config.js";
 import { mountOpenClawConfig, CONFIG_ROUTE } from "./openclaw-config-routes.js";
 import { noteRelayActivity } from "./relay-status.js";
+import { MetricsStore } from "./metrics/store.js";
+import { SecretStore } from "./metrics/secrets.js";
+import { watchUsage } from "./metrics/reader.js";
+import { mountMetrics } from "./metrics/routes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
@@ -53,6 +57,10 @@ await loadPanels();
 await initOidc();
 
 const broadcast = new BroadcastStore(path.join(config.dataDir, "recordings"));
+const metricsDirectory = config.metricsDir || path.join(config.dataDir, "metrics");
+const metrics = new MetricsStore(metricsDirectory);
+const metricsSecrets = new SecretStore(metricsDirectory, config.metricsKeyFile);
+if (config.openclaw.activityDir) watchUsage(config.openclaw.activityDir, metrics, msg => emit({ source: "dashboard", level: "warn", msg }));
 if (config.openclaw.activityDir) {
   let activityRecordingId = broadcast.active?.id;
   const activityEvents = new Set(broadcast.active ? broadcast.readEvents(broadcast.active.id, Math.max(0, broadcast.active.eventCount - 2000), 2000).map(event => event.eventRef) : []);
@@ -152,6 +160,7 @@ const configStore = config.openclaw.configFile
   ? new OpenClawConfigStore({ file: config.openclaw.configFile, backupDir: path.join(config.dataDir, "openclaw-config-backups") })
   : null;
 mountOpenClawConfig(app, configStore, { requireAuth, requireAdmin, requireCsrf, isEnabled });
+mountMetrics(app, { store: metrics, secrets: metricsSecrets, requireAuth, requireAdmin, requireCsrf, isEnabled });
 
 function requireToken(req, res, next) {
   if (!hasDashboardToken) {
@@ -166,11 +175,12 @@ function requireToken(req, res, next) {
 }
 
 // --- Panel API ---
-app.get("/api/panels", requireAuth, async (_req, res) => res.json({ panels: await snapshot() }));
+app.get("/api/panels", requireAuth, async (req, res) => res.json({ panels: await snapshot({ isAdmin: req.session.user.isAdmin }) }));
 
 app.get("/api/panels/:id/data", requireAuth, async (req, res) => {
   const panel = getPanel(req.params.id);
   if (!panel) return res.status(404).json({ error: "Panel unavailable: dashboard/panel lookup — panel ID is not registered." });
+  if (panel.adminOnly && !req.session.user.isAdmin) return res.status(403).json({ error: "Panel unavailable: dashboard/panel authorization — administrator group is required." });
   if (!(await isEnabled(panel.id))) return res.status(404).json({ error: "Panel unavailable: dashboard/panel lookup — panel is disabled." });
   const data = typeof panel.data === "function" ? await panel.data() : {};
   res.json(data ?? {});

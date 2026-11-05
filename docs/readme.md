@@ -33,6 +33,12 @@ The dashboard mounts that directory read-only and tails it into the live
 recording; cursors persist separately in dashboard storage. A first attachment
 starts at the current end of the logs. Later restarts resume the saved cursor.
 
+Administrator-only plugin panels provide CPA quota and OpenClaw usage metrics.
+The usage exporter records tokens by route/model in separate shared files; a
+SQLite database stores replay-safe events, pricing, and aggregation cursors.
+The CPA management key is encrypted with a separately mounted master key.
+See [metrics architecture and CC Switch references](development/dashboard-metrics.md).
+
 ### Jenkins, Docker, and FRP deployment
 
 The Docker Compose service binds to host loopback on port 14143. The existing
@@ -48,7 +54,8 @@ signed browser-session cookie. OpenClaw can set the live summary. Sessions expir
 12 hours and are cleared on restart.
 Docker retains structured, timestamped application logs with rotation.
 
-After configuring the Casdoor application and the gitignored `dashboard/.env`,
+After preparing the metrics key/storage in the deployment runbook and
+configuring the Casdoor application and the gitignored `dashboard/.env`,
 run these commands from the repository root:
 
 ```sh

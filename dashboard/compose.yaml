@@ -12,8 +12,21 @@ services:
       PORT: "14143"
       OPENCLAW_ACTIVITY_DIR: /var/log/openclaw-activity
       OPENCLAW_CONFIG_FILE: /openclaw-config/openclaw.json
+      METRICS_ENCRYPTION_KEY_FILE: /run/secrets/metrics-encryption.key
+      METRICS_DATA_DIR: /app/metrics
     volumes:
       - dashboard-state:/app/data
+      - type: bind
+        source: ${METRICS_DATA_HOST_DIR:-/home/motuariki/Documents/DockerVolumes/agent-dashboard/metrics}
+        target: /app/metrics
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${METRICS_KEY_HOST_FILE:-/home/motuariki/Documents/DockerVolumes/agent-dashboard/secrets/metrics-encryption.key}
+        target: /run/secrets/metrics-encryption.key
+        read_only: true
+        bind:
+          create_host_path: false
       - ${OPENCLAW_ACTIVITY_HOST_DIR:-/home/motuariki/Documents/DockerVolumes/openclaw/activity}:/var/log/openclaw-activity:ro
       # Live OpenClaw config: read-write here (admin editor), read-only in OpenClaw.
       - ${OPENCLAW_CONFIG_HOST_DIR:-/home/motuariki/Documents/DockerVolumes/openclaw/config}:/openclaw-config:rw

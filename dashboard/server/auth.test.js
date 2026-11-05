@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync, sign } from "node:crypto";
+import { generateKeyPairSync, sign, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { writeUsage } from "../openclaw-plugin/usage-log.js";
 
 test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", { timeout: 60000 }, async () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -67,7 +68,11 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     const configFile = path.join(dir, "openclaw-config", "openclaw.json");
     await mkdir(path.dirname(configFile));
     await writeFile(configFile, JSON.stringify({ gateway: { bind: "loopback" }, channels: { telegram: { botToken: "literal-telegram-secret", groupPolicy: "allowlist" } } }, null, 2) + "\n");
-    child = spawn(process.execPath, ["server/index.js"], { cwd: dir, env: { ...process.env, NODE_ENV: "test", HOST: "127.0.0.1", PORT: String(port), OIDC_ISSUER: issuer, OIDC_CLIENT_ID: "test-dashboard", OIDC_CLIENT_SECRET: "test-client-secret", OIDC_REDIRECT_URI: "https://live.example.test/auth/callback", OIDC_REQUIRED_GROUP: "trance-0/app-agent", SESSION_SECRET: "test-session-secret", DASHBOARD_TOKEN: "test-mutation-token", OPENCLAW_ENDPOINT: issuer, OPENCLAW_TOKEN: "test-gateway-token", ASTRBOT_ENDPOINT: issuer, JENKINS_ENDPOINT: issuer, OPENCLAW_CONFIG_FILE: configFile } });
+    const metricsKeyFile = path.join(dir, "metrics-key");
+    await writeFile(metricsKeyFile, randomBytes(32), { mode: 0o400 });
+    const usageDir = path.join(dir, "usage-logs");
+    for (const [provider, model] of [["cpa", "claude-test"], ["openai", "gpt-test"]]) writeUsage(usageDir, { runId: provider, provider, model, usage: { input: 1000, output: 500, cacheRead: 200, cacheWrite: 100 }, lastAssistant: { timestamp: Date.now() } }, { agentId: "main" });
+    child = spawn(process.execPath, ["server/index.js"], { cwd: dir, env: { ...process.env, NODE_ENV: "test", HOST: "127.0.0.1", PORT: String(port), OIDC_ISSUER: issuer, OIDC_CLIENT_ID: "test-dashboard", OIDC_CLIENT_SECRET: "test-client-secret", OIDC_REDIRECT_URI: "https://live.example.test/auth/callback", OIDC_REQUIRED_GROUP: "trance-0/app-agent", SESSION_SECRET: "test-session-secret", DASHBOARD_TOKEN: "test-mutation-token", OPENCLAW_ENDPOINT: issuer, OPENCLAW_TOKEN: "test-gateway-token", ASTRBOT_ENDPOINT: issuer, JENKINS_ENDPOINT: issuer, OPENCLAW_CONFIG_FILE: configFile, METRICS_ENCRYPTION_KEY_FILE: metricsKeyFile, OPENCLAW_ACTIVITY_DIR: usageDir } });
     child.stdout.on("data", chunk => { output += chunk; });
     child.stderr.on("data", chunk => { output += chunk; });
     const base = `http://127.0.0.1:${port}`;
@@ -78,7 +83,7 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
       await new Promise(resolve => setTimeout(resolve, 50));
     }
     assert.ok(ready, output);
-    for (const route of ["/api/panels", "/api/uptime", "/api/panels/openclaw/data", "/api/admin/recordings", "/api/admin/openclaw-config"]) assert.equal((await request(route)).status, 401);
+    for (const route of ["/api/panels", "/api/uptime", "/api/panels/openclaw/data", "/api/admin/recordings", "/api/admin/openclaw-config", "/api/admin/metrics/usage", "/api/admin/metrics/cpa", "/api/panels/usage-metrics/data"]) assert.equal((await request(route)).status, 401);
     assert.equal((await request("/api/admin/openclaw-config", { method: "PUT", headers: { "x-dashboard-request": "1", "content-type": "application/json" }, body: "{}" })).status, 401);
     assert.equal((await request("/api/panels/openclaw/toggle", { method: "POST", headers: { authorization: "Bearer test-mutation-token" } })).status, 401);
     assert.equal((await request("/auth/callback?code=unsolicited&state=unsolicited")).status, 400);
@@ -107,6 +112,9 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     const viewerHeaders = { cookie: viewerCallback.headers.get("set-cookie").split(";")[0], authorization: "Bearer test-mutation-token" };
     assert.equal((await request("/api/panels/settings/toggle", { method: "POST", headers: viewerHeaders })).status, 403);
     assert.equal((await request("/api/admin/openclaw-config", { headers: viewerHeaders })).status, 403, "viewers cannot read the OpenClaw config");
+    for (const url of ["/api/admin/metrics/usage", "/api/admin/metrics/cpa", "/api/panels/usage-metrics/data", "/api/panels/cpa-quota/data"]) assert.equal((await request(url, { headers: viewerHeaders })).status, 403);
+    const viewerPanels = (await (await request("/api/panels", { headers: viewerHeaders })).json()).panels;
+    assert.ok(!viewerPanels.some(panel => ["cpa-quota", "usage-metrics"].includes(panel.id)));
     const allowed = await login(["trance-0/app-agent", "trance-0/admin-agent"]);
     const callback = await request(`/auth/callback?code=${allowed.code}&state=${allowed.state}`, { headers: allowed.headers });
     assert.equal(callback.status, 302);
@@ -118,6 +126,30 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     assert.equal((await request("/auth/avatar", { headers })).headers.get("content-type"), "image/png");
     assert.equal((await request("/auth/avatar")).status, 401);
     const mutation = { ...headers, "x-dashboard-request": "1", "content-type": "application/json" };
+    const adminPanels = (await (await request("/api/panels", { headers })).json()).panels;
+    assert.ok(adminPanels.some(panel => panel.id === "usage-metrics"));
+    assert.ok(adminPanels.some(panel => panel.id === "cpa-quota"));
+    const metrics = await (await request("/api/admin/metrics/usage", { headers })).json();
+    assert.equal(metrics.summary.tokens, 3600);
+    assert.equal(metrics.summary.unpriced, 2);
+    const credential = { endpoint: "https://quota.example", key: "PRIVATE-METRICS-KEY" };
+    assert.equal((await request("/api/admin/metrics/cpa", { method: "PUT", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(credential) })).status, 403);
+    assert.equal((await request("/api/admin/metrics/cpa", { method: "PUT", headers: { ...mutation, ...viewerHeaders }, body: JSON.stringify(credential) })).status, 403);
+    const savedCredential = await request("/api/admin/metrics/cpa", { method: "PUT", headers: mutation, body: JSON.stringify(credential) });
+    assert.equal(savedCredential.status, 200);
+    assert.ok(!(await savedCredential.text()).includes(credential.key));
+    assert.ok(!(await readFile(path.join(dir, ".data/metrics/cpa-credential.enc.json"), "utf8")).includes(credential.key));
+    const secretView = await request("/api/admin/metrics/cpa", { headers });
+    assert.equal(secretView.headers.get("cache-control"), "no-store");
+    assert.ok(!(await secretView.text()).includes(credential.key));
+    assert.equal((await request("/api/admin/metrics/cpa", { method: "PUT", headers: mutation, body: JSON.stringify({ endpoint: "https://changed.example", key: "" }) })).status, 400, "changing endpoint cannot silently forward the old key");
+    const price = { route: "cpa", model: "claude-test", input: 3, output: 15, cacheRead: .3, cacheWrite: 3.75 };
+    assert.equal((await request("/api/admin/metrics/pricing", { method: "PUT", headers: { ...mutation, origin: "https://attacker.invalid" }, body: JSON.stringify(price) })).status, 403);
+    assert.equal((await request("/api/admin/metrics/pricing", { method: "PUT", headers: mutation, body: JSON.stringify(price) })).status, 200);
+    const priced = await (await request("/api/admin/metrics/usage?route=cpa", { headers })).json();
+    assert.equal(priced.summary.costUsd, .010935);
+    assert.equal((await request("/api/admin/metrics/cpa", { method: "DELETE", headers: mutation })).status, 200);
+    assert.equal((await request("/api/admin/metrics/cpa/refresh", { method: "POST", headers: mutation, body: "{}" })).status, 409);
     const configView = await (await request("/api/admin/openclaw-config", { headers })).json();
     assert.equal(configView.config.channels.telegram.botToken, "__dashboard_redacted__");
     assert.ok(!JSON.stringify(configView).includes("literal-telegram-secret"));
@@ -166,6 +198,9 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
       const check = spawn(process.execPath, [path.join(root, "scripts/browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie }, stdio: "inherit" });
       const [code] = await once(check, "exit");
       assert.equal(code, 0);
+      const metricsCheck = spawn(process.execPath, [path.join(root, "scripts/metrics-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie, DASHBOARD_VIEWER_COOKIE: viewerHeaders.cookie }, stdio: "inherit" });
+      const [metricsCode] = await once(metricsCheck, "exit");
+      assert.equal(metricsCode, 0);
     }
     const toggle = "/api/panels/settings/toggle";
     assert.equal((await request(toggle, { method: "POST", headers })).status, 401);
@@ -173,6 +208,9 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     const changed = await request(toggle, { method: "POST", headers: { ...headers, authorization: "Bearer test-mutation-token", "content-type": "application/json" }, body: JSON.stringify({ enabled: false }) });
     assert.deepEqual(await changed.json(), { id: "settings", enabled: false });
     assert.equal((await request("/api/panels/settings/data", { headers })).status, 404);
+    await request("/api/panels/cpa-quota/toggle", { method: "POST", headers: { ...mutation, authorization: "Bearer test-mutation-token" }, body: JSON.stringify({ enabled: false }) });
+    assert.equal((await request("/api/admin/metrics/cpa", { headers })).status, 404);
+    assert.equal((await request("/api/admin/metrics/cpa/refresh", { method: "POST", headers: mutation, body: "{}" })).status, 404);
     await request("/auth/logout", { headers });
     assert.equal((await request("/api/panels", { headers })).status, 401);
   } finally {
