@@ -1,11 +1,12 @@
-// Placeholder settings panel. Real settings (theme, accent, notifications) are
-// future work; this keeps the YouTube "settings" slot occupied.
+// Per-browser dashboard preferences. The browser renders these fields as live
+// controls and stores them in localStorage (see public/theme.js and
+// public/player.js); nothing here is saved on the server or sent upstream.
 
-export function createSettingsPanel(ctx) {
+export function createSettingsPanel() {
   return {
     id: "settings",
     title: "Settings",
-    description: "Dashboard appearance and behavior (placeholder).",
+    description: "Appearance and playback preferences for this browser. Changes apply immediately and are saved in this browser only.",
     icon: "settings",
 
     settings: () => [
@@ -13,15 +14,17 @@ export function createSettingsPanel(ctx) {
         key: "theme",
         label: "Theme",
         type: "select",
-        value: "dark",
-        options: ["dark", "light", "system"],
+        scope: "browser",
+        options: ["system", "light", "dark"],
+        help: "System follows your device's light or dark setting.",
       },
-      { key: "autoplay", label: "Autoplay stream", type: "boolean", value: true },
-      { key: "volume", label: "Alert volume", type: "number", value: 40 },
-    ],
-
-    status: () => [
-      { label: "Theme", value: "dark", tone: "neutral" },
+      {
+        key: "autoplay",
+        label: "Autoplay recordings",
+        type: "boolean",
+        scope: "browser",
+        help: "Start replay when you open a recording. Live streams always follow the live edge.",
+      },
     ],
   };
 }

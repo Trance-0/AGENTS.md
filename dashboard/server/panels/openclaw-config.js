@@ -8,8 +8,9 @@ export function createOpenclawConfigPanel() {
   return {
     id: "openclaw-config",
     title: "OpenClaw config",
+    adminOnly: true,
     description: "Edit OpenClaw's live openclaw.json (administrators only). OpenClaw reads it read-only and hot-reloads saves; secret values stay masked.",
-    icon: "settings",
+    icon: "config",
 
     settings: () => [
       { key: "file", label: "Config file", type: "string", value: config.openclaw.configFile || "(not mounted)" },

@@ -29,8 +29,8 @@ shows both its starting and completed file-path events in the public player.
 The browser connects to `https://live.trance-0.com`. Its remote reverse proxy
 terminates TLS and routes HTTP to a private FRP remote TCP port. The existing local
 `frpc` container uses host networking and forwards requests to
-`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.1.6` using image
-`agent-dashboard:0.1.6`, with Node.js 22 as the unprivileged `node` user.
+`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.1.7` using image
+`agent-dashboard:0.1.7`, with Node.js 22 as the unprivileged `node` user.
 
 ## Casdoor setup
 
@@ -53,9 +53,13 @@ not update the existing user's groups during this deployment.
 
 Guests can watch public streams and visible recordings without signing in.
 The dashboard enforces `app-agent` on sign-in for chat and private panels.
-Stream start/end and recording visibility/score changes require `admin-agent`
-and the same-origin `X-Dashboard-Request: 1` header. Panel mutations additionally
-require `admin-agent` and the `DASHBOARD_TOKEN` bearer token. These permissions
+Stream start/end, recording visibility/score changes, and panel enable/disable
+toggles require `admin-agent` and the same-origin `X-Dashboard-Request: 1`
+header; admins toggle a panel with the "Panel enabled" switch at the top of
+that panel. Non-browser automation may instead send the `DASHBOARD_TOKEN`
+bearer with an admin session; a present but wrong bearer is rejected (401),
+never treated as the header path. Disabled and admin-only panels (CPA quota,
+OpenClaw usage, OpenClaw config) are not listed for members. These permissions
 grant no Casdoor-wide administrative rights. Existing sessions must sign out
 and back in to acquire changed memberships.
 
@@ -79,7 +83,11 @@ The integration endpoints are `http://127.0.0.1:18789` for OpenClaw,
 The manager panels probe availability and expose configuration names. Live
 chat additionally requires `OPENCLAW_TOKEN` and `OPENCLAW_AGENT=dashboard-host`;
 keep that operator credential in the private environment file only.
-Settings fields are displays; they do not save upstream configuration.
+Panel settings rows that show endpoints or files are read-only displays of
+this environment. The Settings panel (theme: system/light/dark, autoplay
+recordings) and the top-bar theme button are per-browser preferences in
+`localStorage` (`agent-dashboard.theme`, `agent-dashboard.autoplay`); they are
+never sent to the server.
 
 Verify ignored credentials with `git check-ignore dashboard/.env`. Never print
 the resolved Compose configuration: it contains the environment secrets.
@@ -143,18 +151,19 @@ to a private FRP remote port cannot set the secure login cookie; use the HTTPS h
 `npm test --prefix dashboard` exercises a local OIDC issuer with signed ID
 tokens: missing or mismatched login state, nonce validation, group denial,
 viewer mutation denial, session regeneration, logout, HTTPS cookies, bearer
-tokens, and JSON panel toggles. It runs against isolated temporary state.
+tokens, and JSON panel toggles (browser header path, cross-origin and viewer
+denial, wrong-bearer rejection). It runs against isolated temporary state.
 
 For a live check, sign in through the public hostname with an authorized
 Casdoor account. Verify panel status and that log events arrive immediately.
 An unauthenticated `/api/panels` request must return 401; a signed-in viewer
 without `app-agent` must be denied at the callback. A viewer with `app-agent`
-and without `admin-agent` must receive 403 for mutations even with a valid
-bearer token. Remove any temporary test identities after testing.
+and without `admin-agent` must receive 403 for mutations, including panel
+toggles, even with a valid bearer token. Remove any temporary test identities after testing.
 
 ```sh
-docker logs --timestamps --tail 100 agent-dashboard-v0.1.6
-docker inspect agent-dashboard-v0.1.6 --format '{{.State.Health.Status}}'
+docker logs --timestamps --tail 100 agent-dashboard-v0.1.7
+docker inspect agent-dashboard-v0.1.7 --format '{{.State.Health.Status}}'
 ```
 
 Docker retains three rotated JSON log files of up to 10 MB each. Application
@@ -166,7 +175,7 @@ never be included in logs.
 
 Before a future update, retain the current image under a distinct local tag.
 To roll back, restore the previous source revision or retag the retained image
-as `agent-dashboard:0.1.6`, then run
+as `agent-dashboard:0.1.7`, then run
 `docker compose -f dashboard/compose.yaml up -d --no-build`. Keep the private
 environment file and state volume. To remove just the dashboard exposure,
 restore the saved FRP configuration, validate it, and restart `frpc`; other
@@ -249,7 +258,10 @@ It runs against the temporary signed-token OIDC fixture and mock OpenClaw,
 covering guest access, hover content, timestamp replay, chat separation,
 responsive recommendations, screen modes, avatars, start/end, and moderation.
 It also covers the player controls: icons, play/pause state, the speed menu
-(2x replay timing and live 1x lock), and YouTube-style auto-hide. If the host
+(2x replay timing and live 1x lock), and YouTube-style auto-hide.
+`scripts/ui-browser-check.mjs` covers system/light/dark themes (persistence,
+no flash on reload, settings/top-bar sync), viewer versus admin sidebars, the
+icon rail and mobile menu, and an in-browser admin panel toggle. If the host
 Node.js is older than 22, run it inside the matching
 `mcr.microsoft.com/playwright:v<version>-noble` image with the dashboard
 `node_modules` and the Playwright package mounted read-only.

@@ -57,11 +57,14 @@ export async function setEnabled(id, enabled) {
 }
 
 // Strip server-side resolvers (children, run) so they never reach the browser.
+// Non-admins see neither admin-only nor disabled panels; admins see every
+// panel with its enabled flag so they can switch it back on.
 export async function snapshot({ isAdmin = false } = {}) {
   const out = [];
   for (const panel of panels.values()) {
     if (panel.adminOnly && !isAdmin) continue;
     const enabled = await isEnabled(panel.id);
+    if (!enabled && !isAdmin) continue;
     out.push({
       id: panel.id,
       title: panel.title,

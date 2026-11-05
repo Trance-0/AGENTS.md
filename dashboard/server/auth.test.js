@@ -114,7 +114,10 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     assert.equal((await request("/api/admin/openclaw-config", { headers: viewerHeaders })).status, 403, "viewers cannot read the OpenClaw config");
     for (const url of ["/api/admin/metrics/usage", "/api/admin/metrics/cpa", "/api/panels/usage-metrics/data", "/api/panels/cpa-quota/data"]) assert.equal((await request(url, { headers: viewerHeaders })).status, 403);
     const viewerPanels = (await (await request("/api/panels", { headers: viewerHeaders })).json()).panels;
-    assert.ok(!viewerPanels.some(panel => ["cpa-quota", "usage-metrics"].includes(panel.id)));
+    assert.ok(!viewerPanels.some(panel => ["cpa-quota", "usage-metrics", "openclaw-config"].includes(panel.id)), "admin-only panels stay out of the viewer menu");
+    assert.ok(["astrbot", "build-status", "openclaw", "settings"].every(id => viewerPanels.some(panel => panel.id === id)));
+    assert.equal((await request("/api/panels/openclaw-config/data", { headers: viewerHeaders })).status, 403);
+    assert.deepEqual(viewerPanels.find(panel => panel.id === "settings").settings.map(setting => [setting.key, setting.scope]), [["theme", "browser"], ["autoplay", "browser"]]);
     const allowed = await login(["trance-0/app-agent", "trance-0/admin-agent"]);
     const callback = await request(`/auth/callback?code=${allowed.code}&state=${allowed.state}`, { headers: allowed.headers });
     assert.equal(callback.status, 302);
@@ -201,10 +204,23 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
       const metricsCheck = spawn(process.execPath, [path.join(root, "scripts/metrics-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie, DASHBOARD_VIEWER_COOKIE: viewerHeaders.cookie }, stdio: "inherit" });
       const [metricsCode] = await once(metricsCheck, "exit");
       assert.equal(metricsCode, 0);
+      const uiCheck = spawn(process.execPath, [path.join(root, "scripts/ui-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie, DASHBOARD_VIEWER_COOKIE: viewerHeaders.cookie }, stdio: "inherit" });
+      const [uiCode] = await once(uiCheck, "exit");
+      assert.equal(uiCode, 0);
     }
     const toggle = "/api/panels/settings/toggle";
-    assert.equal((await request(toggle, { method: "POST", headers })).status, 401);
+    // Browser path: admin session + same-origin header. Automation path: admin session + bearer.
+    assert.equal((await request(toggle, { method: "POST", headers })).status, 403, "toggle needs the same-origin header or the bearer");
+    assert.equal((await request(toggle, { method: "POST", headers: { ...mutation, origin: "https://attacker.invalid" }, body: JSON.stringify({ enabled: false }) })).status, 403);
+    assert.equal((await request(toggle, { method: "POST", headers: { ...mutation, cookie: viewerHeaders.cookie }, body: JSON.stringify({ enabled: false }) })).status, 403, "viewers cannot toggle from the browser");
     assert.equal((await request(toggle, { method: "POST", headers: { ...headers, authorization: "Bearer wrong" } })).status, 401);
+    assert.equal((await request(toggle, { method: "POST", headers: { ...mutation, authorization: "Bearer wrong" }, body: "{}" })).status, 401, "a wrong bearer is rejected, not ignored");
+    assert.equal((await request("/api/panels/live-stream/toggle", { method: "POST", headers: mutation, body: JSON.stringify({ enabled: false }) })).status, 400);
+    const browserToggle = await request("/api/panels/astrbot/toggle", { method: "POST", headers: mutation, body: JSON.stringify({ enabled: false }) });
+    assert.deepEqual(await browserToggle.json(), { id: "astrbot", enabled: false });
+    assert.ok(!(await (await request("/api/panels", { headers: viewerHeaders })).json()).panels.some(panel => panel.id === "astrbot"), "disabled panels leave the member menu");
+    assert.equal((await (await request("/api/panels", { headers })).json()).panels.find(panel => panel.id === "astrbot").enabled, false, "admins still see disabled panels");
+    assert.deepEqual(await (await request("/api/panels/astrbot/toggle", { method: "POST", headers: mutation, body: JSON.stringify({ enabled: true }) })).json(), { id: "astrbot", enabled: true });
     const changed = await request(toggle, { method: "POST", headers: { ...headers, authorization: "Bearer test-mutation-token", "content-type": "application/json" }, body: JSON.stringify({ enabled: false }) });
     assert.deepEqual(await changed.json(), { id: "settings", enabled: false });
     assert.equal((await request("/api/panels/settings/data", { headers })).status, 404);

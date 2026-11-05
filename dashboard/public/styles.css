@@ -13,7 +13,39 @@
   --warn: #f0a500;
   --error: #e5484d;
   --accent: #3ea6ff;
+  --muted: var(--text-dim);
+  --on-accent: #0f0f0f;
   --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+}
+
+/* Light theme (theme.js sets <html data-theme> before first paint). */
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --surface: #f8f8f8;
+  --surface-2: #f0f0f0;
+  --surface-3: #e3e3e3;
+  --border: #d6d6d6;
+  --text: #0f0f0f;
+  --text-dim: #555555;
+  --text-faint: #6f6f6f;
+  --ok: #1a7f37;
+  --warn: #9a5b00;
+  --error: #c62828;
+  --accent: #065fd4;
+  --on-accent: #ffffff;
+}
+/* The player screen, its overlay controls, and the timeline preview stay dark
+   in every theme, like a video surface. */
+:root[data-theme="light"] .screen-surface {
+  --surface: #181818;
+  --surface-2: #212121;
+  --surface-3: #272727;
+  --border: #303030;
+  --text: #f1f1f1;
+  --text-dim: #aaaaaa;
+  --text-faint: #717171;
+  --accent: #3ea6ff;
+  color: var(--text);
 }
 
 * { box-sizing: border-box; }
@@ -103,8 +135,9 @@ html, body {
 .nav-item:hover { background: var(--surface-2); }
 .nav-item.active { background: var(--surface-2); font-weight: 600; }
 .nav-item svg { width: 20px; height: 20px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 1.8; }
-.nav-item .dot { margin-left: auto; font-size: 9px; color: var(--ok); }
+.nav-item .dot { margin-left: auto; font-size: 10px; color: var(--text-faint); border: 1px solid var(--border); border-radius: 8px; padding: 0 5px; }
 .sidebar.collapsed .nav-item span, .sidebar.collapsed .nav-section, .sidebar.collapsed .sidebar-footer { display: none; }
+.sidebar.collapsed .nav-item { justify-content: center; padding: 10px 0; }
 .sidebar-footer { padding: 12px 24px; }
 .chip {
   display: inline-flex; align-items: center; gap: 6px;
@@ -307,6 +340,8 @@ table.data-table { width: 100%; border-collapse: collapse; margin-top: 16px; }
   .sidebar.open { transform: translateX(0); }
   .sidebar.collapsed { width: 220px; }
   .sidebar.collapsed .nav-item span, .sidebar.collapsed .nav-section { display: inline; }
+  .sidebar.collapsed .nav-item { justify-content: flex-start; padding: 9px 24px; }
+  .sidebar.collapsed .sidebar-footer { display: block; }
 }
 
 [hidden], .guest .members-only, body:not(.guest) .guests-only,
@@ -374,11 +409,11 @@ textarea, .broadcast-controls input, .recording-row input[type=number] { backgro
 
 /* OpenClaw config editor */
 .config-editor { display: grid; gap: 12px; margin-top: 16px; }
-.config-text { width: 100%; min-height: 420px; resize: vertical; background: var(--panel, #181818); color: inherit; border: 1px solid #333; border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.45; tab-size: 2; }
+.config-text { width: 100%; min-height: 420px; resize: vertical; background: var(--surface); color: inherit; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.45; tab-size: 2; }
 .config-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.config-actions button { padding: 6px 14px; border-radius: 16px; border: 1px solid #444; background: transparent; color: inherit; cursor: pointer; }
-.config-actions button.primary { background: #3ea6ff; color: #0f0f0f; border-color: #3ea6ff; }
-.config-help, .config-status { color: #aaa; font-size: 13px; }
+.config-actions button { padding: 6px 14px; border-radius: 16px; border: 1px solid var(--border); background: transparent; color: inherit; cursor: pointer; }
+.config-actions button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.config-help, .config-status { color: var(--text-dim); font-size: 13px; }
 
 /* ---------- Player chrome (overlay controls, YouTube-style auto-hide) ---------- */
 .screen-surface .captions { bottom: 100px; transition: bottom 0.2s ease; }
@@ -413,7 +448,7 @@ textarea, .broadcast-controls input, .recording-row input[type=number] { backgro
 .speed-control { position: relative; display: inline-flex; }
 .speed-label { font-size: 12px; font-weight: 600; font-family: var(--mono); }
 .speed-menu {
-  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 20;
+  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 20; color: var(--text);
   min-width: 150px; max-height: min(60vh, 320px); overflow-y: auto;
   padding: 6px 0; border: 1px solid var(--border); border-radius: 10px;
   background: rgba(28,28,28,0.97); box-shadow: 0 6px 24px rgba(0,0,0,0.5);
@@ -444,3 +479,16 @@ textarea, .broadcast-controls input, .recording-row input[type=number] { backgro
   .player-chrome, .player-chrome *, .screen-surface .captions, .ctl-btn { transition: none !important; }
   .live-pulse { animation: none; }
 }
+
+/* ---------- Theme switch, panel admin bar, preferences ---------- */
+.theme-btn .theme-icon { display: none; }
+:root[data-theme-preference="system"] .theme-btn .icon-system,
+:root[data-theme-preference="light"] .theme-btn .icon-light,
+:root[data-theme-preference="dark"] .theme-btn .icon-dark { display: block; }
+.panel-admin { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: -8px 0 16px; padding: 10px 14px; border: 1px dashed var(--border); border-radius: 10px; }
+.panel-admin .hint { color: var(--text-dim); font-size: 13px; }
+.panel-disabled { color: var(--text-dim); margin-top: 16px; }
+.setting-row .setting-value { font-family: var(--mono); color: var(--text-dim); overflow-wrap: anywhere; text-align: right; }
+.setting-row .setting-help { display: block; color: var(--text-faint); font-size: 12px; margin-top: 2px; }
+.settings-note { color: var(--text-dim); font-size: 13px; margin: 16px 0 0; }
+.sidebar-footer .chip:empty { display: none; }

@@ -75,8 +75,10 @@ agent:  group-claim groups, required value trance-0/app-agent
 In Casdoor, create an application for the dashboard (copy the Gitea app) and set
 its **Groups** requirement to `trance-0/app-agent`, then configure the redirect
 URI `https://live.trance-0.com/auth/callback`. Create `trance-0/admin-agent`
-as well; administrators need both groups. Panel-toggle mutations additionally
-require the dashboard bearer token. Verify memberships on the user record. The generated
+as well; administrators need both groups. Admin mutations, including panel
+toggles from the browser, need the admin session and the same-origin
+`X-Dashboard-Request: 1` header; scripts may toggle panels with the dashboard
+bearer token instead. Verify memberships on the user record. The generated
 client ID and secret go in the gitignored `.env`.
 
 ## Host models and connection
@@ -99,7 +101,7 @@ Copy `.env.example` to `.env` (gitignored) and fill in real values:
 | `ASTRBOT_ENDPOINT` / `ASTRBOT_USERNAME` / `ASTRBOT_PASSWORD` | AstrBot API + dashboard login. |
 | `OIDC_*` | Casdoor issuer, client id/secret, redirect URI, required group. |
 | `JENKINS_ENDPOINT` / `JENKINS_USER` / `JENKINS_TOKEN` | Read-only build status. |
-| `DASHBOARD_TOKEN` | Required by panel-toggle endpoints, along with an admin session. |
+| `DASHBOARD_TOKEN` | Optional automation path for panel toggles (with an admin session); browsers use the same-origin header instead. |
 | `OPENCLAW_STREAM_TOKEN` | Separate machine credential for the OpenClaw stream-control/event bridge. |
 | `SESSION_SECRET` | Required session signing secret; generate a random value. |
 
@@ -138,8 +140,9 @@ read-only in the dashboard; prepare it and configure the plugin as described
 in the deployment runbook. The live player shows file-tool target paths and
 start/completion events without file contents. Panel toggles and stream
 recordings persist in a named volume. Sessions expire
-after 12 hours and reset on restart. Settings fields currently display values;
-they do not save upstream configuration. See the
+after 12 hours and reset on restart. Panel settings rows display deployment
+values read-only; the Settings panel's theme and autoplay preferences are
+saved per browser only. See the
 [deployment runbook](../docs/deployment/dashboard.md) for OIDC groups, tunnel
 setup, logs, and rollback. The [development log](../docs/development/dashboard-log.md)
 records fixes and verification for each dashboard round.

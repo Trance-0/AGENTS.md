@@ -140,14 +140,14 @@
   color: var(--muted, #aaa);
 }
 .metrics-status.tone-error {
-  color: #ff9c9c;
+  color: var(--error, #ff9c9c);
 }
 .metrics-cards .value {
   font-size: 25px;
 }
 .metrics-control select:focus-visible,
 .metrics-control input:focus-visible {
-  outline: 2px solid #86a7ff;
+  outline: 2px solid var(--accent, #86a7ff);
   outline-offset: 2px;
 }
 @media (max-width: 650px) {

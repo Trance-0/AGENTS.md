@@ -1,4 +1,4 @@
-import { Player, formatTime } from "/player.js";
+import { Player, formatTime, readAutoplay, storeAutoplay } from "/player.js";
 import { renderUsage, renderQuota } from "/metrics.js";
 
 const $ = selector => document.querySelector(selector);
@@ -20,24 +20,68 @@ function report(error, element = $("#page-status")) {
 }
 
 async function init() {
+  // Chrome (menu, theme, screen modes) is wired first so it keeps working even
+  // when a later data request fails.
+  wireChrome();
+  wireTheme();
   try {
     state.user = await api("/auth/user");
     document.body.classList.toggle("guest", !state.user);
     document.body.classList.toggle("admin", !!state.user?.isAdmin);
     renderAvatar();
     if (state.user) {
-      state.panels = (await api("/api/panels")).panels;
-      renderSidebar();
+      await loadPanels().catch(error => report(error));
+      startUptime();
     }
     const { stream, viewers } = await api("/api/broadcast");
     $("#viewer-count").textContent = viewers;
     state.stream = stream;
     if (stream) await loadRecording(stream.id, true);
     await loadCatalog();
-    wireChrome();
     connectStream();
     updateControls();
   } catch (error) { report(error); }
+}
+
+async function loadPanels() {
+  state.panels = (await api("/api/panels")).panels;
+  renderSidebar();
+}
+
+/* ---------- Theme ---------- */
+const THEME_LABELS = { system: "System", light: "Light", dark: "Dark" };
+function wireTheme() {
+  const theme = globalThis.dashboardTheme;
+  const button = $("#theme-toggle");
+  if (!theme) { button.hidden = true; return; }
+  const sync = () => {
+    const preference = theme.read();
+    const label = `Theme: ${THEME_LABELS[preference]} (switch to ${THEME_LABELS[theme.next(preference)]})`;
+    button.setAttribute("aria-label", label);
+    button.title = label;
+    document.querySelectorAll("select[data-setting='theme']").forEach(select => { select.value = preference; });
+  };
+  button.onclick = () => theme.set(theme.next(theme.read()));
+  window.addEventListener("dashboard-theme", sync);
+  // Another tab changed the preference.
+  window.addEventListener("storage", event => { if (event.key === theme.KEY) { theme.apply(); sync(); } });
+  sync();
+}
+
+/* ---------- Sidebar uptime chip ---------- */
+function formatUptime(seconds) {
+  const s = Math.max(0, Math.floor(seconds));
+  const d = Math.floor(s / 86400), h = Math.floor(s / 3600) % 24, m = Math.floor(s / 60) % 60;
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+}
+function startUptime() {
+  const chip = $("#uptime-chip");
+  const refresh = async () => {
+    try { chip.textContent = `Server up ${formatUptime((await api("/api/uptime")).uptimeSeconds)}`; }
+    catch { chip.textContent = ""; }
+  };
+  refresh();
+  setInterval(refresh, 60000);
 }
 
 function renderAvatar() {
@@ -55,19 +99,40 @@ function renderAvatar() {
   }
 }
 
+// Sidebar icons by the panel's self-described `icon` name.
+const PANEL_ICONS = {
+  bot: '<rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 4v4M9 13h.01M15 13h.01M2 13v2M22 13v2"/>',
+  build: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>',
+  chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  config: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M10 13l-2 2 2 2M14 13l2 2-2 2"/>',
+  claw: '<path d="M6 3c-1 4 0 8 4 10M12 3c-.5 4 .5 8 3 10M18 4c0 4-1 7-3 9M7 21c1-4 4-7 8-8"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  panel: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>',
+};
+
 function renderSidebar() {
   const nav = $("#panel-nav");
-  nav.innerHTML = "";
+  const current = document.querySelector(".nav-item.active")?.dataset.view;
+  nav.replaceChildren();
   for (const panel of state.panels) {
     if (panel.id === "live-stream") continue;
     const a = document.createElement("a");
     a.className = "nav-item";
     a.dataset.view = panel.id;
     a.href = `#${panel.id}`;
-    a.innerHTML = `<svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>${esc(panel.title)}</span>${panel.enabled ? "" : '<span class="dot">off</span>'}`;
-    a.addEventListener("click", () => showPanel(panel.id));
+    a.title = panel.enabled ? panel.title : `${panel.title} (disabled)`;
+    a.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${PANEL_ICONS[panel.icon] || PANEL_ICONS.panel}</svg><span>${esc(panel.title)}</span>${panel.enabled ? "" : '<span class="dot">off</span>'}`;
+    a.addEventListener("click", event => { event.preventDefault(); showPanel(panel.id); });
     nav.appendChild(a);
   }
+  if (current) setActiveNav(current);
+}
+
+const isNarrow = () => window.matchMedia("(max-width: 720px)").matches;
+function closeMobileSidebar() {
+  if (!isNarrow()) return;
+  $("#sidebar").classList.remove("open");
+  $("#hamburger").setAttribute("aria-expanded", "false");
 }
 
 function setActiveNav(viewId) {
@@ -79,6 +144,7 @@ function showPanel(id) {
   const panel = state.panels.find((p) => p.id === id);
   if (!panel) return;
   setActiveNav(id);
+  closeMobileSidebar();
   $("#view-live-stream").classList.add("hidden");
   $("#view-panel").classList.remove("hidden");
   renderPanelView(panel);
@@ -86,6 +152,7 @@ function showPanel(id) {
 
 function showLive() {
   setActiveNav("live-stream");
+  closeMobileSidebar();
   $("#view-panel").classList.add("hidden");
   $("#view-live-stream").classList.remove("hidden");
 }
@@ -100,8 +167,15 @@ async function renderPanelView(panel) {
         <p>${esc(panel.description || "")}</p>
       </div>
     </div>
+    <div id="panel-admin"></div>
     <div class="cards" id="panel-cards"></div>
     <div id="panel-body"></div>`;
+
+  if (state.user?.isAdmin) renderPanelAdmin($("#panel-admin"), panel);
+  if (!panel.enabled) {
+    $("#panel-body").innerHTML = `<p class="panel-disabled">This panel is disabled. Its data and actions are switched off until an administrator enables it again.</p>`;
+    return;
+  }
 
   const cards = $("#panel-cards");
   for (const s of panel.status || []) {
@@ -113,17 +187,23 @@ async function renderPanelView(panel) {
 
   const body = $("#panel-body");
   if (Array.isArray(panel.settings) && panel.settings.length) {
-    body.innerHTML += `<div class="settings-list"></div>`;
-    const list = body.querySelector(".settings-list");
-    for (const s of panel.settings) {
-      const row = document.createElement("div");
-      row.className = "setting-row";
-      const input = fieldInput(s);
-      row.innerHTML = `<label>${esc(s.label)}</label>`;
-      row.appendChild(input);
-      list.appendChild(row);
+    const list = document.createElement("div");
+    list.className = "settings-list";
+    for (const s of panel.settings) list.appendChild(settingRow(s));
+    body.appendChild(list);
+    if (panel.settings.some(s => s.scope === "browser")) {
+      const note = document.createElement("p");
+      note.className = "settings-note";
+      note.textContent = "Saved in this browser only; other devices keep their own preferences.";
+      body.appendChild(note);
+    } else {
+      const note = document.createElement("p");
+      note.className = "settings-note";
+      note.textContent = "Configuration shown read-only; it is set in the deployment environment.";
+      body.appendChild(note);
     }
   }
+  if (panel.id === "settings") return;
 
   if (panel.id === "openclaw-config") return renderConfigEditor(body);
   if (panel.id === "cpa-quota") return renderQuota(body, api);
@@ -178,28 +258,81 @@ async function renderConfigEditor(body) {
   await load();
 }
 
-function fieldInput(s) {
-  if (s.type === "boolean") {
-    const c = document.createElement("input");
-    c.type = "checkbox";
-    c.checked = Boolean(s.value);
-    return c;
-  }
-  if (s.type === "select") {
-    const sel = document.createElement("select");
-    for (const o of s.options || []) {
-      const opt = document.createElement("option");
-      opt.value = o;
-      opt.textContent = o;
-      opt.selected = o === s.value;
-      sel.appendChild(opt);
+// Admin-only panel switch. Uses the admin session plus the same-origin
+// X-Dashboard-Request header (sent by api()), like other admin mutations.
+function renderPanelAdmin(box, panel) {
+  if (panel.id === "live-stream") return;
+  box.className = "panel-admin";
+  const label = document.createElement("label");
+  const toggle = document.createElement("input");
+  toggle.type = "checkbox";
+  toggle.id = "panel-enabled";
+  toggle.checked = panel.enabled;
+  label.append(toggle, " Panel enabled");
+  const status = document.createElement("span");
+  status.className = "hint";
+  status.setAttribute("role", "status");
+  status.textContent = panel.enabled ? "Visible to signed-in members." : "Hidden from members; data and actions are off.";
+  toggle.onchange = async () => {
+    toggle.disabled = true;
+    status.textContent = "Saving…";
+    try {
+      const { enabled } = await api(`/api/panels/${encodeURIComponent(panel.id)}/toggle`, { method: "POST", body: JSON.stringify({ enabled: toggle.checked }) });
+      await loadPanels();
+      const updated = state.panels.find(p => p.id === panel.id) || { ...panel, enabled };
+      await renderPanelView(updated);
+    } catch (error) {
+      toggle.checked = panel.enabled;
+      status.textContent = error.message;
+      toggle.disabled = false;
     }
-    return sel;
+  };
+  box.append(label, status);
+}
+
+// Browser-scope settings are live controls saved in localStorage; every other
+// panel setting is deployment configuration and is shown read-only.
+function settingRow(s) {
+  const row = document.createElement("div");
+  row.className = "setting-row";
+  const id = `setting-${s.key}`;
+  const label = document.createElement("label");
+  label.textContent = s.label;
+  if (s.help) {
+    const help = document.createElement("small");
+    help.className = "setting-help";
+    help.textContent = s.help;
+    label.append(help);
   }
-  const i = document.createElement("input");
-  i.type = s.type === "number" ? "number" : "text";
-  i.value = s.value ?? "";
-  return i;
+  row.append(label);
+  if (s.scope !== "browser") {
+    const value = document.createElement("output");
+    value.className = "setting-value";
+    value.textContent = String(s.value ?? "");
+    value.setAttribute("aria-label", `${s.label} (read-only)`);
+    row.append(value);
+    return row;
+  }
+  label.htmlFor = id;
+  if (s.key === "theme") {
+    const theme = globalThis.dashboardTheme;
+    const select = document.createElement("select");
+    select.id = id;
+    select.dataset.setting = "theme";
+    for (const option of s.options || []) select.append(new Option(THEME_LABELS[option] || option, option));
+    select.value = theme?.read() ?? "system";
+    select.onchange = () => theme?.set(select.value);
+    row.append(select);
+  } else if (s.key === "autoplay") {
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.id = id;
+    box.dataset.setting = "autoplay";
+    box.checked = readAutoplay();
+    box.onchange = () => storeAutoplay(box.checked);
+    row.append(box);
+  }
+  return row;
 }
 
 function renderPanelData(body, data) {
@@ -358,7 +491,14 @@ function updateControls() {
 }
 
 function wireChrome() {
-  $("#hamburger").onclick = () => { $("#sidebar").classList.toggle("collapsed"); $("#sidebar").classList.toggle("open"); };
+  // Wide screens collapse the sidebar to an icon rail; narrow screens slide it in and out.
+  const syncMenu = () => {
+    const sidebar = $("#sidebar");
+    $("#hamburger").setAttribute("aria-expanded", String(isNarrow() ? sidebar.classList.contains("open") : !sidebar.classList.contains("collapsed")));
+  };
+  $("#hamburger").onclick = () => { $("#sidebar").classList.toggle(isNarrow() ? "open" : "collapsed"); syncMenu(); };
+  window.matchMedia("(max-width: 720px)").addEventListener("change", syncMenu);
+  syncMenu();
   $(".nav-item[data-view='live-stream']").onclick = event => { event.preventDefault(); showLive(); };
   $("#broadcast-controls").onsubmit = async event => {
     event.preventDefault(); $("#btn-start").disabled = true;

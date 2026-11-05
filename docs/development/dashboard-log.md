@@ -341,3 +341,79 @@ Post-restart verification:
   covering 3–5 s in 2 s; auto-hide while live, kept by keyboard focus,
   hidden after the pointer leaves, and never while paused. With the browser
   check enabled the auth test's timeout is 180 s instead of 60 s.
+
+## 2026-11-05 — Theme, sidebar widgets, and in-browser admin toggles (0.1.7)
+
+Owner report: "dashboard theme change is not working (no widget on sidebar,
+and the admin option is not working as well)." Reproduced against the
+isolated OIDC fixture as viewer and admin (desktop and 390 px).
+
+### Root causes
+
+- Theme: the Settings panel was a placeholder. `fieldInput()` rendered the
+  theme select, autoplay checkbox, and volume field with no handlers, nothing
+  read or stored them, and `styles.css` had only dark variables, so selecting
+  "light" changed nothing. Its status card hard-coded "dark".
+- Sidebar: `renderSidebar()` ignored each panel's self-described `icon` and gave
+  every item the same three-line glyph (which also looks like the menu icon),
+  and "Watch" had no icon at all. Collapsed by the menu button, the 72 px rail
+  showed a column of identical glyphs with no labels or tooltips, so no panel
+  was recognisable. The footer `#uptime-chip` was never populated (an empty
+  pill), and there was no theme control anywhere in the chrome. The viewer
+  menu also listed "OpenClaw config", whose routes are admin-only (the panel
+  lacked `adminOnly`), and disabled panels stayed listed for members.
+- Admin option: `POST /api/panels/:id/toggle` required an admin session and the
+  `DASHBOARD_TOKEN` bearer. The browser has no way to hold that token (in the
+  browser it returned 401), and there was no toggle control in the UI, so
+  admins could not enable or disable panels at all. Start/end stream,
+  recording moderation, the config editor, and the metrics panels worked.
+- Fragility: `wireChrome()` ran only after the broadcast, recording, and
+  catalog requests succeeded, so any of those failing left the menu button
+  and screen-mode buttons dead.
+
+### Changes
+
+- `public/theme.js` (blocking classic script in `<head>`, before the
+  stylesheets) applies the stored preference to `<html data-theme>` before
+  first paint; `system` follows `prefers-color-scheme` live. Stored per
+  browser in `localStorage` (`agent-dashboard.theme`); never sent to the
+  server. A top-bar button (all users, including guests) cycles
+  system -> light -> dark, and the Settings select stays in sync (also across
+  tabs). `styles.css` gains light variables; the player surface, overlay
+  controls, and timeline preview stay dark like a video. Hard-coded colours in
+  the config editor and metrics styles now use theme variables.
+- Settings: theme and "Autoplay recordings" are live browser-scope controls.
+  Autoplay off opens recordings paused at the start; live streams always
+  follow the live edge. The fake "Alert volume" field was removed (no alerts
+  exist). Other panels' settings rows (endpoints, config path) render as
+  read-only values with a note instead of editable-looking inputs.
+- Sidebar: per-panel icons (bot, build, chart, config, claw, settings), a
+  Watch icon, tooltips on every item for the rail, a populated uptime chip,
+  `aria-expanded` on the menu button; on narrow screens the menu only slides
+  the sidebar in/out and choosing a panel closes it. Chrome is wired before
+  any data request. `openclaw-config` is `adminOnly`; members no longer see
+  disabled panels (admins see them with an "off" badge).
+- Admin toggles: the route now accepts admin session + same-origin
+  `X-Dashboard-Request: 1` (as every other admin mutation), or admin session +
+  `DASHBOARD_TOKEN` bearer for automation. A present but wrong bearer is still
+  rejected with 401. `live-stream` cannot be disabled. Admins get a
+  "Panel enabled" switch at the top of each panel; a disabled panel shows a
+  notice instead of its data. No other auth changed.
+
+### Verification
+
+- `node --test server/*.test.js` in the Node 22 dashboard image: 26 tests
+  passed (new `server/theme.test.js`: preference resolution, persistence, OS
+  tracking, applied-on-load, autoplay default). `auth.test.js` now asserts the
+  header toggle path, cross-origin and viewer denial, wrong-bearer rejection,
+  `live-stream` refusal, member menu hiding of admin-only/disabled panels.
+- Chromium (Playwright image, isolated fixture): existing `browser-check.mjs`
+  and `metrics-browser-check.mjs` passed; new `ui-browser-check.mjs` passed —
+  guest system theme for both OS schemes, top-bar cycling, theme on `<html>`
+  before `<body>` parses after reload, dark player in light theme; viewer
+  sidebar lists exactly Watch/AstrBot/Build & LKG/OpenClaw/Settings with
+  distinct icons, uptime chip, 72 px rail with tooltips, mobile slide-in and
+  close-on-select; settings select/top-bar sync, persistence, autoplay off;
+  read-only deployment settings; admin sidebar lists all eight items and an
+  in-browser toggle (no bearer) disables Build & LKG, removes it from a
+  viewer's sidebar, and re-enables it; config editor loads.

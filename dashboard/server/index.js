@@ -186,9 +186,18 @@ app.get("/api/panels/:id/data", requireAuth, async (req, res) => {
   res.json(data ?? {});
 });
 
-app.post("/api/panels/:id/toggle", requireAuth, requireAdmin, requireToken, async (req, res) => {
+// Browser admins use their session plus the same-origin header, like every
+// other admin mutation. Non-browser automation may instead send the
+// DASHBOARD_TOKEN bearer (still with an admin session); a present but wrong
+// bearer is rejected rather than falling back to the header check.
+function requireCsrfOrToken(req, res, next) {
+  return req.headers.authorization ? requireToken(req, res, next) : requireCsrf(req, res, next);
+}
+
+app.post("/api/panels/:id/toggle", requireAuth, requireAdmin, requireCsrfOrToken, async (req, res) => {
   const panel = getPanel(req.params.id);
   if (!panel) return res.status(404).json({ error: "Panel unavailable: dashboard/panel lookup — panel ID is not registered." });
+  if (panel.id === "live-stream") return res.status(400).json({ error: "Panel cannot be changed: dashboard/panel toggle — the live stream panel is always on." });
   const enabled = req.body?.enabled !== false;
   await setEnabled(panel.id, enabled);
   emit({ source: "dashboard", level: "info", msg: `Panel state updated: dashboard/panel toggle — ${panel.id} is ${enabled ? "enabled" : "disabled"}` });

@@ -11,6 +11,18 @@ const MARK_LEVELS = new Set(["warn", "error", "fatal", "critical"]);
 
 export const PLAYBACK_RATES = Object.freeze([0.25, 0.5, 0.75, 1, 1.25, 1.5, 2]);
 export const RATE_STORAGE_KEY = "agent-dashboard.playbackRate";
+// Settings > "Autoplay recordings": whether opening a recording starts replay.
+// Live streams always follow the live edge. Default on; stored per browser.
+export const AUTOPLAY_STORAGE_KEY = "agent-dashboard.autoplay";
+export const normalizeAutoplay = value => value !== false && value !== "false";
+
+export function readAutoplay() {
+  try { return normalizeAutoplay(localStorage.getItem(AUTOPLAY_STORAGE_KEY)); } catch { return true; }
+}
+
+export function storeAutoplay(value) {
+  try { localStorage.setItem(AUTOPLAY_STORAGE_KEY, String(normalizeAutoplay(value))); } catch {}
+}
 // Controls stay up this long after the last pointer/keyboard activity while
 // playing; leaving the player hides them sooner.
 export const CONTROLS_IDLE_MS = 2500;
@@ -110,7 +122,7 @@ export class Player {
     this.events = events;
     this.follow = recording?.status === "live";
     this.time = this.follow ? this.duration() : 0;
-    this.playing = !!recording && !this.follow;
+    this.playing = !!recording && !this.follow && readAutoplay();
     this.lastTick = performance.now();
     this.reveal();
     this.render();
