@@ -1,6 +1,6 @@
 # Design: stream scenes, widgets, and avatar events
 
-As of 2026-11-05. Status: proposal, pending owner sign-off. Builds on dashboard
+As of 2026-11-05. Status: owner decisions recorded in section 8; implementation pending. Builds on dashboard
 0.1.5 (`dashboard/`) and assumes the in-flight player fixes land first: a
 correct play/pause icon, control icons, auto-hiding controls with a thin
 progress bar, and a playback-rate control. "Current" below means what the code
@@ -520,7 +520,43 @@ Tests:
 - Media position math tests.
 - Browser checks for autoplay-muted behaviour and seek resync.
 
-## 8. Open questions for the owner
+## 8. Owner decisions (2026-11-05)
+
+These override any conflicting proposal above.
+
+1. **CPA widget (public).** Use every available Codex account with equal weights.
+   - **5-hour window:** the mean remaining percentage, plus the time to the next
+     reset, shown as `y h z m`.
+   - **Weekly window:** the mean remaining percentage, plus the time to the next
+     reset, shown as `x d y h z m`.
+   - Classify windows by their length (about 5 h and about 7 d), not by the
+     `primary_window` / `secondary_window` label.
+   - "Next reset" is the earliest reset among the accounts in that window.
+   - Accounts with an unknown window are excluded from the mean, and the widget
+     shows "n of m accounts".
+   - No account labels, emails or raw responses are published.
+   - The public widget deliberately pools accounts. The admin CPA panel keeps
+     its per-account view.
+2. **Refresh:** a background CPA quota refresh every 5 minutes while a stream is
+   live. It reuses the existing single-flight refresh, and a failed refresh
+   keeps the last snapshot and shows its age.
+3. **Recording:** metric widget updates are recorded as log events, so replay
+   matches what viewers saw. At most one event per widget per refresh.
+4. **Avatar:** ship a licence-free avatar first. Live2D is deferred. The owner
+   picks from a local option list; the recommendation is a canvas-drawn avatar
+   we own.
+5. **Bongo-cat:** frames are drawn on the canvas in our own style, never the
+   original meme art. OpenClaw sends the update events: activity events drive the
+   paws, and explicit `widget` or `avatar` events are allowed.
+6. **Gifts:** none for now. Phase C presents are dropped.
+7. **Media:** deferred. When added, external embedding is limited to images and
+   media files on an allowlist; no third-party players or scripts.
+8. **Control:** OpenClaw makes scene, avatar and widget changes. Admins only do
+   setup: enabling widgets, the asset registry, allowlists and limits.
+9. **Snapshots:** client-side only. No server snapshots. **All rendering is
+   client-side**; the server only validates, stores and relays events.
+
+## 9. Original open questions (answered in section 8)
 
 1. Which metric aggregates may be public?
    - The CPA widget could show one designated provider window or the lowest
