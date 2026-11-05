@@ -555,6 +555,17 @@ These override any conflicting proposal above.
    setup: enabling widgets, the asset registry, allowlists and limits.
 9. **Snapshots:** client-side only. No server snapshots. **All rendering is
    client-side**; the server only validates, stores and relays events.
+10. **Sleepy avatar state:** the avatar shows a `sleepy` expression while the
+    stream host is running on the paid fallback — i.e. the latest relevant
+    `model_output` activity came from provider `openai` instead of `cpa`, or
+    the public CPA Codex widget's pooled remaining percentage is 0 — and
+    returns to normal when CPA serves again. Derived client-side from recorded
+    events; no extra stored state.
+11. **Avatar renderer is pluggable:** phase A draws the owner-approved chubby
+    grey witch on canvas from layered parts; a later Live2D renderer replaces
+    only the avatar layer behind the same expression events (idle, blink,
+    talk, think, sleepy). The bongo-cat is a separate lightweight canvas widget
+    and stays canvas-drawn.
 
 ## 9. Original open questions (answered in section 8)
 
