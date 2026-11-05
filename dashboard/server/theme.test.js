@@ -3,19 +3,22 @@ import test from "node:test";
 import { AUTOPLAY_STORAGE_KEY, normalizeAutoplay } from "../public/player.js";
 
 // public/theme.js is a classic browser script; run it against minimal stubs.
-function stubBrowser({ stored, prefersDark }) {
+function stubBrowser({ stored, prefersDark, motion, prefersReduce = false }) {
   const store = new Map(stored === undefined ? [] : [["agent-dashboard.theme", stored]]);
+  if (motion !== undefined) store.set("agent-dashboard.motion", motion);
+  const motionListeners = [];
+  const motionMedia = { matches: prefersReduce, addEventListener: (_type, listener) => motionListeners.push(listener) };
   const listeners = [];
   const media = { matches: prefersDark, addEventListener: (_type, listener) => listeners.push(listener) };
   const element = { dataset: {}, style: {} };
   const events = [];
   const define = (name, value) => Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
   define("localStorage", { getItem: key => store.get(key) ?? null, setItem: (key, value) => store.set(key, String(value)) });
-  define("matchMedia", () => media);
+  define("matchMedia", query => (query.includes("reduced-motion") ? motionMedia : media));
   define("document", { documentElement: element });
   define("dispatchEvent", event => events.push(event.detail));
   define("CustomEvent", class { constructor(type, init) { this.type = type; this.detail = init?.detail; } });
-  return { store, media, element, events, flip(dark) { media.matches = dark; listeners.forEach(listener => listener()); } };
+  return { store, media, element, events, flip(dark) { media.matches = dark; listeners.forEach(listener => listener()); }, flipMotion(reduce) { motionMedia.matches = reduce; motionListeners.forEach(listener => listener()); } };
 }
 
 async function loadTheme(name) {
@@ -27,7 +30,7 @@ async function loadTheme(name) {
 test("theme preference resolves dark/light/system, persists, and follows the OS in system mode", async () => {
   const browser = stubBrowser({ stored: undefined, prefersDark: false });
   const theme = await loadTheme("first");
-  assert.deepEqual(browser.element.dataset, { theme: "light", themePreference: "system" }, "applied on load with no stored value");
+  assert.deepEqual(browser.element.dataset, { theme: "light", themePreference: "system", motion: "full", motionPreference: "system" }, "applied on load with no stored value");
   assert.equal(browser.element.style.colorScheme, "light");
   assert.equal(theme.resolve("system", true), "dark");
   assert.equal(theme.resolve("light", true), "light");
@@ -48,10 +51,31 @@ test("theme preference resolves dark/light/system, persists, and follows the OS 
 test("a stored theme is applied as soon as the script runs (no flash on reload)", async () => {
   const browser = stubBrowser({ stored: "dark", prefersDark: false });
   await loadTheme("second");
-  assert.deepEqual(browser.element.dataset, { theme: "dark", themePreference: "dark" });
+  assert.deepEqual(browser.element.dataset, { theme: "dark", themePreference: "dark", motion: "full", motionPreference: "system" });
   const invalid = stubBrowser({ stored: "neon", prefersDark: true });
   await loadTheme("third");
-  assert.deepEqual(invalid.element.dataset, { theme: "dark", themePreference: "system" });
+  assert.deepEqual(invalid.element.dataset, { theme: "dark", themePreference: "system", motion: "full", motionPreference: "system" });
+});
+
+test("reduced-motion override follows the OS in system mode and wins when set", async () => {
+  const browser = stubBrowser({ stored: "dark", prefersDark: true, prefersReduce: true });
+  await loadTheme("motion-system");
+  const motion = globalThis.dashboardMotion;
+  assert.equal(browser.element.dataset.motion, "reduce", "system follows prefers-reduced-motion");
+  browser.flipMotion(false);
+  assert.equal(browser.element.dataset.motion, "full");
+  assert.equal(motion.set("reduce"), "reduce");
+  assert.equal(browser.store.get(motion.KEY), "reduce");
+  browser.flipMotion(false);
+  assert.equal(browser.element.dataset.motion, "reduce", "an explicit override ignores OS changes");
+  motion.set("full");
+  browser.flipMotion(true);
+  assert.equal(browser.element.dataset.motion, "full");
+  assert.equal(motion.normalize("wobbly"), "system");
+  assert.deepEqual(browser.events.at(-1), { preference: "full", motion: "full" });
+  const stored = stubBrowser({ stored: "light", prefersDark: false, motion: "reduce", prefersReduce: false });
+  await loadTheme("motion-stored");
+  assert.equal(stored.element.dataset.motion, "reduce", "a stored override applies before first paint");
 });
 
 test("autoplay preference defaults on and only an explicit false turns it off", () => {

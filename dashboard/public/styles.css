@@ -475,10 +475,10 @@ textarea, .broadcast-controls input, .recording-row input[type=number] { backgro
 .controls-hidden .progress-bar .scrubber { transform: translate(-50%, -50%) scale(0); }
 .web-fullscreen #screen-surface.controls-hidden, #screen-surface:fullscreen.controls-hidden { cursor: none; }
 .web-fullscreen .player-chrome, #screen-surface:fullscreen .player-chrome { border-radius: 0; }
-@media (prefers-reduced-motion: reduce) {
-  .player-chrome, .player-chrome *, .screen-surface .captions, .ctl-btn { transition: none !important; }
-  .live-pulse { animation: none; }
-}
+/* Reduced motion: theme.js resolves the Settings override and the OS setting. */
+:root[data-motion="reduce"] .player-chrome, :root[data-motion="reduce"] .player-chrome *,
+:root[data-motion="reduce"] .screen-surface .captions, :root[data-motion="reduce"] .ctl-btn { transition: none !important; }
+:root[data-motion="reduce"] .live-pulse { animation: none; }
 
 /* ---------- Theme switch, panel admin bar, preferences ---------- */
 .theme-btn .theme-icon { display: none; }

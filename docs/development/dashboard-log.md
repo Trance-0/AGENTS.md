@@ -467,3 +467,56 @@ reader now keeps the first start per run ID, and the pending-warning test
 covers a retry. The owner authorized the source rollout: the dashboard change
 ships through the `agent-dashboard` Jenkins job on `ai-infra-v0`, and the
 OpenClaw source commit was pushed to its private origin.
+## 2026-11-05 — Grouped tabbed pages and a real Settings page (0.1.8)
+
+Owner request: merge the manager panels into grouped sections with tabs and
+replace the "terrible" settings UI with a proper Settings page.
+
+### Changes
+
+- Registry: `GROUPS` (`live`, `openclaw`, `usage`, `adapters`, `builds`,
+  `settings`) plus per-panel `group`, `order`, and `tabs` metadata. Panel IDs,
+  soft toggles, admin-only gates, and data routes are unchanged.
+  `GET /api/panels` adds `groups`, listing only groups that contain a panel the
+  viewer can see; guests still see only Live.
+- Sidebar: one item per group (Live, OpenClaw, Usage, Adapters, Builds,
+  Settings) with distinct icons. A group page has a keyboard-accessible tab bar
+  (`role=tablist`, arrow/Home/End keys); pages are linkable as `#group/tab`
+  and old `#panel-id` links open the owning group tab. Each tab keeps the
+  admin "Panel enabled" switch of the panel that owns it.
+- OpenClaw: Status (gateway health, agents with model order primary →
+  fallbacks from the mounted `openclaw.json`, IDs and model IDs only), Backends
+  (provider and env var names), Config (existing admin editor, now
+  `public/config-editor.js`).
+- Usage: new admin-only `usage-summary` panel and
+  `GET /api/admin/metrics/summary` — pooled Codex 5-hour and weekly remaining
+  percentages with reset countdowns (`y h z m`, `x d y h z m`), "n of m
+  accounts", and token totals for today (UTC), 7 days, and 30 days. CPA quota
+  and Token metrics are the existing panels with distinct icons. CPA window
+  parsing now keeps `limit_window_seconds` so windows are classified by length
+  (`server/metrics/pool.js`). The single-flight quota refresh moved to
+  `server/metrics/quota-refresh.js` so it can be shared.
+- Settings: cards for Appearance (theme, motion: system/reduce/full) and
+  Playback (autoplay, playback speed), all per browser. Motion is resolved by
+  `public/theme.js` into `<html data-motion>` before first paint; CSS now keys
+  off that attribute instead of the media query, so the override wins. The
+  speed select and the player's speed menu share `agent-dashboard.playbackRate`.
+  Admins get a Panels card with every panel's switch (via `setPanelEnabled`);
+  the Settings page stays reachable for admins even when disabled for members.
+- `public/app.js` split: `api.js` (helpers), `nav.js` (groups/tabs),
+  `settings-page.js`, `usage-summary.js`, `config-editor.js`; styles in
+  `pages.css`.
+
+### Verification
+
+- `node --test server/*.test.js` in the 0.1.7 dashboard image with server,
+  public, and openclaw-plugin bind-mounted (as the Jenkinsfile does): 33 tests
+  passed (28 before this round). New tests: `registry.test.js` (grouping, ordering, tab
+  defaults, invalid group/tab rejection), `pool.test.js` (window
+  classification by length with swapped labels, equal-weight mean, earliest
+  future reset, n of m, no labels, countdown/token formats), theme motion
+  override, and `auth.test.js` group/tab lists for members and admins, the
+  summary route's 401/403, and the agent table carrying no secrets or paths.
+- Chromium (Playwright image, isolated fixture): `browser-check.mjs`,
+  `metrics-browser-check.mjs`, `ui-browser-check.mjs` (updated for group
+  navigation), and the new `pages-browser-check.mjs` passed.

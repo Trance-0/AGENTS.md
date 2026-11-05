@@ -67,7 +67,7 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     await symlink(path.join(root, "node_modules"), path.join(dir, "node_modules"));
     const configFile = path.join(dir, "openclaw-config", "openclaw.json");
     await mkdir(path.dirname(configFile));
-    await writeFile(configFile, JSON.stringify({ gateway: { bind: "loopback" }, channels: { telegram: { botToken: "literal-telegram-secret", groupPolicy: "allowlist" } } }, null, 2) + "\n");
+    await writeFile(configFile, JSON.stringify({ gateway: { bind: "loopback" }, agents: { defaults: { model: { primary: "cpa/claude-opus-5-5-high", fallbacks: ["cpa/gpt-6-astra", "openai/gpt-6-astra"] } }, list: [{ id: "main" }, { id: "dashboard-host", name: "Dashboard Host", model: "cpa/gpt-6-astra", workspace: "/private/workspace" }] }, channels: { telegram: { botToken: "literal-telegram-secret", groupPolicy: "allowlist" } } }, null, 2) + "\n");
     const metricsKeyFile = path.join(dir, "metrics-key");
     await writeFile(metricsKeyFile, randomBytes(32), { mode: 0o400 });
     const usageDir = path.join(dir, "usage-logs");
@@ -117,7 +117,16 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     assert.ok(!viewerPanels.some(panel => ["cpa-quota", "usage-metrics", "openclaw-config"].includes(panel.id)), "admin-only panels stay out of the viewer menu");
     assert.ok(["astrbot", "build-status", "openclaw", "settings"].every(id => viewerPanels.some(panel => panel.id === id)));
     assert.equal((await request("/api/panels/openclaw-config/data", { headers: viewerHeaders })).status, 403);
-    assert.deepEqual(viewerPanels.find(panel => panel.id === "settings").settings.map(setting => [setting.key, setting.scope]), [["theme", "browser"], ["autoplay", "browser"]]);
+    const openclawData = await (await request("/api/panels/openclaw/data", { headers: viewerHeaders })).json();
+    assert.deepEqual(openclawData.agents.map(agent => [agent.id, agent.model.primary, agent.model.fallbacks.length, agent.inheritsDefault]), [["main", "cpa/claude-opus-5-5-high", 2, true], ["dashboard-host", "cpa/gpt-6-astra", 0, false]]);
+    assert.ok(!JSON.stringify(openclawData).includes("literal-telegram-secret") && !JSON.stringify(openclawData).includes("/private/workspace"), "the agent summary carries IDs and model IDs only");
+    assert.deepEqual(viewerPanels.find(panel => panel.id === "settings").settings.map(setting => [setting.key, setting.scope]), [["theme", "browser"], ["motion", "browser"], ["autoplay", "browser"], ["playbackRate", "browser"]]);
+    const viewerMenu = await (await request("/api/panels", { headers: viewerHeaders })).json();
+    assert.deepEqual(viewerMenu.groups.map(group => group.id), ["live", "openclaw", "adapters", "builds", "settings"], "members see only groups with a visible panel");
+    assert.deepEqual(viewerPanels.find(panel => panel.id === "openclaw").tabs.map(tab => tab.id), ["openclaw-status", "openclaw-backends"]);
+    assert.ok(!viewerPanels.some(panel => panel.id === "usage-summary"));
+    assert.equal((await request("/api/admin/metrics/summary", { headers: viewerHeaders })).status, 403);
+    assert.equal((await request("/api/admin/metrics/summary")).status, 401);
     const allowed = await login(["trance-0/app-agent", "trance-0/admin-agent"]);
     const callback = await request(`/auth/callback?code=${allowed.code}&state=${allowed.state}`, { headers: allowed.headers });
     assert.equal(callback.status, 302);
@@ -132,6 +141,13 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     const adminPanels = (await (await request("/api/panels", { headers })).json()).panels;
     assert.ok(adminPanels.some(panel => panel.id === "usage-metrics"));
     assert.ok(adminPanels.some(panel => panel.id === "cpa-quota"));
+    const adminMenu = await (await request("/api/panels", { headers })).json();
+    assert.deepEqual(adminMenu.groups.map(group => group.id), ["live", "openclaw", "usage", "adapters", "builds", "settings"]);
+    assert.deepEqual(adminPanels.filter(panel => panel.group === "usage").flatMap(panel => panel.tabs.map(tab => tab.title)), ["Summary", "CPA quota", "Token metrics"]);
+    assert.deepEqual(adminPanels.filter(panel => panel.group === "openclaw").flatMap(panel => panel.tabs.map(tab => tab.title)), ["Status", "Backends", "Config"]);
+    const summary = await (await request("/api/admin/metrics/summary", { headers })).json();
+    assert.equal(summary.tokens.week, 3600);
+    assert.deepEqual(summary.codex.fiveHour, { remainingPercent: null, resetAt: null, accounts: 0, total: 0 });
     const metrics = await (await request("/api/admin/metrics/usage", { headers })).json();
     assert.equal(metrics.summary.tokens, 3600);
     assert.equal(metrics.summary.unpriced, 2);
@@ -207,6 +223,9 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
       const uiCheck = spawn(process.execPath, [path.join(root, "scripts/ui-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie, DASHBOARD_VIEWER_COOKIE: viewerHeaders.cookie }, stdio: "inherit" });
       const [uiCode] = await once(uiCheck, "exit");
       assert.equal(uiCode, 0);
+      const pagesCheck = spawn(process.execPath, [path.join(root, "scripts/pages-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie, DASHBOARD_VIEWER_COOKIE: viewerHeaders.cookie }, stdio: "inherit" });
+      const [pagesCode] = await once(pagesCheck, "exit");
+      assert.equal(pagesCode, 0);
     }
     const toggle = "/api/panels/settings/toggle";
     // Browser path: admin session + same-origin header. Automation path: admin session + bearer.

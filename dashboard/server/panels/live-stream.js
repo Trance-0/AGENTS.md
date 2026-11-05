@@ -10,6 +10,8 @@ export function createLiveStreamPanel(ctx) {
     title: "Live Stream",
     description: "Streaming window: uptime progress bar and the live log feed.",
     icon: "stream",
+    group: "live",
+    order: 0,
 
     settings: () => [
       {

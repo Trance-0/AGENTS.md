@@ -44,6 +44,9 @@ export class MetricsStore {
   setCursor(name, inode, offset) { this.db.prepare("INSERT OR REPLACE INTO log_cursors VALUES (?,?,?)").run(name, String(inode), offset); }
   getSetting(name) { const row = this.db.prepare("SELECT value FROM metrics_settings WHERE name=?").get(name); return row ? JSON.parse(row.value) : null; }
   setSetting(name, value) { this.db.prepare("INSERT OR REPLACE INTO metrics_settings VALUES (?,?)").run(name, JSON.stringify(value)); }
+  tokensBetween(start, end) {
+    return this.db.prepare("SELECT COALESCE(SUM(total), 0) AS tokens FROM usage_events WHERE timestamp>=? AND timestamp<=?").get(start, end).tokens;
+  }
   prices() { return this.db.prepare("SELECT * FROM model_prices ORDER BY route,model").all(); }
   savePrice(value) {
     if (!name(value?.route) || !name(value?.model)) throw fail("select a valid route and model");

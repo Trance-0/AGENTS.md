@@ -11,7 +11,10 @@ export function quotaWindow(entry, kind, now = Date.now()) {
   const used = numeric(kind === "claude" ? entry.utilization : entry.used_percent ?? entry.usedPercent);
   const reset = epoch(entry.resets_at ?? entry.reset_at ?? entry.resetAt ?? entry.reset_time);
   const after = numeric(entry.reset_after_seconds ?? entry.resetAfterSeconds);
-  return { remainingPercent: used === null ? null : Math.max(0, Math.min(100, 100 - used)), resetsAt: reset ?? (after === null ? null : now + after * 1000) };
+  // Window length lets pooled views classify windows by duration instead of by
+  // the provider's primary/secondary label.
+  const length = numeric(entry.limit_window_seconds ?? entry.limitWindowSeconds);
+  return { remainingPercent: used === null ? null : Math.max(0, Math.min(100, 100 - used)), resetsAt: reset ?? (after === null ? null : now + after * 1000), ...(length !== null && length > 0 ? { windowSeconds: length } : {}) };
 }
 export function validateEndpoint(value) {
   let url;
@@ -53,8 +56,8 @@ export async function fetchQuota(settings, fetcher = fetch) {
       try {
         if (provider === "claude" || provider === "anthropic") {
           const body = await call("https://api.anthropic.com/api/oauth/usage", { "anthropic-beta": "oauth-2025-04-20" });
-          for (const [key, label] of [["five_hour", "5 hours"], ["seven_day", "7 days"], ["seven_day_opus", "Opus · 7 days"], ["seven_day_sonnet", "Sonnet · 7 days"]]) {
-            const window = quotaWindow(body?.[key], "claude"); if (window) row.windows.push({ label, ...window });
+          for (const [key, label, seconds] of [["five_hour", "5 hours", 18000], ["seven_day", "7 days", 604800], ["seven_day_opus", "Opus · 7 days", 604800], ["seven_day_sonnet", "Sonnet · 7 days", 604800]]) {
+            const window = quotaWindow(body?.[key], "claude"); if (window) row.windows.push({ label, ...window, windowSeconds: seconds });
           }
         } else if (provider === "codex" || provider === "openai") {
           const body = await call("https://chatgpt.com/backend-api/wham/usage", { "User-Agent": "codex_cli_rs/0.76.0" });

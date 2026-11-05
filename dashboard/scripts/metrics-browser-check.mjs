@@ -17,14 +17,16 @@ try {
   for (const cookie of [undefined, process.env.DASHBOARD_VIEWER_COOKIE]) {
     const ctx = await context(cookie); const page = await ctx.newPage(); await page.goto("/");
     await page.waitForSelector("#stream-title");
-    assert.equal(await page.locator('[data-view="usage-metrics"]').count(), 0);
-    assert.equal(await page.locator('[data-view="cpa-quota"]').count(), 0);
+    if (cookie) await page.waitForSelector("#panel-nav .nav-item");
+    assert.equal(await page.locator('[data-view="usage"]').count(), 0, "the Usage group is admin-only");
+    assert.equal(await page.locator('[data-tab="usage-metrics"], [data-tab="cpa-quota"]').count(), 0);
     await ctx.close();
   }
   const admin = await context(process.env.DASHBOARD_TEST_COOKIE);
   const page = await admin.newPage(); page.on("pageerror", error => errors.push(error.message));
   await page.goto("/");
-  await page.locator('[data-view="usage-metrics"]').click();
+  await page.locator('[data-view="usage"]').click();
+  await page.locator('[data-tab="usage-metrics"]').click();
   await page.waitForFunction(() => document.querySelector('.metrics-status')?.textContent.includes('One attempt'));
   assert.match(await page.locator('.metrics-cards').innerText(), /3,600/);
   await page.getByLabel("View", { exact: true }).selectOption("cost");
@@ -46,7 +48,7 @@ try {
   assert.ok(await page.locator('.metrics-view').evaluate(el => el.getBoundingClientRect().width <= window.innerWidth));
   await page.screenshot({ path: process.env.METRICS_SCREENSHOT || "/tmp/dashboard-metrics-mobile.png", fullPage: true });
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.locator('[data-view="cpa-quota"]').click();
+  await page.locator('[data-tab="cpa-quota"]').click();
   await page.waitForFunction(() => document.querySelector('.metrics-status')?.textContent.includes('No management key'));
   await page.getByLabel("CPA dashboard URL").fill("https://quota.example");
   await page.getByLabel("Management key").fill("browser-only-test-secret");
@@ -60,7 +62,7 @@ try {
   assert.match(await page.locator(".quota-accounts").innerText(), /72.5% remaining/);
   assert.match(await page.locator(".quota-accounts").innerText(), /Unknown remaining/);
   await page.screenshot({ path: "/tmp/dashboard-cpa-quota.png", fullPage: true });
-  await page.reload(); await page.locator('[data-view="cpa-quota"]').click();
+  await page.reload(); await page.waitForSelector('[data-tab="cpa-quota"][aria-selected="true"]');
   await page.waitForFunction(() => document.querySelector('.metrics-status')?.textContent.includes('Encrypted credential saved'));
   assert.ok(!(await page.content()).includes("browser-only-test-secret"));
   await page.getByRole("button", { name: "Remove saved key", exact: true }).click();

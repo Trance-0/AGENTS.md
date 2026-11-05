@@ -16,6 +16,9 @@ export function createAstrbotPanel(ctx) {
     title: "AstrBot",
     description: "QQ / WeChat adapter that relays to OpenClaw (model openclaw/relay).",
     icon: "bot",
+    group: "adapters",
+    order: 10,
+    tabTitle: "AstrBot",
 
     settings: () => [
       { key: "endpoint", label: "Endpoint", type: "string", value: config.astrbot.endpoint },

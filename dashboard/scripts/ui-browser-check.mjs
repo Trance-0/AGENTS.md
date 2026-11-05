@@ -8,8 +8,8 @@ const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PAT
 const baseURL = process.env.DASHBOARD_TEST_URL;
 const shots = process.env.DASHBOARD_SCREENSHOT_DIR || "/tmp";
 const errors = [];
-const VIEWER_PANELS = ["Watch", "AstrBot", "Build & LKG", "OpenClaw", "Settings"];
-const ADMIN_PANELS = ["Watch", "AstrBot", "Build & LKG", "CPA quota", "OpenClaw config", "OpenClaw", "Settings", "OpenClaw usage"];
+const VIEWER_PANELS = ["Live", "OpenClaw", "Adapters", "Builds", "Settings"];
+const ADMIN_PANELS = ["Live", "OpenClaw", "Usage", "Adapters", "Builds", "Settings"];
 
 async function context(cookie, { width = 1440, colorScheme = "dark" } = {}) {
   const ctx = await browser.newContext({ baseURL, colorScheme, viewport: { width, height: 900 }, extraHTTPHeaders: { "x-forwarded-proto": "https" } });
@@ -89,15 +89,16 @@ try {
   // Settings: live controls, applied immediately, persisted, synced with the top-bar switch.
   await viewerPage.locator('[data-view="settings"]').click();
   assert.deepEqual(await activeNav(viewerPage), ["settings"], "only the open panel is highlighted");
-  const select = viewerPage.locator("#setting-theme");
-  assert.equal(await select.inputValue(), "system");
+  const checkedTheme = () => viewerPage.locator('input[name="setting-theme"]:checked').inputValue();
+  const pickTheme = value => viewerPage.locator(`label[for="setting-theme-${value}"]`).click();
+  assert.equal(await checkedTheme(), "system");
   assert.equal(await viewerPage.getByText("Alert volume").count(), 0, "no fake controls");
-  await select.selectOption("light");
+  await pickTheme("light");
   assert.deepEqual(await themeOf(viewerPage), { theme: "light", preference: "light", bg: LIGHT_BG });
   assert.equal(await viewerPage.evaluate(() => localStorage.getItem("agent-dashboard.theme")), "light");
   await viewerPage.locator("#theme-toggle").click();
-  assert.equal(await select.inputValue(), "dark", "settings select follows the top-bar switch");
-  await select.selectOption("light");
+  assert.equal(await checkedTheme(), "dark", "settings theme control follows the top-bar switch");
+  await pickTheme("light");
   const autoplay = viewerPage.locator("#setting-autoplay");
   assert.equal(await autoplay.isChecked(), true);
   await autoplay.uncheck();
@@ -107,7 +108,9 @@ try {
   await viewerPage.reload();
   await viewerPage.waitForSelector('#panel-nav .nav-item');
   assert.equal((await themeOf(viewerPage)).theme, "light", "theme persists across reload");
+  assert.equal(await viewerPage.locator('[data-view="settings"]').getAttribute("aria-current"), "page", "reload keeps the open page (#settings)");
   // Autoplay off: opening a recording leaves it paused at the start.
+  await viewerPage.locator('[data-view="live"]').click();
   await viewerPage.locator(".rec-card").first().click();
   await viewerPage.waitForFunction(() => document.querySelector("#live-label").textContent === "REPLAY");
   assert.equal(await viewerPage.locator("#btn-play").getAttribute("aria-label"), "Play", "autoplay off keeps recordings paused");
@@ -134,7 +137,7 @@ try {
   const adminPage = await open(admin);
   await adminPage.waitForSelector('#panel-nav .nav-item');
   assert.deepEqual(await navLabels(adminPage), ADMIN_PANELS);
-  await adminPage.locator('[data-view="build-status"]').click();
+  await adminPage.locator('[data-view="builds"]').click();
   const enabled = adminPage.locator("#panel-enabled");
   assert.equal(await enabled.isChecked(), true);
   const toggled = adminPage.waitForResponse(response => response.url().endsWith("/api/panels/build-status/toggle"));
@@ -143,20 +146,21 @@ try {
   assert.equal(response.status(), 200, await response.text());
   assert.equal(response.request().headers().authorization, undefined, "the browser sends no bearer token");
   await adminPage.waitForSelector(".panel-disabled");
-  await adminPage.waitForFunction(() => document.querySelector('#sidebar .nav-item[data-view="build-status"] .dot'));
-  assert.deepEqual(await activeNav(adminPage), ["build-status"], "the toggled panel stays highlighted");
-  assert.equal(await adminPage.locator('#sidebar .nav-item[data-view="build-status"] .dot').textContent(), "off");
+  await adminPage.waitForFunction(() => document.querySelector('#sidebar .nav-item[data-view="builds"] .dot'));
+  assert.deepEqual(await activeNav(adminPage), ["builds"], "the toggled panel stays highlighted");
+  assert.equal(await adminPage.locator('#sidebar .nav-item[data-view="builds"] .dot').textContent(), "off");
   await adminPage.screenshot({ path: `${shots}/dashboard-admin-panel-disabled.png`, fullPage: true });
   const viewerAgain = await context(process.env.DASHBOARD_VIEWER_COOKIE);
   const viewerAgainPage = await open(viewerAgain);
   await viewerAgainPage.waitForSelector('#panel-nav .nav-item');
-  assert.ok(!(await navLabels(viewerAgainPage)).includes("Build & LKG"), "a disabled panel leaves the member sidebar");
+  assert.ok(!(await navLabels(viewerAgainPage)).includes("Builds"), "a group whose only panel is disabled leaves the member sidebar");
   await viewerAgain.close();
   await adminPage.locator("#panel-enabled").check();
-  await adminPage.waitForFunction(() => !document.querySelector('#sidebar .nav-item[data-view="build-status"] .dot'));
+  await adminPage.waitForFunction(() => !document.querySelector('#sidebar .nav-item[data-view="builds"] .dot'));
   assert.equal(await adminPage.locator(".panel-disabled").count(), 0);
   // The config editor (admin-only) still loads.
-  await adminPage.locator('[data-view="openclaw-config"]').click();
+  await adminPage.locator('[data-view="openclaw"]').click();
+  await adminPage.locator('[data-tab="openclaw-config"]').click();
   await adminPage.waitForFunction(() => document.querySelector(".config-editor .config-status")?.textContent.startsWith("Loaded"));
   await admin.close();
   assert.deepEqual(errors, []);

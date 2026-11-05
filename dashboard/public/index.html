@@ -9,6 +9,7 @@
   <script src="/theme.js"></script>
   <link rel="stylesheet" href="/styles.css" />
   <link rel="stylesheet" href="/metrics.css" />
+  <link rel="stylesheet" href="/pages.css" />
 </head>
 <body class="guest">
   <div class="app">
@@ -26,10 +27,9 @@
     </header>
     <div class="body">
       <aside class="sidebar members-only" id="sidebar">
-        <nav class="nav">
-          <div class="nav-section">Stream</div>
-          <a class="nav-item active" data-view="live-stream" href="#live-stream" title="Watch"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M10 9l5 3-5 3z"/></svg><span>Watch</span></a>
-          <div class="nav-section">Plugins</div>
+        <nav class="nav" aria-label="Dashboard">
+          <a class="nav-item active" data-view="live" href="#live" title="Live" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M10 9l5 3-5 3z"/></svg><span>Live</span></a>
+          <div class="nav-divider" role="presentation"></div>
           <div id="panel-nav"></div>
         </nav>
         <div class="sidebar-footer"><span id="uptime-chip" class="chip" title="Dashboard server uptime"></span></div>

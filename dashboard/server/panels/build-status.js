@@ -10,6 +10,9 @@ export function createBuildStatusPanel(ctx) {
     title: "Build & LKG",
     description: "Pipeline build status and last-known-good tag.",
     icon: "build",
+    group: "builds",
+    order: 10,
+    tabTitle: "Build & LKG",
 
     settings: () => [
       { key: "endpoint", label: "Jenkins", type: "string", value: config.jenkins.endpoint },

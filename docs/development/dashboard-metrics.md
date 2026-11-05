@@ -1,8 +1,29 @@
 # Dashboard usage metrics
 
-The plugin menu has two administrator-only panels: **CPA quota** and
-**OpenClaw usage**. Both the panel registry and every metrics API check the
+The **Usage** group has three administrator-only tabs: **Summary**, **CPA
+quota**, and **Token metrics** (panels `usage-summary`, `cpa-quota`,
+`usage-metrics`). Both the panel registry and every metrics API check the
 Casdoor administrator role. Metrics never enter the public stream feed.
+
+## Usage summary (pooled)
+
+`GET /api/admin/metrics/summary` (admin, `usage-summary` panel enabled) returns
+token totals for today (UTC), the last 7 days, and the last 30 days, and the
+pooled Codex quota from the last stored CPA snapshot
+(`server/metrics/pool.js`):
+
+- Every Codex account (`codex`/`openai` provider) has equal weight.
+- Windows are classified by length (`limit_window_seconds` within an hour of
+  5 hours, or within a day of 7 days), not by the provider's primary/secondary
+  label. Snapshots taken before 0.1.8 lack the length and count as unknown
+  until the next refresh.
+- The value is the mean remaining percentage, rounded down (a nonzero mean
+  below 1% shows 1%, so 0% always means every counted account is exhausted).
+- "Next reset" is the earliest future reset among the counted accounts.
+- Accounts without a known window of that length are excluded and reported
+  as "n of m accounts".
+- No labels, IDs, emails, or raw responses leave the pool. The CPA quota tab
+  keeps its per-account view. Pooled CPA is hidden while that panel is disabled.
 
 ## CC Switch references
 

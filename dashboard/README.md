@@ -34,7 +34,8 @@ policy. See the deployment runbook for installation.
 
 ## Usage and quota
 
-Administrators see **CPA quota** and **OpenClaw usage** in the plugin menu.
+Administrators see the **Usage** group: Summary (pooled Codex quota with reset
+countdowns, token totals), CPA quota (per account), and Token metrics.
 Save your CPA remote dashboard management key in the quota panel; it is stored
 encrypted on the dashboard side. OpenClaw usage offers token and price views,
 route/model filters, trends, breakdowns, and editable rates. Usage without a
@@ -49,18 +50,26 @@ for the separate encryption key and persistent SQLite storage.
 ## Panels
 
 Panels are modules discovered from `server/panels/`. Each exports a
-`createXxxPanel(ctx)` returning `{ id, title, description, icon, settings,
-status, data }`. Disabling a panel is a soft toggle (`panels-state.json`) that
-gates its routes with no restart; `data` is served per-panel and server-side
-resolvers never reach the browser.
+`createXxxPanel(ctx)` returning `{ id, title, description, icon, group, order,
+tabs, settings, status, data }`. `group` places the panel on one of the sidebar
+pages (`live`, `openclaw`, `usage`, `adapters`, `builds`, `settings`; see
+`GROUPS` in `server/registry.js`), `order` sorts it within the page, and
+`tabs` (default: one tab named `tabTitle` or `title`) lists the tabs it owns.
+Disabling a panel is a soft toggle (`panels-state.json`) that gates its routes
+with no restart; `data` is served per-panel and server-side resolvers never
+reach the browser.
 
-| Panel | Purpose |
-|---|---|
-| `live-stream` | The streaming window (uptime + logs + timeline). |
-| `openclaw` | Model backend manager: provider names and env var names only. |
-| `astrbot` | QQ/WeChat relay status. |
-| `build-status` | Jenkins build / LKG status (read-only). |
-| `settings` | Placeholder for theme / appearance. |
+| Group · tab | Panel | Purpose |
+|---|---|---|
+| Live | `live-stream` | The streaming window (uptime + logs + timeline). |
+| OpenClaw · Status, Backends | `openclaw` | Gateway health, agents with model fallback chain; provider and env var names only. |
+| OpenClaw · Config | `openclaw-config` | Live `openclaw.json` editor (admin). |
+| Usage · Summary | `usage-summary` | Pooled Codex quota and token totals (admin). |
+| Usage · CPA quota | `cpa-quota` | Per-account quota (admin). |
+| Usage · Token metrics | `usage-metrics` | Tokens and estimated cost (admin). |
+| Adapters · AstrBot | `astrbot` | QQ/WeChat relay status. |
+| Builds | `build-status` | Jenkins build / LKG status (read-only). |
+| Settings | `settings` | Per-browser theme, motion, autoplay, speed; admin panel switches. |
 
 ## OIDC (Casdoor)
 
@@ -141,8 +150,8 @@ in the deployment runbook. The live player shows file-tool target paths and
 start/completion events without file contents. Panel toggles and stream
 recordings persist in a named volume. Sessions expire
 after 12 hours and reset on restart. Panel settings rows display deployment
-values read-only; the Settings panel's theme and autoplay preferences are
-saved per browser only. See the
+values read-only; the Settings page's theme, motion, autoplay, and speed
+preferences are saved per browser only. See the
 [deployment runbook](../docs/deployment/dashboard.md) for OIDC groups, tunnel
 setup, logs, and rollback. The [development log](../docs/development/dashboard-log.md)
 records fixes and verification for each dashboard round.

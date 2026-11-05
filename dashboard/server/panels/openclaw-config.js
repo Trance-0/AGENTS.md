@@ -11,6 +11,9 @@ export function createOpenclawConfigPanel() {
     adminOnly: true,
     description: "Edit OpenClaw's live openclaw.json (administrators only). OpenClaw reads it read-only and hot-reloads saves; secret values stay masked.",
     icon: "config",
+    group: "openclaw",
+    order: 20,
+    tabTitle: "Config",
 
     settings: () => [
       { key: "file", label: "Config file", type: "string", value: config.openclaw.configFile || "(not mounted)" },

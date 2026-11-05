@@ -29,8 +29,8 @@ shows both its starting and completed file-path events in the public player.
 The browser connects to `https://live.trance-0.com`. Its remote reverse proxy
 terminates TLS and routes HTTP to a private FRP remote TCP port. The existing local
 `frpc` container uses host networking and forwards requests to
-`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.1.7` using image
-`agent-dashboard:0.1.7`, with Node.js 22 as the unprivileged `node` user.
+`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.1.8` using image
+`agent-dashboard:0.1.8`, with Node.js 22 as the unprivileged `node` user.
 
 ## Casdoor setup
 
@@ -56,11 +56,21 @@ The dashboard enforces `app-agent` on sign-in for chat and private panels.
 Stream start/end, recording visibility/score changes, and panel enable/disable
 toggles require `admin-agent` and the same-origin `X-Dashboard-Request: 1`
 header; admins toggle a panel with the "Panel enabled" switch at the top of
-that panel. Non-browser automation may instead send the `DASHBOARD_TOKEN`
+each of its tabs, or from **Settings → Panels**, which lists every panel.
+Non-browser automation may instead send the `DASHBOARD_TOKEN`
 bearer with an admin session; a present but wrong bearer is rejected (401),
-never treated as the header path. Disabled and admin-only panels (CPA quota,
-OpenClaw usage, OpenClaw config) are not listed for members. These permissions
-grant no Casdoor-wide administrative rights. Existing sessions must sign out
+never treated as the header path. Disabled and admin-only panels (Usage
+summary, CPA quota, OpenClaw usage, OpenClaw config) are not shown to members,
+and a sidebar group is listed only when it has a panel the viewer can see;
+guests see only Live. These permissions grant no Casdoor-wide administrative rights.
+
+The sidebar has six groups, each one page with tabs: **Live** (the player),
+**OpenClaw** (Status, Backends, Config), **Usage** (Summary, CPA quota, Token
+metrics), **Adapters** (AstrBot), **Builds**, and **Settings**. Panels declare
+`group`, `order`, and `tabs` in the registry (`server/registry.js`); the
+existing panel IDs, soft toggles, and data routes are unchanged. Pages are
+linkable as `#group/tab` (for example `#usage/cpa-quota`); old `#panel-id`
+links open the panel's group. Existing sessions must sign out
 and back in to acquire changed memberships.
 
 ## Private configuration
@@ -84,10 +94,11 @@ The manager panels probe availability and expose configuration names. Live
 chat additionally requires `OPENCLAW_TOKEN` and `OPENCLAW_AGENT=dashboard-host`;
 keep that operator credential in the private environment file only.
 Panel settings rows that show endpoints or files are read-only displays of
-this environment. The Settings panel (theme: system/light/dark, autoplay
-recordings) and the top-bar theme button are per-browser preferences in
-`localStorage` (`agent-dashboard.theme`, `agent-dashboard.autoplay`); they are
-never sent to the server.
+this environment. The Settings page (theme: system/light/dark; motion:
+system/reduce/full; autoplay recordings; playback speed) and the top-bar theme
+button are per-browser preferences in `localStorage` (`agent-dashboard.theme`,
+`agent-dashboard.motion`, `agent-dashboard.autoplay`,
+`agent-dashboard.playbackRate`); they are never sent to the server.
 
 Verify ignored credentials with `git check-ignore dashboard/.env`. Never print
 the resolved Compose configuration: it contains the environment secrets.
@@ -162,8 +173,8 @@ and without `admin-agent` must receive 403 for mutations, including panel
 toggles, even with a valid bearer token. Remove any temporary test identities after testing.
 
 ```sh
-docker logs --timestamps --tail 100 agent-dashboard-v0.1.7
-docker inspect agent-dashboard-v0.1.7 --format '{{.State.Health.Status}}'
+docker logs --timestamps --tail 100 agent-dashboard-v0.1.8
+docker inspect agent-dashboard-v0.1.8 --format '{{.State.Health.Status}}'
 ```
 
 Docker retains three rotated JSON log files of up to 10 MB each. Application
@@ -175,7 +186,7 @@ never be included in logs.
 
 Before a future update, retain the current image under a distinct local tag.
 To roll back, restore the previous source revision or retag the retained image
-as `agent-dashboard:0.1.7`, then run
+as `agent-dashboard:0.1.8`, then run
 `docker compose -f dashboard/compose.yaml up -d --no-build`. Keep the private
 environment file and state volume. To remove just the dashboard exposure,
 restore the saved FRP configuration, validate it, and restart `frpc`; other
@@ -261,7 +272,11 @@ It also covers the player controls: icons, play/pause state, the speed menu
 (2x replay timing and live 1x lock), and YouTube-style auto-hide.
 `scripts/ui-browser-check.mjs` covers system/light/dark themes (persistence,
 no flash on reload, settings/top-bar sync), viewer versus admin sidebars, the
-icon rail and mobile menu, and an in-browser admin panel toggle. If the host
+icon rail and mobile menu, and an in-browser admin panel toggle.
+`scripts/pages-browser-check.mjs` covers the grouped pages and tabs (keyboard,
+deep and legacy links), the usage summary, the OpenClaw agent/fallback table,
+the Settings controls, the admin panel-switch list, and 390 px layouts in both
+themes. If the host
 Node.js is older than 22, run it inside the matching
 `mcr.microsoft.com/playwright:v<version>-noble` image with the dashboard
 `node_modules` and the Playwright package mounted read-only.
@@ -547,8 +562,8 @@ they are and how to test them before asking for a token.
 
 ## Admin usage and quota metrics
 
-The plugin menu exposes **CPA quota** and **OpenClaw usage** to administrators
-only. Usage collection works while no public stream is running. Enter the CPA
+The **Usage** group (Summary, CPA quota, Token metrics) is shown to
+administrators only. Usage collection works while no public stream is running. Enter the CPA
 remote dashboard management key in its panel after deployment, then select
 **Refresh quota**. Enter route/model rates under **OpenClaw usage → Model
 prices** when OpenClaw does not have known rates. The price view labels unknown

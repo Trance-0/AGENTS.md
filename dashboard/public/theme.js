@@ -42,4 +42,38 @@
   });
   root.dashboardTheme = { KEY, THEMES, normalize, resolve, next, read, apply, set };
   apply();
+
+  // Reduced-motion override (system / reduce / full), applied the same way as
+  // <html data-motion="reduce|full">. CSS and the scene renderer read the
+  // resolved attribute instead of the media query, so the override wins.
+  const MOTION_KEY = "agent-dashboard.motion";
+  const MOTIONS = ["system", "reduce", "full"];
+  const normalizeMotion = value => (MOTIONS.includes(value) ? value : "system");
+  const motionMedia = typeof root.matchMedia === "function" ? root.matchMedia("(prefers-reduced-motion: reduce)") : null;
+  const resolveMotion = (preference, prefersReduce) => {
+    const value = normalizeMotion(preference);
+    return value === "system" ? (prefersReduce ? "reduce" : "full") : value;
+  };
+  const readMotion = () => {
+    try { return normalizeMotion(root.localStorage.getItem(MOTION_KEY)); } catch { return "system"; }
+  };
+  const applyMotion = (preference = readMotion()) => {
+    const motion = resolveMotion(preference, !!motionMedia?.matches);
+    const element = root.document?.documentElement;
+    if (element) {
+      element.dataset.motion = motion;
+      element.dataset.motionPreference = normalizeMotion(preference);
+    }
+    return motion;
+  };
+  const setMotion = preference => {
+    const value = normalizeMotion(preference);
+    try { root.localStorage.setItem(MOTION_KEY, value); } catch {}
+    const motion = applyMotion(value);
+    root.dispatchEvent?.(new root.CustomEvent("dashboard-motion", { detail: { preference: value, motion } }));
+    return value;
+  };
+  motionMedia?.addEventListener?.("change", () => { if (readMotion() === "system") applyMotion("system"); });
+  root.dashboardMotion = { KEY: MOTION_KEY, VALUES: MOTIONS, normalize: normalizeMotion, resolve: resolveMotion, read: readMotion, apply: applyMotion, set: setMotion, reduced: () => applyMotion() === "reduce" };
+  applyMotion();
 })(globalThis);

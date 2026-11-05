@@ -11,7 +11,7 @@ import createMemoryStore from "memorystore";
 
 import { config, hasDashboardToken } from "./config.js";
 import { initOidc, loginUrl, handleCallback, isAuthorized, groupsOf } from "./oidc.js";
-import { registerPanel, snapshot, isEnabled, setEnabled, getPanel } from "./registry.js";
+import { registerPanel, snapshot, groupsFor, isEnabled, setEnabled, getPanel } from "./registry.js";
 import { emit, uptimeSeconds } from "./log-bus.js";
 import { BroadcastStore } from "./broadcast.js";
 import { mountOpenClaw } from "./openclaw-routes.js";
@@ -175,7 +175,10 @@ function requireToken(req, res, next) {
 }
 
 // --- Panel API ---
-app.get("/api/panels", requireAuth, async (req, res) => res.json({ panels: await snapshot({ isAdmin: req.session.user.isAdmin }) }));
+app.get("/api/panels", requireAuth, async (req, res) => {
+  const panels = await snapshot({ isAdmin: req.session.user.isAdmin });
+  res.json({ panels, groups: groupsFor(panels) });
+});
 
 app.get("/api/panels/:id/data", requireAuth, async (req, res) => {
   const panel = getPanel(req.params.id);

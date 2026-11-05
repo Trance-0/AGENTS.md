@@ -54,7 +54,7 @@ export function controlsShouldHide({ playing, menuOpen = false, keyboardFocus = 
   return idleMs >= (pointerInside ? CONTROLS_IDLE_MS : CONTROLS_LEAVE_MS);
 }
 
-function readStoredRate() {
+export function readStoredRate() {
   try { return normalizeRate(localStorage.getItem(RATE_STORAGE_KEY) ?? 1); } catch { return 1; }
 }
 
@@ -78,6 +78,8 @@ export class Player {
     this.setupAutoHide();
     document.querySelector("#btn-live").onclick = () => this.goLive();
     document.querySelector("#btn-play").onclick = () => this.toggle();
+    // Settings > Playback speed.
+    addEventListener("dashboard-playback-rate", event => this.setRate(event.detail?.rate));
     this.timer = setInterval(() => this.tick(), 200);
   }
 
@@ -109,6 +111,7 @@ export class Player {
   setRate(rate) {
     this.rate = normalizeRate(rate);
     storeRate(this.rate);
+    dispatchEvent(new CustomEvent("dashboard-playback-rate-changed", { detail: { rate: this.rate } }));
     this.render();
   }
 
