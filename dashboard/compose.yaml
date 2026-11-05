@@ -1,7 +1,7 @@
 services:
   dashboard:
-    image: agent-dashboard:0.2.1
-    container_name: agent-dashboard-v0.2.1
+    image: agent-dashboard:0.2.2
+    container_name: agent-dashboard-v0.2.2
     build:
       context: .
     network_mode: host
@@ -14,6 +14,9 @@ services:
       OPENCLAW_CONFIG_FILE: /openclaw-config/openclaw.json
       METRICS_ENCRYPTION_KEY_FILE: /run/secrets/metrics-encryption.key
       METRICS_DATA_DIR: /app/metrics
+      # Scene embed (circtime uptime radar): set to /embed-src/circtime and add
+      # a read-only bind of the build directory there to turn the route on.
+      CIRCTIME_EMBED_DIR: ${CIRCTIME_EMBED_DIR:-}
     volumes:
       - dashboard-state:/app/data
       - type: bind

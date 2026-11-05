@@ -28,7 +28,7 @@ import { mountMetrics } from "./metrics/routes.js";
 import { SceneStore } from "./scene/store.js";
 import { SceneService } from "./scene/service.js";
 import { MetricsBridge } from "./scene/bridge.js";
-import { mountScene, contentSecurityPolicy } from "./scene/routes.js";
+import { mountScene, contentSecurityPolicy, embedSecurityPolicy, embedPaths } from "./scene/routes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
@@ -83,7 +83,7 @@ if (config.openclaw.activityDir) {
     warn: msg => emit({ source: "openclaw", level: "warn", msg }),
   });
 }
-const sceneStore = new SceneStore(path.join(config.dataDir, "scene"));
+const sceneStore = new SceneStore(path.join(config.dataDir, "scene"), { embeds: embedPaths(config) });
 const scene = new SceneService({ broadcast, store: sceneStore, emit });
 const MemoryStore = createMemoryStore(session);
 const app = express();
@@ -226,6 +226,11 @@ app.use((err, _req, res, _next) => {
   emit({ source: "dashboard", level: "warn", msg: message });
   res.status(err.status || 400).json({ error: message });
 });
+
+// --- Scene embeds (read-only static builds; off unless configured) ---
+const embedHeaders = (_req, res, next) => { res.set({ "Content-Security-Policy": embedSecurityPolicy(), "X-Content-Type-Options": "nosniff" }); next(); };
+if (config.circtimeEmbedDir) app.use("/embed/circtime", embedHeaders, express.static(config.circtimeEmbedDir, { fallthrough: false, dotfiles: "deny", index: "index.html", redirect: true }));
+app.use("/embed", (_req, res) => res.status(404).type("text/plain").send("Embed unavailable: dashboard/scene embeds — this page is not served by this deployment."));
 
 // --- Static frontend ---
 // Scene assets carry content hashes in their names, so they never change in place.

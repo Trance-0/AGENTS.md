@@ -73,13 +73,31 @@ export function mountScene(app, { scene, store, streamToken, requireCsrfOrToken 
 }
 
 // Strict Content-Security-Policy. Image widgets may load only from the
-// administrator's allowlisted HTTPS origins; nothing else leaves 'self'.
+// administrator's allowlisted HTTPS origins; frames only from the dashboard
+// itself (the embed widget's dashboard-served pages); nothing else leaves 'self'.
 export function contentSecurityPolicy(allowlist = []) {
   const origins = [...new Set(allowlist.map(prefix => new URL(prefix).origin))];
   return [
     "default-src 'self'", "script-src 'self'", "style-src 'self'",
     `img-src 'self' data:${origins.length ? " " + origins.join(" ") : ""}`,
     "media-src 'self'", "connect-src 'self'", "font-src 'self'",
-    "frame-src 'none'", "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'",
+    "frame-src 'self'", "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'",
   ].join("; ");
+}
+
+// Policy for pages served under /embed/: framable only by the dashboard and
+// unable to load anything from outside it. The page runs in a sandboxed
+// iframe (allow-scripts, no allow-same-origin), so it gets an opaque origin
+// and cannot read dashboard cookies, storage, or APIs.
+export function embedSecurityPolicy() {
+  return [
+    "default-src 'self'", "script-src 'self'", "style-src 'self'", "img-src 'self' data:",
+    "connect-src 'self'", "font-src 'self'", "media-src 'none'", "object-src 'none'",
+    "frame-src 'none'", "base-uri 'none'", "form-action 'none'", "frame-ancestors 'self'",
+  ].join("; ");
+}
+
+// Dashboard-served embed paths the scene validator accepts, from server config.
+export function embedPaths({ circtimeEmbedDir }) {
+  return circtimeEmbedDir ? ["/embed/circtime/"] : [];
 }

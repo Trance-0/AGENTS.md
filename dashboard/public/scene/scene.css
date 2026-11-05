@@ -1,5 +1,10 @@
-/* Scene stage over the player: a 16:9 box sized by renderer.js. */
+/* Scene stage over the player: a 16:9 box sized by renderer.js. The back
+   layer (embeds) sits below the log (z-index 1); the stage sits above it. */
 .scene-stage { position: absolute; z-index: 3; pointer-events: none; --scene-scale: 1; }
+.scene-back { position: absolute; z-index: 0; pointer-events: none; }
+.scene-embed iframe { width: 100%; height: 100%; border: 0; display: block; background: transparent; pointer-events: none; }
+.scene-back .scene-embed, .scene-back .scene-embed * { pointer-events: none !important; user-select: none; }
+.scene-stage.editing .scene-embed { outline: 2px dashed rgba(79, 182, 200, .8); outline-offset: -2px; }
 .scene-widget { position: absolute; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; overflow: hidden; color: #fdf6f3; font-family: "Roboto", system-ui, sans-serif; line-height: 1.15; }
 .scene-widget canvas { width: 100%; height: 100%; display: block; }
 .scene-widget img { width: 100%; height: 100%; object-fit: contain; display: block; }

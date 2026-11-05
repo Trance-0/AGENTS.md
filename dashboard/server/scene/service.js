@@ -113,7 +113,7 @@ export class SceneService {
     if (!this.buckets[actor].take()) throw fail(429, "Scene change not accepted", actor === "openclaw" ? "OpenClaw may change the scene at most 2 times per second" : "administrators may change the scene at most 5 times per second");
   }
 
-  options() { return { allowlist: this.store.settings().imageAllowlist }; }
+  options() { return this.store.options(); }
 
   // Throws unless `recordingId` is live and owned by `sessionRef` (the same rule as /api/openclaw/stream/end).
   requireOwner(recordingId, sessionRef) {
@@ -138,7 +138,9 @@ export class SceneService {
     const id = input.id ?? this.newId(taken);
     if (taken.has(id)) throw fail(409, "Widget not created", `widget ID '${id}' already exists`);
     const peers = [...(live ? Object.values(live.state.widgets) : []), ...(layout?.widgets || [])];
-    const z = input.z ?? Math.min(LIMITS.zMax, Math.max(99, ...peers.map(widget => widget.z)) + 1);
+    // Back-layer types (embeds) start at the bottom; everything else goes on top.
+    const back = typeof input.type === "string" && Object.hasOwn(WIDGET_TYPES, input.type) && WIDGET_TYPES[input.type].back;
+    const z = input.z ?? (back ? 0 : Math.min(LIMITS.zMax, Math.max(99, ...peers.map(widget => widget.z)) + 1));
     const widget = this.validate(() => validateWidget({ ...input, id, z }, this.options()), "Widget not created");
     if (live && Object.keys(live.state.widgets).length >= LIMITS.widgets) throw fail(409, "Widget not created", `the live scene already has ${LIMITS.widgets} widgets`);
     if (layout && layout.widgets.length >= LIMITS.widgets) throw fail(409, "Widget not created", `the saved layout already has ${LIMITS.widgets} widgets`);

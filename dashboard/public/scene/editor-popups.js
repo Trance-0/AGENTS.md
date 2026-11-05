@@ -75,7 +75,7 @@ export function openMenu(_stage, anchor, title, items, onClose) {
   return menu;
 }
 
-function field(key, spec, value) {
+function field(key, spec, value, options = {}) {
   const id = `scene-field-${key}`;
   const row = document.createElement("label");
   row.className = "scene-field";
@@ -83,7 +83,11 @@ function field(key, spec, value) {
   const caption = document.createElement("span");
   caption.textContent = spec.label;
   let input;
-  if (spec.type === "enum") {
+  if (spec.type === "embed") {
+    input = document.createElement("select");
+    for (const path of options.embeds || []) input.append(new Option(path, path));
+    input.value = value || (options.embeds || [])[0] || "";
+  } else if (spec.type === "enum") {
     input = document.createElement("select");
     for (const option of spec.options) input.append(new Option(spec.labels?.[option] ?? option, option));
     input.value = value;
@@ -111,7 +115,7 @@ export function openForm(_stage, anchor, widget, options, onSubmit) {
   heading.className = "scene-popup-title";
   heading.textContent = `${schema.label} properties`;
   form.append(heading);
-  const fields = Object.entries(schema.props).map(([key, spec]) => [key, field(key, spec, widget.props?.[key] ?? spec.default)]);
+  const fields = Object.entries(schema.props).map(([key, spec]) => [key, field(key, spec, widget.props?.[key] ?? spec.default, options)]);
   for (const [, item] of fields) form.append(item.row);
   const message = document.createElement("p");
   message.className = "scene-form-status";

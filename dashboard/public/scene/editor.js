@@ -43,6 +43,7 @@ export class SceneEditor {
     const view = await this.api("/api/scene/layout");
     this.live = !!view.live;
     this.allowlist = view.settings.imageAllowlist;
+    this.embeds = view.settings.embeds || [];
     this.layoutVersion = view.layout.version;
     this.widgets = Object.fromEntries((view.live ? view.live.widgets : view.layout.widgets).map(widget => [widget.id, widget]));
     this.active = true;
@@ -113,7 +114,7 @@ export class SceneEditor {
   async update(id, changes, { record = true } = {}) {
     const before = this.widgets?.[id];
     if (!before) return;
-    try { this.widgets[id] = mergeWidget(before, changes, { allowlist: this.allowlist }); this.render(id); }
+    try { this.widgets[id] = mergeWidget(before, changes, { allowlist: this.allowlist, embeds: this.embeds }); this.render(id); }
     catch (error) { this.status(`Widget not changed: dashboard/scene editor — ${error.reason || error.message}.`); return; }
     try {
       const { widget } = await this.request(`/api/scene/widgets/${encodeURIComponent(id)}`, "PATCH", { changes });
@@ -161,6 +162,8 @@ export class SceneEditor {
       label: schema.label, id: `add-${type}`,
       run: () => {
         if (type === "image" && !this.allowlist.length) return this.status("Image widget not added: dashboard/scene editor — no image allowlist is configured; add an HTTPS prefix in Settings → Scene defaults first.");
+        if (type === "embed" && !this.embeds.length) return this.status("Embed widget not added: dashboard/scene editor — this deployment serves no embed pages (CIRCTIME_EMBED_DIR is not set).");
+        if (type === "embed") return this.guarded(this.create({ type, ...fitRect(rect, type), props: { src: this.embeds[0] } }));
         if (type === "image") return this.propertiesForm({ id: null, type, ...fitRect(rect, type), z: 100, props: {} });
         this.guarded(this.create({ type, ...fitRect(rect, type) }));
       },
@@ -184,7 +187,7 @@ export class SceneEditor {
 
   propertiesForm(widget) {
     const anchor = widget.id ? this.renderer.nodes.get(widget.id)?.el : this.stage;
-    openForm(this.stage, anchor, widget, { allowlist: this.allowlist }, async props => {
+    openForm(this.stage, anchor, widget, { allowlist: this.allowlist, embeds: this.embeds }, async props => {
       if (!widget.id) await this.create({ type: widget.type, x: widget.x, y: widget.y, w: widget.w, h: widget.h, props });
       else await this.update(widget.id, { props });
     });
@@ -194,8 +197,12 @@ export class SceneEditor {
   onPointerDown(event) {
     if (event.button !== 0 || event.target.closest(".scene-popup")) return;
     closePopups();
-    const target = event.target.closest(".scene-widget");
+    let target = event.target.closest(".scene-widget");
     const start = this.point(event);
+    // A full-stage backdrop (embed) acts as empty stage until it is selected:
+    // dragging over it draws a new widget, a plain click opens its menu.
+    const backdrop = target && WIDGET_TYPES[this.widgets[target.dataset.widgetId]?.type]?.back && this.selected !== target.dataset.widgetId ? target : null;
+    if (backdrop) target = null;
     const id = target?.dataset.widgetId;
     const corner = event.target.dataset?.corner;
     const original = id ? { ...this.widgets[id] } : null;
@@ -240,6 +247,7 @@ export class SceneEditor {
         this.guarded(this.update(id, { x: rect.x, y: rect.y, w: rect.w, h: rect.h }));
       } else if (original) this.widgetMenu(id, target);
       else if (moved && rect.w >= MIN && rect.h >= MIN) this.typeMenu(rect, ghost || this.stage, rect);
+      else if (backdrop) { this.render(backdrop.dataset.widgetId); this.widgetMenu(backdrop.dataset.widgetId, backdrop); }
       else this.render(null);
     };
     this.stage.addEventListener("pointermove", move);

@@ -588,3 +588,39 @@ a recovered or pre-existing stream is left alone. Regression test:
 `scene-routes.test.js` "a stream recovered after a restart is not given an
 opening scene later".
 
+## 2026-11-05 — Scene embed widget for the circtime uptime radar (0.2.2)
+
+Owner request: an `embed` widget for a same-origin HTML page, first the
+circtime uptime radar for AI-infra health.
+
+- `public/scene/schema.js`: type `embed` with `src` (must be one of the
+  server's embed paths, passed to the validator as `embeds`) and `opacity`
+  (0.05–1, default 0.3); default rect is the whole stage at z 0. The built-in
+  layout includes it as `backdrop` when an embed is served.
+- `server/index.js`: `/embed/circtime/` serves `CIRCTIME_EMBED_DIR` read-only
+  (static, no dotfiles, own CSP with `frame-ancestors 'self'`); any other
+  `/embed/` path is 404. The dashboard CSP now has `frame-src 'self'`.
+  `scripts/deploy.py` mounts `CIRCTIME_EMBED_HOST_DIR` when it has `index.html`.
+- Renderer: embeds go on a new back layer (`.scene-back`, z-index 0) below
+  the log, in `<iframe sandbox="allow-scripts">` with `pointer-events: none`;
+  the iframe is never re-appended (that would reload it). The theme rides on
+  the URL and later changes arrive by `postMessage` without a reload. In the
+  editor the embed joins the stage so it can be selected; dragging over an
+  unselected full-stage backdrop still draws a new widget.
+- Choice: no `allow-same-origin`. The page gets an opaque origin and cannot
+  read dashboard cookies, storage, or APIs. If circtime needs same-origin JSON,
+  that will be served as static files under `/embed/circtime/` and decided
+  when its build contract is known (CORS-mode loads from an opaque origin do
+  not pass today).
+- Tests: validator allowlist (other paths, external and protocol-relative
+  URLs, traversal, missing config), backdrop defaults, embed CSP; API create at
+  z 0; real-pipeline route checks (200 with embed CSP, 301 to the trailing
+  slash, other paths 404, traversal and dotfiles refused, `frame-src 'self'`);
+  browser check: back layer below the log, full stage, opacity 0.3,
+  `sandbox="allow-scripts"`, theme by URL and by postMessage without reload,
+  log text over the embed selectable and copyable, no CSP violations.
+- Fixed `package-lock.json`: the 0.2.1 version bump also rewrote the
+  `forwarded` dependency's `version` field (0.2.0 to 0.2.1). Its `resolved`
+  URL and integrity always pointed at 0.2.0, so installed images were correct;
+  the field is restored.
+

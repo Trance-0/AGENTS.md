@@ -20,6 +20,9 @@ export const config = {
   sessionSecret: required("SESSION_SECRET"),
   metricsKeyFile: process.env.METRICS_ENCRYPTION_KEY_FILE || "",
   metricsDir: process.env.METRICS_DATA_DIR || "",
+  // Static circtime uptime-radar build, mounted read-only and served at
+  // /embed/circtime/ for the scene embed widget. Empty: the route is off (404).
+  circtimeEmbedDir: process.env.CIRCTIME_EMBED_DIR || "",
 
   oidc: {
     issuer: required("OIDC_ISSUER"),

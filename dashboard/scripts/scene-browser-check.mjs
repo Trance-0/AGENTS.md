@@ -57,7 +57,7 @@ try {
   assert.equal(await widgetCount(page), 0, "no recording, no scene");
   await page.locator("#btn-edit-scene").click();
   await page.waitForSelector(".scene-stage .scene-avatar");
-  assert.equal(await widgetCount(page), 2, "built-in layout: avatar and cat");
+  assert.equal(await widgetCount(page), 3, "built-in layout: embed backdrop, avatar, and cat");
   const cat = await page.locator(".scene-cat").boundingBox(), stage = await stageBox(page);
   assert.ok(cat.x + cat.width > stage.x + stage.width * 0.9 && cat.y + cat.height > stage.y + stage.height * 0.85, "cat sits lower-right");
   const avatarBox = await page.locator(".scene-avatar").boundingBox();
@@ -72,7 +72,7 @@ try {
   await page.waitForSelector('.scene-menu [data-action="add-text"]');
   await page.screenshot({ path: `${shots}/scene-editor-add-menu.png` });
   await page.locator('.scene-menu [data-action="add-text"]').click();
-  await page.waitForFunction(() => document.querySelectorAll(".scene-stage .scene-widget").length === 3);
+  await page.waitForFunction(() => document.querySelectorAll(".scene-stage .scene-widget").length === 4);
   assert.equal((await layout(page)).layout.version, 1, "drawing a widget saves the layout");
   await clickWidget(page, "Hello from the stream");
   assert.deepEqual(await page.locator(".scene-menu [role=menuitem]").allTextContents(), ["Edit properties…", "Create new…", "Duplicate", "Bring forward", "Send back", "Delete"]);
@@ -94,12 +94,12 @@ try {
   await page.keyboard.press("Escape");
   await clickWidget(page, "Scene check title");
   await menu(page, "duplicate");
-  await page.waitForFunction(() => document.querySelectorAll(".scene-stage .scene-widget").length === 4);
+  await page.waitForFunction(() => document.querySelectorAll(".scene-stage .scene-widget").length === 5);
   const duplicate = (await layout(page)).layout.widgets.filter(widget => widget.props.text === "Scene check title").find(widget => widget.id !== title.id);
   await page.locator(`.scene-widget[data-widget-id="${duplicate.id}"]`).click();
   await page.waitForSelector(".scene-menu");
   await menu(page, "back");
-  await page.waitForFunction(id => document.querySelector(`[data-widget-id="${id}"]`).style.zIndex === "99", duplicate.id);
+  await page.waitForFunction(id => document.querySelector(`[data-widget-id="${id}"]`).style.zIndex === "0", duplicate.id);
   // Now behind the original: click the corner the original does not cover.
   const behind = await page.locator(`.scene-widget[data-widget-id="${duplicate.id}"]`).boundingBox();
   await page.mouse.click(behind.x + behind.width - 20, behind.y + behind.height - 6);
@@ -111,12 +111,12 @@ try {
   // Keyboard: Delete removes the focused widget, Ctrl+Z restores it, the menu deletes it again.
   await page.locator(`.scene-widget[data-widget-id="${duplicate.id}"]`).focus();
   await page.keyboard.press("Delete");
-  await page.waitForFunction(() => document.querySelectorAll(".scene-stage .scene-widget").length === 3);
-  await page.keyboard.press("Control+z");
   await page.waitForFunction(() => document.querySelectorAll(".scene-stage .scene-widget").length === 4);
+  await page.keyboard.press("Control+z");
+  await page.waitForFunction(() => document.querySelectorAll(".scene-stage .scene-widget").length === 5);
   await page.locator(`.scene-widget[data-widget-id="${duplicate.id}"]`).click();
   await menu(page, "delete");
-  await page.waitForFunction(() => document.querySelectorAll(".scene-stage .scene-widget").length === 3);
+  await page.waitForFunction(() => document.querySelectorAll(".scene-stage .scene-widget").length === 4);
   // Drag to move, corner handle to resize, arrows to nudge.
   const before = (await layout(page)).layout.widgets.find(widget => widget.id === title.id);
   const titleBox = await byText(page, "Scene check title").boundingBox();
@@ -143,13 +143,47 @@ try {
   await page.waitForFunction(() => document.querySelector("#live-label").textContent === "LIVE");
   await page.waitForSelector(".scene-stage >> text=Scene check title");
   const recordingId = (await page.evaluate(() => fetch("/api/broadcast").then(r => r.json()))).stream.id;
-  await page.waitForTimeout(1500);
+  // The embed backdrop: sandboxed same-origin page on the back layer, behind the log.
+  const frame = page.locator(".scene-back .scene-embed iframe");
+  await frame.waitFor({ state: "attached" });
+  assert.equal(await frame.getAttribute("sandbox"), "allow-scripts", "no allow-same-origin");
+  assert.match(await frame.getAttribute("src"), /^\/embed\/circtime\/\?theme=(dark|light)&preference=/);
+  const layers = await page.evaluate(() => ({ back: getComputedStyle(document.querySelector(".scene-back")).zIndex, log: getComputedStyle(document.querySelector("#stream-log")).zIndex, events: getComputedStyle(document.querySelector(".scene-back iframe")).pointerEvents, opacity: getComputedStyle(document.querySelector(".scene-back .scene-embed")).opacity, box: document.querySelector(".scene-back .scene-embed").getBoundingClientRect().width / document.querySelector(".scene-stage").getBoundingClientRect().width }));
+  assert.deepEqual(layers, { back: "0", log: "1", events: "none", opacity: "0.3", box: 1 }, "full stage, behind the log, faint, never interactive");
+  const embedded = () => page.frames().find(item => item.url().includes("/embed/circtime/"));
+  await page.waitForFunction(() => true);
+  for (let i = 0; i < 50 && !(await embedded()?.evaluate(() => document.documentElement.dataset.loadedAt).catch(() => null)); i++) await page.waitForTimeout(100);
+  const themeNow = await page.evaluate(() => document.documentElement.dataset.theme);
+  assert.equal(await embedded().evaluate(() => document.documentElement.dataset.theme), themeNow, "the embed receives the dashboard theme");
+  const loadedAt = await embedded().evaluate(() => document.documentElement.dataset.loadedAt);
+  await page.locator("#theme-toggle").click();
+  await page.waitForFunction(() => document.documentElement.dataset.theme !== "");
+  const themeNext = await page.evaluate(() => document.documentElement.dataset.theme);
+  for (let i = 0; i < 30 && (await embedded().evaluate(() => document.documentElement.dataset.theme)) !== themeNext; i++) await page.waitForTimeout(100);
+  assert.equal(await embedded().evaluate(() => document.documentElement.dataset.theme), themeNext, "theme changes arrive by postMessage");
+  assert.equal(await embedded().evaluate(() => document.documentElement.dataset.loadedAt), loadedAt, "without reloading the embed");
+  await page.evaluate(() => globalThis.dashboardTheme.set("system"));
+  // Log text over the embed stays selectable and copyable; pointer input never lands in the frame.
+  const line = page.locator("#stream-log .log-line .msg").first();
+  const lineBox = await line.boundingBox();
+  assert.notEqual(await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.tagName, [lineBox.x + 5, lineBox.y + lineBox.height / 2]), "IFRAME");
+  await page.mouse.move(lineBox.x + 1, lineBox.y + lineBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(lineBox.x + Math.min(lineBox.width, 300), lineBox.y + lineBox.height / 2, { steps: 5 });
+  await page.mouse.up();
+  const selected = await page.evaluate(() => getSelection().toString());
+  assert.ok(selected.length > 5 && (await line.textContent()).startsWith(selected.trim().slice(0, 5)), `log text over the embed is selectable (got "${selected}")`);
+  const copied = await page.evaluate(() => { let data = ""; const listener = event => { data = getSelection().toString(); }; document.addEventListener("copy", listener); document.execCommand("copy"); document.removeEventListener("copy", listener); return data; });
+  assert.equal(copied, selected, "copy carries the selected log text");
+  await page.screenshot({ path: `${shots}/scene-embed-backdrop.png` });
+  await page.evaluate(() => getSelection().removeAllRanges());
+  await page.waitForTimeout(500);
   await page.locator("#btn-edit-scene").click();
   await page.waitForFunction(() => document.querySelector("#scene-mode").textContent.includes("live scene"));
   await drag(page, await at(page, 0.06, 0.4), await at(page, 0.36, 0.52));
   await page.locator('.scene-menu [data-action="add-text"]').click();
-  await page.waitForFunction(() => document.querySelectorAll(".scene-stage .scene-widget").length === 4);
-  const liveWidget = (await layout(page)).live.widgets.find(widget => !["avatar", "cat", title.id].includes(widget.id));
+  await page.waitForFunction(() => document.querySelectorAll(".scene-stage .scene-widget").length === 5);
+  const liveWidget = (await layout(page)).live.widgets.find(widget => !["avatar", "cat", "backdrop", title.id].includes(widget.id));
   await clickWidget(page, "Hello from the stream");
   await menu(page, "edit");
   await page.locator("#scene-field-text").fill("Live widget");
@@ -249,10 +283,10 @@ try {
   assert.match(policy, /img-src 'self' data: https:\/\/img\.example\.com;/);
   await page.screenshot({ path: `${shots}/scene-settings-defaults.png`, fullPage: true });
   await page.locator("#scene-defaults button", { hasText: "Reset to built-in" }).click();
-  await page.waitForFunction(() => document.querySelector("#scene-defaults").textContent.includes("2 widgets"));
+  await page.waitForFunction(() => document.querySelector("#scene-defaults").textContent.includes("3 widgets"));
   await cspOf(page);
   await admin.close();
   assert.deepEqual(errors, []);
   assert.deepEqual(csp, [], "no Content-Security-Policy violations");
-  console.info("Scene Chromium passed: draw a widget, left-click menu (edit/create/duplicate/z-order/delete), drag/resize/nudge/undo/Esc, saved layout opens the stream, live edits recorded, replay at seek times and 2x, avatar think/talk/sleepy and cat paws from recorded activity, guest read-only, 16:9 stage in theater and at 390 px, allowlist and CSP, zero CSP violations.");
+  console.info("Scene Chromium passed: draw a widget, left-click menu (edit/create/duplicate/z-order/delete), drag/resize/nudge/undo/Esc, saved layout opens the stream, live edits recorded, replay at seek times and 2x, avatar think/talk/sleepy and cat paws from recorded activity, sandboxed embed backdrop behind selectable log text with theme hand-off, guest read-only, 16:9 stage in theater and at 390 px, allowlist and CSP, zero CSP violations.");
 } finally { await browser.close(); }

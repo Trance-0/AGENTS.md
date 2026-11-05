@@ -633,6 +633,21 @@ implementation differs from sections 2–7, this section wins.
   server-generated and bounded by the 24-widget limit and one event per refresh.
 - **CSP** ships as proposed, with `img-src` extended only by the allowlisted
   image origins; the browser check fails on any violation.
+- **Embed widget (0.2.2, owner request).** `embed` shows a same-origin page
+  from a server-side allowlist of dashboard-served paths (first entry
+  `/embed/circtime/`, the circtime uptime radar, on only when the operator sets
+  `CIRCTIME_EMBED_DIR`). It renders in a sandboxed iframe
+  (`sandbox="allow-scripts"`, no `allow-same-origin`, so the page has an opaque
+  origin and cannot reach dashboard cookies, storage, or APIs) on a **back
+  layer below the log** with `pointer-events: none`, so log text above it stays
+  selectable and copyable. Default: whole stage, z 0, opacity 0.3, included in
+  the built-in layout when an embed is served. The dashboard theme is passed as
+  `?theme=&preference=` and later changes by `postMessage({ type:
+  "dashboard-theme", theme, preference }, "*")` (the opaque origin leaves no
+  narrower target; the message is a public theme name). The dashboard CSP
+  changes `frame-src 'none'` to `frame-src 'self'`; embed pages get their own
+  policy with `frame-ancestors 'self'` and no external origins. Because embeds
+  always sit behind the log, their `z` orders them only among embeds.
 - **Metric widgets** follow decisions 1–3; details in
   `docs/development/dashboard-metrics.md`. Metrics are published only while a
   metric widget is on the live scene, and the 5-minute CPA refresh runs only

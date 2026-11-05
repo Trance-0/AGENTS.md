@@ -35,7 +35,8 @@ policy. See the deployment runbook for installation.
 ## Stream scenes
 
 The player shows a scene over the log: text, metric, avatar (the owner's
-witch), desk cat, clock, and allowlisted image widgets. The avatar and cat
+witch), desk cat, clock, allowlisted image widgets, and a faint sandboxed
+embed backdrop (the circtime uptime radar, when the operator serves it). The avatar and cat
 react to recorded OpenClaw activity (think, talk, blink, sleepy on the paid
 fallback; paws on tool and output events). Admins use **Edit scene** under the
 player: drag on the stage to add a widget, left-click a widget for its menu,

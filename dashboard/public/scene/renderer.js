@@ -3,7 +3,7 @@
 // use URLs the server already checked against the admin allowlist (the CSP
 // img-src enforces the same origins). Rendering is a pure function of
 // (state, t), so live, seek, and every playback rate agree.
-import { METRIC_SOURCES, PALETTE } from "./schema.js";
+import { METRIC_SOURCES, PALETTE, WIDGET_TYPES } from "./schema.js";
 import { avatarExpression, catPose, talkFrame } from "./derive.js";
 import { AVATAR_RENDERERS } from "./avatar.js";
 import { drawCat } from "./cat.js";
@@ -23,6 +23,12 @@ export class SceneRenderer {
     this.stage.className = "scene-stage";
     this.stage.setAttribute("aria-label", "Stream scene");
     host.append(this.stage);
+    // Back layer for embeds: below the log (z-index 0) and never interactive.
+    this.back = document.createElement("div");
+    this.back.className = "scene-back";
+    this.back.setAttribute("aria-hidden", "true");
+    host.prepend(this.back);
+    addEventListener("dashboard-theme", () => this.postTheme());
     this.nodes = new Map();
     this.state = null;
     this.override = null;
@@ -43,7 +49,7 @@ export class SceneRenderer {
   fit() {
     const { clientWidth: width, clientHeight: height } = this.host;
     const w = Math.min(width, height * 16 / 9), h = w * 9 / 16;
-    Object.assign(this.stage.style, { width: `${w}px`, height: `${h}px`, left: `${(width - w) / 2}px`, top: `${(height - h) / 2}px` });
+    for (const layer of [this.stage, this.back]) Object.assign(layer.style, { width: `${w}px`, height: `${h}px`, left: `${(width - w) / 2}px`, top: `${(height - h) / 2}px` });
     this.stage.style.setProperty("--scene-scale", String(h / 720));
     this.dirty = true;
     this.draw(true);
@@ -95,7 +101,11 @@ export class SceneRenderer {
         el.removeAttribute("role");
         el.removeAttribute("aria-label");
       }
-      this.stage.append(el);
+      // Embeds live on the back layer; while editing they join the stage so they can be selected.
+      // Appending an element that is already in place would move it, which
+      // reloads iframes; z-index, not DOM order, decides stacking.
+      const layer = WIDGET_TYPES[widget.type]?.back && !this.override ? this.back : this.stage;
+      if (el.parentNode !== layer) layer.append(el);
     }
     for (const [id, node] of this.nodes) if (!seen.has(id)) { node.el.remove(); this.nodes.delete(id); }
   }
@@ -111,6 +121,16 @@ export class SceneRenderer {
       node.canvas.setAttribute("aria-hidden", "true");
       el.append(node.canvas);
       el.setAttribute("aria-hidden", "true");
+    } else if (widget.type === "embed") {
+      // Sandboxed without allow-same-origin: an opaque origin with no access to
+      // dashboard cookies, storage, or APIs. pointer-events: none (CSS) keeps
+      // clicks, selection, and copy on the log above it.
+      node.frame = document.createElement("iframe");
+      node.frame.setAttribute("sandbox", "allow-scripts");
+      node.frame.referrerPolicy = "no-referrer";
+      node.frame.tabIndex = -1;
+      node.frame.title = "Embedded dashboard page";
+      el.append(node.frame);
     } else if (widget.type === "image") {
       node.img = document.createElement("img");
       node.img.referrerPolicy = "no-referrer";
@@ -157,12 +177,36 @@ export class SceneRenderer {
       } else if (widget.type === "metric") {
         node.el.dataset.color = props.color;
         this.metric(node, props, state?.metrics?.[props.source], wallAt);
+      } else if (widget.type === "embed") {
+        if (node.srcPath !== props.src) {
+          node.srcPath = props.src;
+          const src = this.embedSrc(props.src);
+          if (src) node.frame.src = src;
+        }
+        node.el.style.opacity = String(props.opacity);
       } else if (widget.type === "image") {
         if (node.img.getAttribute("src") !== props.url && /^https:\/\//.test(props.url)) node.img.src = props.url;
         node.img.alt = props.alt;
         node.img.dataset.fit = props.fit;
       } else if (canvas) this.paint(node, t, state);
     }
+  }
+
+  // Same-origin dashboard paths only; the theme rides along as query params,
+  // and later changes arrive by postMessage.
+  embedSrc(path) {
+    if (typeof path !== "string" || !/^\/embed\/[a-z0-9-]+\/$/.test(path)) return null;
+    const theme = globalThis.dashboardTheme;
+    const params = new URLSearchParams({ theme: document.documentElement.dataset.theme || "dark", preference: theme?.read?.() || "system" });
+    if (this.reduced()) params.set("motion", "reduce");
+    return `${path}?${params}`;
+  }
+
+  postTheme() {
+    const message = { type: "dashboard-theme", theme: document.documentElement.dataset.theme || "dark", preference: globalThis.dashboardTheme?.read?.() || "system" };
+    // The sandboxed frame has an opaque origin, so "*" is the only target that
+    // reaches it; the message carries nothing but the public theme name.
+    for (const node of this.nodes.values()) node.frame?.contentWindow?.postMessage(message, "*");
   }
 
   text(node, label, value, sub) {

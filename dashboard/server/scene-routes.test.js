@@ -14,10 +14,10 @@ import { fold } from "../public/scene/reduce.js";
 const TOKEN = "scene-stream-token";
 const OWNER = "a".repeat(64), OTHER = "b".repeat(64);
 
-async function fixture({ limits } = {}) {
+async function fixture({ limits, embeds = [] } = {}) {
   const dir = mkdtempSync(path.join(os.tmpdir(), "scene-routes-"));
   const broadcast = new BroadcastStore(path.join(dir, "recordings"));
-  const store = new SceneStore(path.join(dir, "scene"));
+  const store = new SceneStore(path.join(dir, "scene"), { embeds });
   const warnings = [];
   const scene = new SceneService({ broadcast, store, emit: event => warnings.push(event), limits });
   const app = express();
@@ -209,3 +209,17 @@ test("metric widgets publish pooled public values once per refresh and keep the 
     assert.deepEqual(metricValues(new Set(["cpa.codex.week"]), { snapshot, cpaEnabled: false, metrics, now }), { "cpa.codex.week": { remainingPercent: null, resetAt: null, accounts: 0, total: 0, updatedAt: null } }, "a disabled CPA panel publishes no quota");
   } finally { await f.close(); }
 });
+
+test("embed widgets validate against the deployment's served pages and start on the back layer", async () => {
+  const f = await fixture({ embeds: ["/embed/circtime/"] });
+  try {
+    const view = await f.call("GET", "/api/scene/layout", undefined, { "x-test-role": "admin" });
+    assert.deepEqual(view.body.settings.embeds, ["/embed/circtime/"]);
+    assert.equal(view.body.layout.widgets[0].type, "embed", "the built-in layout includes the backdrop");
+    const created = await f.call("POST", "/api/scene/widgets", { widget: { type: "embed", x: 0, y: 0, w: 0.5, h: 0.5, props: { src: "/embed/circtime/" } } }, f.admin);
+    assert.deepEqual([created.status, created.body.widget.z, created.body.widget.props.opacity], [201, 0, 0.3]);
+    assert.equal((await f.call("POST", "/api/scene/widgets", { widget: { type: "embed", x: 0, y: 0, w: 1, h: 1, props: { src: "/embed/unknown/" } } }, f.admin)).status, 400);
+    assert.equal((await f.call("PATCH", `/api/scene/widgets/${created.body.widget.id}`, { changes: { props: { opacity: 0.6 } } }, f.admin)).body.widget.props.opacity, 0.6);
+  } finally { await f.close(); }
+});
+

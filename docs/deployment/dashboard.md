@@ -29,8 +29,8 @@ shows both its starting and completed file-path events in the public player.
 The browser connects to `https://live.trance-0.com`. Its remote reverse proxy
 terminates TLS and routes HTTP to a private FRP remote TCP port. The existing local
 `frpc` container uses host networking and forwards requests to
-`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.2.1` using image
-`agent-dashboard:0.2.1`, with Node.js 22 as the unprivileged `node` user.
+`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.2.2` using image
+`agent-dashboard:0.2.2`, with Node.js 22 as the unprivileged `node` user.
 
 ## Casdoor setup
 
@@ -173,8 +173,8 @@ and without `admin-agent` must receive 403 for mutations, including panel
 toggles, even with a valid bearer token. Remove any temporary test identities after testing.
 
 ```sh
-docker logs --timestamps --tail 100 agent-dashboard-v0.2.1
-docker inspect agent-dashboard-v0.2.1 --format '{{.State.Health.Status}}'
+docker logs --timestamps --tail 100 agent-dashboard-v0.2.2
+docker inspect agent-dashboard-v0.2.2 --format '{{.State.Health.Status}}'
 ```
 
 Docker retains three rotated JSON log files of up to 10 MB each. Application
@@ -186,7 +186,7 @@ never be included in logs.
 
 Before a future update, retain the current image under a distinct local tag.
 To roll back, restore the previous source revision or retag the retained image
-as `agent-dashboard:0.2.1`, then run
+as `agent-dashboard:0.2.2`, then run
 `docker compose -f dashboard/compose.yaml up -d --no-build`. Keep the private
 environment file and state volume. To remove just the dashboard exposure,
 restore the saved FRP configuration, validate it, and restart `frpc`; other
@@ -623,6 +623,28 @@ only when it starts: a stream that was already live during an upgrade (or
 resumed after a restart) keeps running without an injected opening scene. Settings → Scene defaults
 holds the image allowlist (HTTPS prefixes) and a reset to the built-in layout.
 
+### Embed widget (circtime)
+
+The `embed` widget shows a dashboard-served page behind the log: a sandboxed
+iframe (`allow-scripts` only, opaque origin), `pointer-events: none`, default
+full stage at 30% opacity, and part of the built-in layout when available.
+Its page must be on the server-side allowlist; today that is only
+`/embed/circtime/`, served from `CIRCTIME_EMBED_DIR` (absent or empty: the
+route returns 404 and no embed can be placed). Jenkins mounts the build
+read-only when `CIRCTIME_EMBED_HOST_DIR` names a host directory containing
+`index.html` (`scripts/deploy.py` maps it to `/embed-src/circtime` and sets
+`CIRCTIME_EMBED_DIR`); for Compose, add the same read-only bind and set
+`CIRCTIME_EMBED_DIR=/embed-src/circtime`. Embed responses carry
+`Content-Security-Policy: default-src 'self'; script-src 'self'; style-src
+'self'; img-src 'self' data:; connect-src 'self'; ...; frame-ancestors 'self'`
+and `X-Content-Type-Options: nosniff`; dotfiles are refused. The page receives
+`?theme=light|dark&preference=system|light|dark` (plus `motion=reduce` when
+motion is reduced) and later `postMessage` events `{ type: "dashboard-theme",
+theme, preference }`. Because the frame has an opaque origin, any data the page
+fetches must be static files under the same path (classic, non-module scripts
+load fine; CORS-mode requests such as module scripts or `fetch` would need an
+explicit decision, see the design doc).
+
 ### Admin API
 
 Admin session required (401 signed out, 403 without `admin-agent`).
@@ -663,8 +685,9 @@ dashboard/scene widgets — widget type 'iframe' is not supported.`
 
 Every response carries `default-src 'self'; script-src 'self'; style-src
 'self'; img-src 'self' data: <allowlisted image origins>; media-src 'self';
-connect-src 'self'; font-src 'self'; frame-src 'none'; object-src 'none';
-base-uri 'none'; form-action 'self'; frame-ancestors 'none'`. If the reverse
+connect-src 'self'; font-src 'self'; frame-src 'self'; object-src 'none';
+base-uri 'none'; form-action 'self'; frame-ancestors 'none'` with `frame-src
+'self'` (0.2.2: only dashboard-served embeds may be framed). If the reverse
 proxy adds its own CSP, browsers enforce both, so keep the proxy's at least as
 permissive for images. `/scene/assets/` files have content-hashed names and
 are served with `Cache-Control: public, max-age=31536000, immutable`; only the

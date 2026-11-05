@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { LIMITS, builtinLayout, imageUrlAllowed, mergeWidget, normalizeAllowlist, validateLayout, validateWidget } from "../public/scene/schema.js";
-import { contentSecurityPolicy } from "./scene/routes.js";
+import { contentSecurityPolicy, embedPaths, embedSecurityPolicy } from "./scene/routes.js";
 import { fitRect } from "../public/scene/editor.js";
 
 const base = { id: "t1", type: "text", x: 0.1, y: 0.1, w: 0.3, h: 0.1 };
@@ -65,7 +65,7 @@ test("image URLs must be HTTPS and match an administrator allowlist prefix", () 
 
 test("the CSP is strict and adds only allowlisted image origins", () => {
   const policy = contentSecurityPolicy(["https://img.example.com/stream/"]);
-  for (const directive of ["default-src 'self'", "script-src 'self'", "style-src 'self'", "img-src 'self' data: https://img.example.com", "connect-src 'self'", "frame-src 'none'", "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'"]) assert.ok(policy.includes(directive), directive);
+  for (const directive of ["default-src 'self'", "script-src 'self'", "style-src 'self'", "img-src 'self' data: https://img.example.com", "connect-src 'self'", "frame-src 'self';", "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'"]) assert.ok(policy.includes(directive), directive);
   assert.ok(!/unsafe/.test(policy));
   assert.equal(contentSecurityPolicy().includes("img-src 'self' data:;"), true);
 });
@@ -76,3 +76,29 @@ test("editor rectangles stay on stage and avatars stay square", () => {
   assert.equal(avatar.h, 1);
   assert.ok(Math.abs(avatar.w - 9 / 16) < 1e-3);
 });
+
+test("embeds accept only dashboard-served allowlisted paths and default to a faint full-stage backdrop", () => {
+  const embeds = embedPaths({ circtimeEmbedDir: "/srv/circtime" });
+  assert.deepEqual(embeds, ["/embed/circtime/"]);
+  assert.deepEqual(embedPaths({ circtimeEmbedDir: "" }), [], "no directory, no embeds");
+  const embed = props => ({ id: "e1", type: "embed", x: 0, y: 0, w: 1, h: 1, props });
+  assert.deepEqual(validateWidget(embed({ src: "/embed/circtime/" }), { embeds }).props, { src: "/embed/circtime/", opacity: 0.3 });
+  for (const src of ["/embed/other/", "https://circtime.example/", "//evil.example/embed/circtime/", "/embed/circtime/../../api/scene/layout", "javascript:alert(1)", "/embed/circtime"]) rejects(embed({ src }), /dashboard-served embeds/, { embeds });
+  rejects(embed({ src: "/embed/circtime/" }), /none configured/, { embeds: [] });
+  rejects(embed({}), /'props.src' is required/, { embeds });
+  rejects(embed({ src: "/embed/circtime/", opacity: 0 }), /opacity' must be a number from 0.05 to 1/, { embeds });
+  rejects(embed({ src: "/embed/circtime/", sandbox: "allow-same-origin" }), /no field 'props.sandbox'/, { embeds });
+  const [backdrop, ...rest] = builtinLayout({ embeds });
+  assert.deepEqual(backdrop, { id: "backdrop", type: "embed", x: 0, y: 0, w: 1, h: 1, z: 0, props: { src: "/embed/circtime/", opacity: 0.3 } });
+  assert.deepEqual(rest.map(widget => widget.type), ["avatar", "cat"]);
+  assert.deepEqual(validateLayout({ widgets: builtinLayout({ embeds }) }, { embeds }).length, 3);
+  assert.equal(builtinLayout().some(widget => widget.type === "embed"), false, "no embed without a served page");
+});
+
+test("embed pages get their own policy: framable only by the dashboard, nothing external", () => {
+  const policy = embedSecurityPolicy();
+  for (const directive of ["default-src 'self'", "script-src 'self'", "connect-src 'self'", "frame-ancestors 'self'", "object-src 'none'", "frame-src 'none'", "form-action 'none'"]) assert.ok(policy.includes(directive), directive);
+  assert.ok(!/unsafe|https?:|\*/.test(policy), "no unsafe-*, wildcard, or external origin");
+  assert.ok(!contentSecurityPolicy().includes("frame-src 'none'") && contentSecurityPolicy().includes("frame-src 'self'"), "the dashboard frames only itself");
+});
+

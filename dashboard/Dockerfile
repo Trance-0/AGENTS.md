@@ -2,7 +2,7 @@ FROM node:22-alpine
 
 WORKDIR /app
 
-LABEL org.opencontainers.image.version="0.2.1"
+LABEL org.opencontainers.image.version="0.2.2"
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 

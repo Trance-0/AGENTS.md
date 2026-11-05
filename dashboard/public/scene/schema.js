@@ -63,6 +63,15 @@ export const WIDGET_TYPES = Object.freeze({
       color: colour,
     },
   },
+  // Same-origin HTML page from the server-side embed allowlist (dashboard-served
+  // paths only), shown in a sandboxed iframe on the back layer behind the log.
+  embed: {
+    label: "Embed", rect: { x: 0, y: 0, w: 1, h: 1 }, z: 0, back: true,
+    props: {
+      src: { type: "embed", label: "Page", default: "" },
+      opacity: { type: "number", label: "Opacity", min: 0.05, max: 1, step: 0.05, default: 0.3 },
+    },
+  },
   image: {
     label: "Image", rect: { x: 0.05, y: 0.06, w: 0.24, h: 0.24 },
     props: {
@@ -109,7 +118,7 @@ export function imageUrlAllowed(value, allowlist = []) {
   return allowlist.some(prefix => url.href.startsWith(prefix));
 }
 
-function checkProp(type, key, spec, value, allowlist) {
+function checkProp(type, key, spec, value, allowlist, embeds) {
   const field = `props.${key}`;
   if (spec.type === "string") {
     if (typeof value !== "string") fail(`${type} field '${field}' must be text`);
@@ -130,6 +139,10 @@ function checkProp(type, key, spec, value, allowlist) {
     if (!spec.options.includes(value)) fail(`${type} field '${field}' must be one of ${spec.options.join(", ")}`);
     return value;
   }
+  if (spec.type === "embed") {
+    if (typeof value !== "string" || !embeds.includes(value)) fail(`${type} page must be one of the dashboard-served embeds (${embeds.join(", ") || "none configured"})`);
+    return value;
+  }
   if (spec.type === "url") {
     if (typeof value !== "string" || !value || value.length > LIMITS.urlLength) fail(`${type} field '${field}' must be an HTTPS URL of at most ${LIMITS.urlLength} characters`);
     if (!imageUrlAllowed(value, allowlist)) fail(`${type} URL is not on the administrator's image allowlist`);
@@ -140,7 +153,7 @@ function checkProp(type, key, spec, value, allowlist) {
 
 // Validates and normalizes a complete widget. Missing props take their
 // defaults; unknown top-level fields, unknown props, and wrong types fail.
-export function validateWidget(input, { allowlist = [] } = {}) {
+export function validateWidget(input, { allowlist = [], embeds = [] } = {}) {
   if (!plain(input)) fail("a widget must be an object");
   for (const key of Object.keys(input)) if (!["id", "type", "x", "y", "w", "h", "z", "props"].includes(key)) fail(`unknown widget field '${key}'`);
   const schema = typeof input.type === "string" && Object.hasOwn(WIDGET_TYPES, input.type) ? WIDGET_TYPES[input.type] : null;
@@ -162,7 +175,8 @@ export function validateWidget(input, { allowlist = [] } = {}) {
   const props = {};
   for (const [key, spec] of Object.entries(schema.props)) {
     const value = source[key] === undefined ? spec.default : source[key];
-    props[key] = spec.type === "url" && value === "" ? fail(`${input.type} field 'props.${key}' is required`) : checkProp(input.type, key, spec, value, allowlist);
+    const required = (spec.type === "url" || spec.type === "embed") && value === "";
+    props[key] = required ? fail(`${input.type} field 'props.${key}' is required`) : checkProp(input.type, key, spec, value, allowlist, embeds);
   }
   const widget = { id: input.id, type: input.type, x, y, w, h, z, props };
   if (JSON.stringify(widget).length > LIMITS.widgetBytes) fail(`widget exceeds ${LIMITS.widgetBytes} bytes`);
@@ -196,9 +210,11 @@ export function defaultRect(type) {
 }
 
 // The built-in layout used until an administrator saves one: the avatar
-// top-right and the cat in its lower-right home.
-export function builtinLayout() {
+// top-right, the cat in its lower-right home, and (when the deployment serves
+// one) the first allowlisted embed across the whole stage behind everything.
+export function builtinLayout({ embeds = [] } = {}) {
   return [
+    ...(embeds.length ? [{ id: "backdrop", type: "embed", ...defaultRect("embed"), z: 0, props: { src: embeds[0], opacity: 0.3 } }] : []),
     { id: "avatar", type: "avatar", ...defaultRect("avatar"), z: 100, props: { mirror: false } },
     { id: "cat", type: "cat", ...defaultRect("cat"), z: 101, props: { mirror: false } },
   ];

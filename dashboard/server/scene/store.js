@@ -10,8 +10,10 @@ import { builtinLayout, normalizeAllowlist, validateLayout } from "../../public/
 const fail = (status, reason) => Object.assign(new Error(`Scene layout not saved: dashboard/scene layout — ${reason}.`), { status });
 
 export class SceneStore {
-  constructor(directory) {
+  // `embeds`: dashboard-served embed paths this deployment allows (server config).
+  constructor(directory, { embeds = [] } = {}) {
     this.directory = directory;
+    this.embeds = embeds;
     this.layoutFile = path.join(directory, "scene-layout.json");
     this.settingsFile = path.join(directory, "scene-settings.json");
     fs.mkdirSync(directory, { recursive: true });
@@ -38,7 +40,7 @@ export class SceneStore {
     const stored = this.readJson(this.settingsFile) || {};
     let imageAllowlist = [];
     try { imageAllowlist = normalizeAllowlist(stored.imageAllowlist || []); } catch { imageAllowlist = []; }
-    this.cachedSettings = { imageAllowlist, updatedAt: stored.updatedAt || null };
+    this.cachedSettings = { imageAllowlist, embeds: this.embeds, updatedAt: stored.updatedAt || null };
     return this.cachedSettings;
   }
 
@@ -47,16 +49,18 @@ export class SceneStore {
     for (const key of Object.keys(input)) if (key !== "imageAllowlist") throw fail(400, `unknown settings field '${key}'`);
     const value = { imageAllowlist: normalizeAllowlist(input.imageAllowlist ?? []), updatedAt: Date.now() };
     this.writeJson(this.settingsFile, value);
-    this.cachedSettings = value;
-    return value;
+    this.cachedSettings = { ...value, embeds: this.embeds };
+    return this.cachedSettings;
   }
+
+  options() { return { allowlist: this.settings().imageAllowlist, embeds: this.embeds }; }
 
   // A stored layout that no longer validates (for example an image whose
   // prefix left the allowlist) keeps its valid widgets only.
   layout() {
     const stored = this.readJson(this.layoutFile);
-    if (!stored) return { version: 0, updatedAt: null, builtin: true, widgets: builtinLayout() };
-    const options = { allowlist: this.settings().imageAllowlist };
+    if (!stored) return { version: 0, updatedAt: null, builtin: true, widgets: builtinLayout({ embeds: this.embeds }) };
+    const options = this.options();
     const widgets = [];
     for (const widget of Array.isArray(stored.widgets) ? stored.widgets : []) {
       try { widgets.push(...validateLayout({ widgets: [widget] }, options)); } catch {}
@@ -67,7 +71,7 @@ export class SceneStore {
   saveLayout(widgetsInput, baseVersion) {
     const current = this.layout();
     if (baseVersion !== undefined && baseVersion !== current.version) throw fail(409, `the saved layout changed (version ${current.version}, edit based on ${baseVersion}); reload and retry`);
-    const widgets = validateLayout({ widgets: widgetsInput }, { allowlist: this.settings().imageAllowlist });
+    const widgets = validateLayout({ widgets: widgetsInput }, this.options());
     const value = { version: current.version + 1, updatedAt: Date.now(), widgets };
     this.writeJson(this.layoutFile, value);
     return { ...value, builtin: false };

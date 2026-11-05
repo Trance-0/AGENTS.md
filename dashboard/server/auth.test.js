@@ -68,11 +68,18 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     const configFile = path.join(dir, "openclaw-config", "openclaw.json");
     await mkdir(path.dirname(configFile));
     await writeFile(configFile, JSON.stringify({ gateway: { bind: "loopback" }, agents: { defaults: { model: { primary: "cpa/claude-opus-5-5-high", fallbacks: ["cpa/gpt-6-astra", "openai/gpt-6-astra"] } }, list: [{ id: "main" }, { id: "dashboard-host", name: "Dashboard Host", model: "cpa/gpt-6-astra", workspace: "/private/workspace" }] }, channels: { telegram: { botToken: "literal-telegram-secret", groupPolicy: "allowlist" } } }, null, 2) + "\n");
+    // Stand-in for the circtime build: a static page with no inline code (CSP clean),
+    // reporting the theme it received by query string and postMessage.
+    const embedDir = path.join(dir, "circtime");
+    await mkdir(embedDir);
+    await writeFile(path.join(embedDir, "index.html"), '<!doctype html><html><head><meta charset="utf-8"><title>circtime fixture</title><link rel="stylesheet" href="style.css"><script src="app.js" defer></script></head><body><main id="radar">Uptime radar fixture</main></body></html>\n');
+    await writeFile(path.join(embedDir, "style.css"), "body { margin: 0; background: transparent; color: #4fb6c8; font: 64px sans-serif; }\n");
+    await writeFile(path.join(embedDir, "app.js"), 'const root = document.documentElement;\nroot.dataset.theme = new URLSearchParams(location.search).get("theme") || "unset";\nroot.dataset.loadedAt = String(performance.timeOrigin);\naddEventListener("message", event => { if (event.data?.type === "dashboard-theme") root.dataset.theme = event.data.theme; });\n');
     const metricsKeyFile = path.join(dir, "metrics-key");
     await writeFile(metricsKeyFile, randomBytes(32), { mode: 0o400 });
     const usageDir = path.join(dir, "usage-logs");
     for (const [provider, model] of [["cpa", "claude-test"], ["openai", "gpt-test"]]) writeUsage(usageDir, { runId: provider, provider, model, usage: { input: 1000, output: 500, cacheRead: 200, cacheWrite: 100 }, lastAssistant: { timestamp: Date.now() } }, { agentId: "main" });
-    child = spawn(process.execPath, ["server/index.js"], { cwd: dir, env: { ...process.env, NODE_ENV: "test", HOST: "127.0.0.1", PORT: String(port), OIDC_ISSUER: issuer, OIDC_CLIENT_ID: "test-dashboard", OIDC_CLIENT_SECRET: "test-client-secret", OIDC_REDIRECT_URI: "https://live.example.test/auth/callback", OIDC_REQUIRED_GROUP: "trance-0/app-agent", SESSION_SECRET: "test-session-secret", DASHBOARD_TOKEN: "test-mutation-token", OPENCLAW_ENDPOINT: issuer, OPENCLAW_TOKEN: "test-gateway-token", OPENCLAW_STREAM_TOKEN: "test-stream-token", ASTRBOT_ENDPOINT: issuer, JENKINS_ENDPOINT: issuer, OPENCLAW_CONFIG_FILE: configFile, METRICS_ENCRYPTION_KEY_FILE: metricsKeyFile, OPENCLAW_ACTIVITY_DIR: usageDir } });
+    child = spawn(process.execPath, ["server/index.js"], { cwd: dir, env: { ...process.env, NODE_ENV: "test", HOST: "127.0.0.1", PORT: String(port), OIDC_ISSUER: issuer, OIDC_CLIENT_ID: "test-dashboard", OIDC_CLIENT_SECRET: "test-client-secret", OIDC_REDIRECT_URI: "https://live.example.test/auth/callback", OIDC_REQUIRED_GROUP: "trance-0/app-agent", SESSION_SECRET: "test-session-secret", DASHBOARD_TOKEN: "test-mutation-token", OPENCLAW_ENDPOINT: issuer, OPENCLAW_TOKEN: "test-gateway-token", OPENCLAW_STREAM_TOKEN: "test-stream-token", CIRCTIME_EMBED_DIR: embedDir, ASTRBOT_ENDPOINT: issuer, JENKINS_ENDPOINT: issuer, OPENCLAW_CONFIG_FILE: configFile, METRICS_ENCRYPTION_KEY_FILE: metricsKeyFile, OPENCLAW_ACTIVITY_DIR: usageDir } });
     child.stdout.on("data", chunk => { output += chunk; });
     child.stderr.on("data", chunk => { output += chunk; });
     const base = `http://127.0.0.1:${port}`;
@@ -138,6 +145,17 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     assert.equal(asset.status, 200);
     assert.match(asset.headers.get("cache-control"), /max-age=31536000, immutable/);
     assert.equal((await request("/scene/assets/witch-idle.svg")).status, 404, "only hashed asset names exist");
+    assert.match(page.headers.get("content-security-policy"), /frame-src 'self';.*frame-ancestors 'none'/);
+    const embedPage = await request("/embed/circtime/");
+    assert.equal(embedPage.status, 200);
+    assert.match(embedPage.headers.get("content-type"), /^text\/html/);
+    assert.match(embedPage.headers.get("content-security-policy"), /^default-src 'self'; script-src 'self';.*frame-ancestors 'self'$/);
+    assert.equal(embedPage.headers.get("x-content-type-options"), "nosniff");
+    assert.equal((await request("/embed/circtime/app.js")).status, 200);
+    assert.equal((await request("/embed/circtime")).status, 301, "the directory URL gets its trailing slash");
+    assert.equal((await request("/embed/elsewhere/")).status, 404, "only allowlisted embed paths are served");
+    assert.notEqual((await request("/embed/circtime/%2e%2e/%2e%2e/package.json")).status, 200, "no path traversal out of the embed directory");
+    assert.notEqual((await request("/embed/circtime/.env")).status, 200);
     const allowed = await login(["trance-0/app-agent", "trance-0/admin-agent"]);
     const callback = await request(`/auth/callback?code=${allowed.code}&state=${allowed.state}`, { headers: allowed.headers });
     assert.equal(callback.status, 302);
