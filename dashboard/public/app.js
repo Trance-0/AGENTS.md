@@ -258,6 +258,16 @@ async function renderConfigEditor(body) {
   await load();
 }
 
+// Admin mutation helper for panel toggles: admin session + same-origin
+// X-Dashboard-Request header (added by api()). Refreshes the panel list and
+// returns the updated panel snapshot. UI-independent so redesigned settings
+// views can reuse it.
+async function setPanelEnabled(id, enabled) {
+  const result = await api(`/api/panels/${encodeURIComponent(id)}/toggle`, { method: "POST", body: JSON.stringify({ enabled }) });
+  await loadPanels();
+  return state.panels.find(p => p.id === id) || { id, enabled: result.enabled };
+}
+
 // Admin-only panel switch. Uses the admin session plus the same-origin
 // X-Dashboard-Request header (sent by api()), like other admin mutations.
 function renderPanelAdmin(box, panel) {
@@ -277,10 +287,7 @@ function renderPanelAdmin(box, panel) {
     toggle.disabled = true;
     status.textContent = "Saving…";
     try {
-      const { enabled } = await api(`/api/panels/${encodeURIComponent(panel.id)}/toggle`, { method: "POST", body: JSON.stringify({ enabled: toggle.checked }) });
-      await loadPanels();
-      const updated = state.panels.find(p => p.id === panel.id) || { ...panel, enabled };
-      await renderPanelView(updated);
+      await renderPanelView(await setPanelEnabled(panel.id, toggle.checked));
     } catch (error) {
       toggle.checked = panel.enabled;
       status.textContent = error.message;
