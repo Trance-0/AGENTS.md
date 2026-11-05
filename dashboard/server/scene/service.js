@@ -42,11 +42,17 @@ export class SceneService {
     this.listeners = new Set();
     this.live = null;
     this.sequence = 0;
+    // Only a real start opens the scene. A stream recovered after a restart
+    // (including one that began before scenes existed) and later status
+    // notifications for the same stream (summary updates) never replay it.
+    this.lastActiveId = broadcast.active?.id ?? null;
     broadcast.subscribe(type => {
       if (type !== "status") return;
-      const id = broadcast.active?.id;
+      const id = broadcast.active?.id ?? null;
+      const started = id && id !== this.lastActiveId;
+      this.lastActiveId = id;
       // Defer until start() has published its "Stream is live" event.
-      if (id) queueMicrotask(() => this.openScene(id));
+      if (started) queueMicrotask(() => this.openScene(id));
     });
   }
 

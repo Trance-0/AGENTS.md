@@ -29,8 +29,8 @@ shows both its starting and completed file-path events in the public player.
 The browser connects to `https://live.trance-0.com`. Its remote reverse proxy
 terminates TLS and routes HTTP to a private FRP remote TCP port. The existing local
 `frpc` container uses host networking and forwards requests to
-`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.2.0` using image
-`agent-dashboard:0.2.0`, with Node.js 22 as the unprivileged `node` user.
+`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.2.1` using image
+`agent-dashboard:0.2.1`, with Node.js 22 as the unprivileged `node` user.
 
 ## Casdoor setup
 
@@ -173,8 +173,8 @@ and without `admin-agent` must receive 403 for mutations, including panel
 toggles, even with a valid bearer token. Remove any temporary test identities after testing.
 
 ```sh
-docker logs --timestamps --tail 100 agent-dashboard-v0.2.0
-docker inspect agent-dashboard-v0.2.0 --format '{{.State.Health.Status}}'
+docker logs --timestamps --tail 100 agent-dashboard-v0.2.1
+docker inspect agent-dashboard-v0.2.1 --format '{{.State.Health.Status}}'
 ```
 
 Docker retains three rotated JSON log files of up to 10 MB each. Application
@@ -186,7 +186,7 @@ never be included in logs.
 
 Before a future update, retain the current image under a distinct local tag.
 To roll back, restore the previous source revision or retag the retained image
-as `agent-dashboard:0.2.0`, then run
+as `agent-dashboard:0.2.1`, then run
 `docker compose -f dashboard/compose.yaml up -d --no-build`. Keep the private
 environment file and state volume. To remove just the dashboard exposure,
 restore the saved FRP configuration, validate it, and restart `frpc`; other
@@ -618,7 +618,9 @@ restores the built-in layout (avatar and cat). Older images ignore these files.
 Admins use **Edit scene** under the player. With no live stream, edits change
 only the saved layout; it is replayed as the opening scene of every new stream.
 While a stream is live, edits are recorded in the recording (so replay, seek,
-and speed show them) and also saved to the layout. Settings → Scene defaults
+and speed show them) and also saved to the layout. The layout opens a stream
+only when it starts: a stream that was already live during an upgrade (or
+resumed after a restart) keeps running without an injected opening scene. Settings → Scene defaults
 holds the image allowlist (HTTPS prefixes) and a reset to the built-in layout.
 
 ### Admin API

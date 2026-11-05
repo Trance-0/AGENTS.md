@@ -575,3 +575,16 @@ design records the implementation and where it deviates.
   asset caching through the real session pipeline.
 - `scripts/scene-browser-check.mjs` passed alongside the four existing checks
   (results and counts in the round report).
+
+### 0.2.1 follow-up
+
+Production check after the 0.2.0 deploy found a stream that had been live
+since before the upgrade. `SceneService` (`server/scene/service.js`) opened the
+saved layout on any `status` notification for a live stream without widget
+events, so the next summary update (`BroadcastStore.summarize` notifies
+`status`) would have injected the avatar and cat mid-stream. The opening now
+runs only when the active recording ID changes from what the service last saw;
+a recovered or pre-existing stream is left alone. Regression test:
+`scene-routes.test.js` "a stream recovered after a restart is not given an
+opening scene later".
+

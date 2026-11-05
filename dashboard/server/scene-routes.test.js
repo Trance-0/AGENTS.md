@@ -95,6 +95,25 @@ test("offline edits change only the saved layout, which opens the next stream", 
   } finally { await f.close(); }
 });
 
+test("a stream recovered after a restart is not given an opening scene later", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "scene-recover-"));
+  try {
+    const first = new BroadcastStore(path.join(dir, "recordings"));
+    first.start("Started before scenes");
+    // Restart: a new store resumes the live recording, then a summary update notifies status.
+    const broadcast = new BroadcastStore(path.join(dir, "recordings"));
+    const scene = new SceneService({ broadcast, store: new SceneStore(path.join(dir, "scene")) });
+    broadcast.summarize("Later summary");
+    await flush();
+    assert.equal(broadcast.readEvents(broadcast.active.id, 0, 100).filter(event => event.kind === "widget").length, 0);
+    assert.deepEqual(scene.liveWidgets(), []);
+    broadcast.stop();
+    broadcast.start("Next stream");
+    await flush();
+    assert.equal(broadcast.readEvents(broadcast.active.id, 0, 100).filter(event => event.kind === "widget").length, 2, "the next real start opens the saved layout");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("live admin edits are recorded and also saved; the recording folds to the live scene", async () => {
   const f = await fixture();
   try {
