@@ -10,7 +10,7 @@
 <body class="guest">
   <div class="app">
     <header class="topbar">
-      <button class="icon-btn members-only" id="hamburger" aria-label="Toggle menu">Menu</button>
+      <button class="icon-btn members-only" id="hamburger" type="button" aria-label="Toggle menu" title="Toggle menu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
       <a class="brand" href="/">Agent Dashboard</a>
       <span class="topbar-spacer"></span>
       <div class="topbar-right">
@@ -35,35 +35,41 @@
         <section class="view" id="view-live-stream">
           <div class="player-col" id="player-col">
             <div class="screen-surface" id="screen-surface">
-              <div class="player" id="player">
+              <div class="player" id="player" tabindex="0" role="region" aria-label="Stream player">
                 <div class="player-vignette"></div>
                 <div class="live-badge"><span class="live-pulse"></span><span id="live-label">OFFLINE</span></div>
                 <div class="stream-log" id="stream-log"></div>
                 <div class="captions" id="captions">Choose a stream to watch.</div>
               </div>
-              <div class="progress-wrap">
-                <span class="timecode" id="time-elapsed">0:00:00</span>
-                <div class="progress-bar" id="progress-bar" role="slider" tabindex="0" aria-label="Playback time" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
-                  <div class="progress-track"></div><div class="progress-elapsed" id="progress-elapsed"></div>
-                  <div class="event-marks" id="event-marks"></div><div class="scrubber" id="scrubber"></div>
+              <div class="player-chrome" id="player-chrome">
+                <div class="progress-wrap">
+                  <span class="timecode" id="time-elapsed">0:00:00</span>
+                  <div class="progress-bar" id="progress-bar" role="slider" tabindex="0" aria-label="Playback time" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+                    <div class="progress-track"></div><div class="progress-elapsed" id="progress-elapsed"></div>
+                    <div class="event-marks" id="event-marks"></div><div class="scrubber" id="scrubber"></div>
+                  </div>
+                  <span class="timecode" id="time-total">0:00:00</span>
                 </div>
-                <span class="timecode" id="time-total">0:00:00</span>
-              </div>
-              <div class="player-actions">
-                <button class="action-btn playback-toggle" id="btn-play" aria-label="Play" title="Play"><svg id="play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16l14-8z"/></svg><svg id="pause-icon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg></button>
-                <button class="action-btn" id="btn-live" hidden>Go live</button>
-                <span class="topbar-spacer"></span>
-                <button class="action-btn" id="btn-theater" aria-pressed="false">Theater</button>
-                <button class="action-btn" id="btn-web-fullscreen" aria-pressed="false">Web full screen</button>
-                <button class="action-btn" id="btn-fullscreen">Full display</button>
-                <button class="action-btn" id="btn-exit-screen" hidden>Exit full screen</button>
+                <div class="player-actions">
+                  <button class="ctl-btn playback-toggle" id="btn-play" type="button" aria-label="Play" title="Play (k)"><svg class="icon-play" id="play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16l14-8z"/></svg><svg class="icon-pause" id="pause-icon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg></button>
+                  <button class="action-btn live-btn" id="btn-live" type="button" title="Jump to the live edge" hidden><span class="live-btn-dot" aria-hidden="true"></span>Go live</button>
+                  <span class="topbar-spacer"></span>
+                  <div class="speed-control">
+                    <button class="ctl-btn speed-btn" id="btn-speed" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="speed-menu" aria-label="Playback speed: 1x" title="Playback speed"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14l4-4"/><path d="M3.3 19a10 10 0 1 1 17.4 0"/></svg><span class="speed-label" id="speed-label">1x</span></button>
+                    <div class="speed-menu" id="speed-menu" role="menu" aria-label="Playback speed" hidden></div>
+                  </div>
+                  <button class="ctl-btn" id="btn-theater" type="button" aria-pressed="false" aria-label="Theater mode" title="Theater mode"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="20" height="10" rx="2"/></svg></button>
+                  <button class="ctl-btn" id="btn-web-fullscreen" type="button" aria-pressed="false" aria-label="Web full screen" title="Web full screen"><svg class="icon-enter" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg><svg class="icon-exit" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg></button>
+                  <button class="ctl-btn" id="btn-fullscreen" type="button" aria-pressed="false" aria-label="Full display" title="Full display"><svg class="icon-enter" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg><svg class="icon-exit" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3"/></svg></button>
+                  <button class="ctl-btn" id="btn-exit-screen" type="button" aria-label="Exit full screen" title="Exit full screen (Esc)" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+                </div>
               </div>
               <div class="tooltip" id="tooltip" role="tooltip"></div>
             </div>
             <div class="player-meta">
               <h1 class="stream-title" id="stream-title">AI Platform Live Stream</h1>
               <div class="stream-stats"><span id="viewer-count">0</span> watching <span id="stream-started"></span></div>
-              <p class="hint">Hover for a log preview. Drag to seek; use Play to replay events and chat at their recorded times.</p>
+              <p class="hint">Hover the timeline for a log preview. Drag to seek; use Play (k or Space) to replay events and chat at their recorded times, and the speed menu to replay faster or slower.</p>
             </div>
             <form class="admin-only broadcast-controls" id="broadcast-controls">
               <label>Stream title <input id="broadcast-title" value="AI Platform Live Stream" maxlength="160" required /></label>

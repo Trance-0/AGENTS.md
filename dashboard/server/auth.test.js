@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { writeUsage } from "../openclaw-plugin/usage-log.js";
 
-test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", { timeout: 60000 }, async () => {
+test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", { timeout: process.env.DASHBOARD_BROWSER_CHECK === "1" ? 180000 : 60000 }, async () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const dir = await mkdtemp(path.join(os.tmpdir(), "dashboard-auth-"));
   const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });

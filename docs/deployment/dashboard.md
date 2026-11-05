@@ -29,8 +29,8 @@ shows both its starting and completed file-path events in the public player.
 The browser connects to `https://live.trance-0.com`. Its remote reverse proxy
 terminates TLS and routes HTTP to a private FRP remote TCP port. The existing local
 `frpc` container uses host networking and forwards requests to
-`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.1.4` using image
-`agent-dashboard:0.1.4`, with Node.js 22 as the unprivileged `node` user.
+`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.1.6` using image
+`agent-dashboard:0.1.6`, with Node.js 22 as the unprivileged `node` user.
 
 ## Casdoor setup
 
@@ -153,8 +153,8 @@ and without `admin-agent` must receive 403 for mutations even with a valid
 bearer token. Remove any temporary test identities after testing.
 
 ```sh
-docker logs --timestamps --tail 100 agent-dashboard-v0.1.4
-docker inspect agent-dashboard-v0.1.4 --format '{{.State.Health.Status}}'
+docker logs --timestamps --tail 100 agent-dashboard-v0.1.6
+docker inspect agent-dashboard-v0.1.6 --format '{{.State.Health.Status}}'
 ```
 
 Docker retains three rotated JSON log files of up to 10 MB each. Application
@@ -166,7 +166,7 @@ never be included in logs.
 
 Before a future update, retain the current image under a distinct local tag.
 To roll back, restore the previous source revision or retag the retained image
-as `agent-dashboard:0.1.4`, then run
+as `agent-dashboard:0.1.6`, then run
 `docker compose -f dashboard/compose.yaml up -d --no-build`. Keep the private
 environment file and state volume. To remove just the dashboard exposure,
 restore the saved FRP configuration, validate it, and restart `frpc`; other
@@ -248,6 +248,11 @@ npm test --prefix dashboard
 It runs against the temporary signed-token OIDC fixture and mock OpenClaw,
 covering guest access, hover content, timestamp replay, chat separation,
 responsive recommendations, screen modes, avatars, start/end, and moderation.
+It also covers the player controls: icons, play/pause state, the speed menu
+(2x replay timing and live 1x lock), and YouTube-style auto-hide. If the host
+Node.js is older than 22, run it inside the matching
+`mcr.microsoft.com/playwright:v<version>-noble` image with the dashboard
+`node_modules` and the Playwright package mounted read-only.
 `npm test --prefix dashboard` also checks restart recovery, Unicode NDJSON
 pagination, visibility/ranking, cross-stream reply isolation, and auth gates.
 

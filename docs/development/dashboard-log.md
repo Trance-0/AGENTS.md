@@ -292,3 +292,52 @@ Post-restart verification:
   GPT-6 Astra. Official OpenAI GPT-6 Astra was directly probed successfully and
   is the final configured fallback. No claim is made that unavailable Opus
   produced a reply.
+
+## 2026-11-05 — Player controls: icons, play state, auto-hide, and speed (0.1.6)
+
+### Root causes and implementation
+
+- Play/pause never changed icon: `player.js` set `.hidden` on the two `<svg>`
+  icons, but `hidden` is an `HTMLElement` property; on `SVGElement` it is only
+  an expando and never reaches the attribute the `[hidden]` CSS rule matches.
+  The pause icon kept its markup `hidden` attribute forever. Render now toggles
+  the attribute, and play state comes from one `isPlaying()` (live following
+  counts as playing) shared by click, the `k`/Space shortcut, end-of-replay,
+  and live catch-up. The old browser check asserted the play icon after
+  pausing, which was always true, so it never caught this.
+- Missing icons: commit `2e0d8af` replaced the menu icon with the text "Menu"
+  inside the 40 px round `icon-btn`, and the screen-mode controls were only
+  ever text pills. All player controls are now inline-SVG icon buttons in the
+  existing stroke style, with `aria-label` and tooltip (including shortcuts).
+  Web full screen and full display swap to exit icons via `aria-pressed`;
+  their labels describe the next action. They were already shown to guests;
+  the menu button stays members-only because the sidebar it toggles is.
+- Auto-hide: controls moved into an overlay (`#player-chrome`) at the bottom of
+  the screen surface. While playing, they hide after 2.5 s without pointer or
+  keyboard activity over the player, or 1 s after the pointer leaves, leaving
+  a thin progress line (and no cursor in web/full display). Paused playback,
+  an open speed menu, keyboard focus on a control, or scrubbing keep them up.
+  The rule is the pure `controlsShouldHide()`; transitions are disabled under
+  `prefers-reduced-motion`.
+- Speed: a menu offers 0.25x–2x (`Shift+<`/`Shift+>` steps). Recorded time
+  advances by `elapsed × rate` (`advanceTime()`), which drives both event
+  replay and the progress bar. Live following is fixed at 1x and the control
+  is disabled; rewinding a live stream may use any rate, and catching up with
+  the live edge rejoins live at 1x. The choice persists in `localStorage`
+  (`agent-dashboard.playbackRate`), with invalid values treated as 1x.
+- Shortcuts `t`, `w`, and `f` toggle theater, web full screen, and full display
+  while focus is inside the player. Server auth and APIs are unchanged.
+
+### Verification
+
+- `node --test server/*.test.js` in the Node 22 dashboard image: 23 tests
+  passed, including the new `server/player.test.js` (rate normalization and
+  stepping, `elapsed × rate` replay timing, auto-hide rules).
+- The Playwright/Chromium check (`scripts/browser-check.mjs`, run inside the
+  `mcr.microsoft.com/playwright:v1.58.2-noble` image because the host's Node 18
+  stalls in the auth fixture) passed: icons and labels for guest and admin,
+  play/pause icon on click, `k`, replay end, live pause, and live catch-up;
+  speed menu, persistence across reload, 1x lock while live, and a 2x replay
+  covering 3–5 s in 2 s; auto-hide while live, kept by keyboard focus,
+  hidden after the pointer leaves, and never while paused. With the browser
+  check enabled the auth test's timeout is 180 s instead of 60 s.

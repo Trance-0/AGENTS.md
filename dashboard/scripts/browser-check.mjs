@@ -4,6 +4,25 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH, headless: true, args: ["--no-sandbox"] });
 const baseURL = process.env.DASHBOARD_TEST_URL;
 const errors = [];
+const shots = process.env.DASHBOARD_SCREENSHOT_DIR || "/tmp";
+const CHROME_BUTTONS = ["#btn-play", "#btn-speed", "#btn-theater", "#btn-web-fullscreen", "#btn-fullscreen"];
+// Overlay controls auto-hide while playing; move the pointer over the player first, as a user would.
+const reveal = async target => {
+  const box = await target.locator("#player").boundingBox();
+  await target.mouse.move(box.x + box.width / 2, box.y + box.height / 3);
+  await target.mouse.move(box.x + box.width / 2 + 7, box.y + box.height / 3 + 5);
+  await target.waitForFunction(() => !document.querySelector("#screen-surface").classList.contains("controls-hidden"));
+};
+const assertIcons = async (target, selectors) => {
+  for (const selector of selectors) {
+    const button = target.locator(selector);
+    assert.ok((await button.getAttribute("aria-label"))?.length, `${selector} needs an accessible label`);
+    assert.ok((await button.getAttribute("title"))?.length, `${selector} needs a tooltip`);
+    const icon = await button.locator("svg:visible").first().boundingBox();
+    assert.ok(icon && icon.width >= 16 && icon.height >= 16, `${selector} must render a visible icon`);
+  }
+};
+const iconState = target => target.evaluate(() => ({ play: getComputedStyle(document.querySelector("#play-icon")).display !== "none", pause: getComputedStyle(document.querySelector("#pause-icon")).display !== "none" }));
 try {
   const guest = await browser.newContext({ baseURL, viewport: { width: 1440, height: 1000 }, extraHTTPHeaders: { "x-forwarded-proto": "https", origin: "https://live.example.test" } });
   const page = await guest.newPage();
@@ -28,18 +47,54 @@ try {
   assert.match(await page.locator("#tooltip").innerText(), /Preview at/);
   assert.match(await page.locator("#tooltip").innerText(), /administrator started|Welcome/);
   await page.mouse.down(); await page.mouse.move(bar.x + bar.width * .1, bar.y + bar.height / 2); await page.mouse.up();
+  await assertIcons(page, CHROME_BUTTONS);
+  assert.deepEqual(await iconState(page), { play: true, pause: false }, "seeking pauses and shows the play icon");
   await page.locator("#btn-play").click();
   await page.waitForFunction(() => document.querySelector("#chat-messages").textContent.includes("Hello host"));
+  // The short fixture recording ends almost immediately; ending must restore the play icon.
+  await page.waitForFunction(() => document.querySelector("#btn-play").getAttribute("aria-label") === "Play");
+  assert.deepEqual(await iconState(page), { play: true, pause: false });
+  // The fixture replay lasts well under one 200 ms tick, so read the state in the same task as the key press.
+  await page.locator("#player").focus();
+  const keyed = await page.evaluate(() => {
+    document.querySelector("#player").dispatchEvent(new KeyboardEvent("keydown", { key: "k", bubbles: true, cancelable: true }));
+    return { label: document.querySelector("#btn-play").getAttribute("aria-label"), play: getComputedStyle(document.querySelector("#play-icon")).display !== "none", pause: getComputedStyle(document.querySelector("#pause-icon")).display !== "none" };
+  });
+  assert.deepEqual(keyed, { label: "Pause", play: false, pause: true }, "keyboard toggle switches to the pause icon");
+  await page.waitForFunction(() => document.querySelector("#btn-play").getAttribute("aria-label") === "Play");
+  await page.waitForTimeout(3000);
+  assert.equal(await page.locator("#screen-surface").evaluate(element => element.classList.contains("controls-hidden")), false, "paused controls never hide");
+  await reveal(page);
+  await page.locator("#btn-speed").click();
+  await page.waitForSelector("#speed-menu", { state: "visible" });
+  assert.equal(await page.locator("#speed-menu [role=menuitemradio]").count(), 7);
+  await page.locator('#speed-menu [data-rate="1.5"]').click();
+  assert.equal(await page.locator("#speed-menu").isVisible(), false);
+  assert.equal(await page.locator("#speed-label").textContent(), "1.5x");
+  assert.equal(await page.evaluate(() => localStorage.getItem("agent-dashboard.playbackRate")), "1.5");
+  await page.reload();
+  await page.waitForSelector(".rec-card");
+  await page.locator(".rec-card").first().click();
+  await page.waitForFunction(() => document.querySelector("#speed-label").textContent === "1.5x");
+  assert.equal(await page.locator('#speed-menu [data-rate="1.5"]').getAttribute("aria-checked"), "true");
+  await reveal(page);
   assert.ok(!(await page.locator("#chat-messages").innerText()).includes("Welcome to the stream!"));
+  await reveal(page);
   await page.locator("#btn-theater").click();
   assert.equal(await page.locator("body").evaluate(element => element.classList.contains("theater")), true);
+  assert.equal(await page.locator("#btn-theater").getAttribute("aria-label"), "Exit theater mode");
   await page.locator("#btn-web-fullscreen").click();
+  assert.equal(await page.locator("#btn-web-fullscreen").getAttribute("aria-pressed"), "true");
+  assert.equal(await page.locator("#btn-web-fullscreen").getAttribute("aria-label"), "Exit web full screen");
+  await assertIcons(page, ["#btn-web-fullscreen", "#btn-exit-screen"]);
   const surface = await page.locator("#screen-surface").boundingBox();
   assert.equal(surface.width, 1440);
   await page.keyboard.press("Escape");
   assert.equal(await page.locator("body").evaluate(element => element.classList.contains("web-fullscreen")), false);
   await page.locator("#btn-fullscreen").click();
   await page.waitForFunction(() => !!document.fullscreenElement);
+  await page.waitForFunction(() => document.querySelector("#btn-fullscreen").getAttribute("aria-label") === "Exit full display");
+  await reveal(page);
   await page.locator("#btn-exit-screen").click();
   await page.waitForFunction(() => !document.fullscreenElement);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -59,6 +114,7 @@ try {
   adminPage.on("pageerror", error => errors.push(error.message));
   await adminPage.goto("/");
   await adminPage.waitForSelector("#broadcast-controls", { state: "visible" });
+  await assertIcons(adminPage, ["#hamburger", ...CHROME_BUTTONS]);
   await page.waitForFunction(() => Number(document.querySelector("#viewer-count").textContent) === 2);
   await adminPage.waitForFunction(() => document.querySelector("#avatar img")?.naturalWidth > 0);
   await adminPage.locator("#broadcast-title").fill("Browser verification stream");
@@ -68,9 +124,29 @@ try {
   assert.equal(started.status(), 201, await started.text());
   await adminPage.waitForFunction(() => document.querySelector("#live-label").textContent === "LIVE");
   assert.equal(await adminPage.locator("#btn-play").getAttribute("aria-label"), "Pause");
+  assert.deepEqual(await iconState(adminPage), { play: false, pause: true }, "following live shows the pause icon");
+  assert.equal(await adminPage.locator("#btn-speed").isDisabled(), true, "live following stays at 1x");
+  assert.equal(await adminPage.locator("#speed-label").textContent(), "1x");
+  // Auto-hide while following live: idle pointer over the player, then pointer away.
+  await reveal(adminPage);
+  await adminPage.waitForFunction(() => document.querySelector("#screen-surface").classList.contains("controls-hidden"), null, { timeout: 4000 });
+  await adminPage.locator(".player-actions").waitFor({ state: "hidden", timeout: 1000 });
+  assert.equal(await adminPage.locator("#progress-bar").isVisible(), true, "a thin progress bar stays visible");
+  await adminPage.screenshot({ path: `${shots}/dashboard-controls-hidden.png` });
+  await reveal(adminPage);
+  await adminPage.locator("#btn-play").focus();
+  await adminPage.keyboard.press("Tab");
+  assert.ok(await adminPage.evaluate(() => document.querySelector("#player-chrome").contains(document.activeElement)));
+  await adminPage.waitForTimeout(3000);
+  assert.equal(await adminPage.locator(".player-actions").isVisible(), true, "keyboard focus keeps controls visible");
+  await adminPage.locator("#stream-title").click();
+  await adminPage.waitForFunction(() => document.querySelector("#screen-surface").classList.contains("controls-hidden"), null, { timeout: 3000 });
+  await reveal(adminPage);
+  await adminPage.screenshot({ path: `${shots}/dashboard-controls-visible.png` });
   await adminPage.locator("#btn-play").click();
   assert.equal(await adminPage.locator("#btn-play").getAttribute("aria-label"), "Play");
-  assert.equal(await adminPage.locator("#play-icon").isVisible(), true);
+  assert.deepEqual(await iconState(adminPage), { play: true, pause: false }, "pausing live shows the play icon");
+  assert.equal(await adminPage.locator("#btn-speed").isDisabled(), false, "rewinding a live stream can change speed");
   await adminPage.locator("#btn-live").click();
   await page.getByRole("button").filter({ hasText: "Browser verification stream" }).first().click();
   await page.waitForFunction(() => document.querySelector("#btn-live").hidden === false);
@@ -83,6 +159,26 @@ try {
   await adminPage.waitForFunction(() => document.querySelector("#stream-log").textContent.includes("Welcome to the stream!"));
   assert.match(await adminPage.locator("#chat-messages").innerText(), /Browser chat check/);
   assert.ok(!(await adminPage.locator("#chat-messages").innerText()).includes("Welcome to the stream!"));
+  // Speed changes replay timing: 2x from the start covers about 4 s in 2 s of wall clock.
+  await reveal(adminPage);
+  await adminPage.locator("#btn-play").click();
+  await adminPage.locator("#progress-bar").press("Home");
+  await adminPage.locator("#btn-speed").click();
+  await adminPage.locator('#speed-menu [data-rate="2"]').click();
+  await adminPage.screenshot({ path: `${shots}/dashboard-speed-2x.png` });
+  await adminPage.locator("#btn-play").click();
+  await adminPage.waitForTimeout(2000);
+  const replayed = Number(await adminPage.locator("#progress-bar").getAttribute("aria-valuenow"));
+  assert.ok(replayed >= 3 && replayed <= 5, `2x replay advanced ${replayed} s in 2 s`);
+  // Catching up with the live edge switches back to live at 1x with the pause icon.
+  await adminPage.locator("#progress-bar").press("End");
+  await adminPage.locator("#progress-bar").press("ArrowLeft");
+  await reveal(adminPage);
+  await adminPage.locator("#btn-play").click();
+  await adminPage.waitForFunction(() => document.querySelector("#live-label").textContent === "LIVE", null, { timeout: 10000 });
+  assert.deepEqual(await iconState(adminPage), { play: false, pause: true });
+  assert.equal(await adminPage.locator("#speed-label").textContent(), "1x");
+  assert.equal(await adminPage.locator("#btn-speed").isDisabled(), true);
   await adminPage.locator("#btn-end").click();
   await adminPage.waitForFunction(() => document.querySelector("#live-label").textContent === "REPLAY");
   await adminPage.waitForSelector(".recording-row");
@@ -93,5 +189,5 @@ try {
   await adminPage.waitForFunction(() => document.querySelector('#admin-recordings input[type="number"]')?.value === "95");
   await page.waitForFunction(() => !document.querySelector("#rec-cards").textContent.includes("Browser verification stream"));
   assert.deepEqual(errors, []);
-  console.info("Chromium passed: guest viewing, previews, replay/chat timing, screen modes, mobile recommendations, avatar, admin start/end, live chat, and moderation.");
+  console.info("Chromium passed: guest viewing, previews, replay/chat timing, play/pause icons, speed menu and 2x replay, live catch-up, control auto-hide, screen modes and icons, mobile recommendations, avatar, admin start/end, live chat, and moderation.");
 } finally { await browser.close(); }

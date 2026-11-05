@@ -381,10 +381,22 @@ function wireChrome() {
     if (document.fullscreenElement) await document.exitFullscreen();
     syncScreenButtons();
   };
+  // Icon buttons: aria-pressed drives the enter/exit icon swap in CSS; the
+  // accessible name and tooltip describe the action the next click performs.
+  const setMode = (button, active, enterLabel, exitLabel, key) => {
+    button.setAttribute("aria-pressed", String(active));
+    button.setAttribute("aria-label", active ? exitLabel : enterLabel);
+    button.title = `${active ? exitLabel : enterLabel}${key ? ` (${key})` : ""}`;
+  };
   const syncScreenButtons = () => {
-    $("#btn-exit-screen").hidden = !document.body.classList.contains("web-fullscreen") && !document.fullscreenElement;
-    $("#btn-theater").setAttribute("aria-pressed", String(document.body.classList.contains("theater")));
-    $("#btn-web-fullscreen").setAttribute("aria-pressed", String(document.body.classList.contains("web-fullscreen")));
+    const theater = document.body.classList.contains("theater");
+    const web = document.body.classList.contains("web-fullscreen");
+    const full = !!document.fullscreenElement;
+    $("#btn-exit-screen").hidden = !web && !full;
+    setMode($("#btn-theater"), theater, "Theater mode", "Exit theater mode", "t");
+    setMode($("#btn-web-fullscreen"), web, "Web full screen", "Exit web full screen", "w");
+    setMode($("#btn-fullscreen"), full, "Full display", "Exit full display", "f");
+    player.reveal();
   };
   $("#btn-theater").onclick = () => { document.body.classList.toggle("theater"); syncScreenButtons(); };
   $("#btn-web-fullscreen").onclick = () => { document.body.classList.toggle("web-fullscreen"); syncScreenButtons(); };
@@ -394,6 +406,14 @@ function wireChrome() {
   };
   $("#btn-exit-screen").onclick = () => exit().catch(report);
   document.addEventListener("fullscreenchange", syncScreenButtons);
+  surface.addEventListener("keydown", event => {
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) return;
+    const button = { t: "#btn-theater", w: "#btn-web-fullscreen", f: "#btn-fullscreen" }[event.key.toLowerCase()];
+    if (!button) return;
+    event.preventDefault();
+    $(button).click();
+  });
+  syncScreenButtons();
   document.addEventListener("keydown", event => { if (event.key === "Escape") exit().catch(report); });
 }
 
