@@ -32,6 +32,26 @@ pooled Codex quota from the last stored CPA snapshot
 - No labels, IDs, emails, or raw responses leave the pool. The CPA quota tab
   keeps its per-account view. Pooled CPA is hidden while that panel is disabled.
 
+### Stale-window normalization (0.2.4)
+
+A stored snapshot is a point-in-time copy and goes stale between refreshes.
+Every reader (the CPA quota tab, the Usage Summary, the public `cpa.codex.*`
+widget values) reads it through one shared function,
+`normalizeQuota(snapshot, now)` in `server/metrics/quota-normalize.js`, so all
+surfaces agree. Other features that show quota should call it too. It applies
+two rules at read time and never rewrites the stored snapshot:
+
+1. **Reset passed.** A window whose reported reset time is at or before `now`
+   counts as reset: 100% remaining, reset time unknown (the next window starts
+   on first use), until the next refresh.
+2. **Unused week (Codex).** When an account's weekly window shows 0 usage
+   (100% remaining), its 5-hour window also counts as 0 used. Rule 2 runs
+   after rule 1, so a passed weekly reset clears the 5-hour window too.
+
+A corrected window keeps the snapshot's value in `reported` and the reason in
+`assumed` (`reset-passed` or `weekly-unused`); the CPA quota tab shows that
+note under the window. Pooled values carry neither.
+
 ## CC Switch references
 
 Reviewed [farion1231/cc-switch](https://github.com/farion1231/cc-switch) at

@@ -1,4 +1,5 @@
 import { fetchQuota } from "./cpa.js";
+import { normalizeQuota } from "./quota-normalize.js";
 
 // Single-flight CPA quota refresh shared by the admin "Refresh quota" button
 // and the live-stream background refresh. Concurrent callers share one
@@ -20,7 +21,7 @@ export function createQuotaRefresher({ store, secrets, fetcher, minIntervalMs = 
       pending = fetchQuota(settings, fetcher).then(snapshot => {
         if (version !== generation) throw Object.assign(new Error("Quota refresh discarded: dashboard/CPA management — settings changed during the request; refresh again."), { status: 409 });
         store.setSetting("cpa-quota", snapshot);
-        return snapshot;
+        return normalizeQuota(snapshot, now());
       }).finally(() => { if (version === generation) pending = undefined; });
       return pending;
     },
@@ -30,6 +31,7 @@ export function createQuotaRefresher({ store, secrets, fetcher, minIntervalMs = 
       lastAttempt = 0;
       store.setSetting("cpa-quota", null);
     },
-    snapshot: () => store.getSetting("cpa-quota"),
+    // Every reader gets the normalized view (passed resets, unused weeks).
+    snapshot: (at = now()) => normalizeQuota(store.getSetting("cpa-quota"), at),
   };
 }

@@ -652,3 +652,32 @@ circtime uptime radar for AI-infra health.
   copyable log text over the embed, and no CSP violations. On the host it also
   ran against the real circtime build (`DASHBOARD_CIRCTIME_DIR`).
 
+
+## 2026-11-05 — CPA pooled quota: stale 5-hour windows (0.2.4)
+
+Owner report: an account with no usage in its weekly window could still show a
+stale 5-hour value in the pooled quota.
+
+- Root cause: the pool, the Usage Summary, the public metric values, and the
+  CPA tab all read the stored snapshot verbatim. Nothing ages a snapshot
+  between refreshes, and nothing ties the 5-hour window to the weekly window
+  (every 5-hour request also counts toward the week).
+- Real data (stored snapshot read on the host, labels not printed): 3 Codex
+  accounts and 1 Antigravity account with an error. The snapshot was 12 minutes
+  old and **all three Codex 5-hour reset times had already passed** (8–9
+  minutes earlier), reporting 72%, 0%, and 0% remaining. No account showed an
+  unused week; one weekly window was exhausted (0% remaining) and two were at
+  about 30%. So the case the real data shows is the passed reset; the unused-week
+  case did not occur in that snapshot.
+- Fix: `server/metrics/quota-normalize.js` (`normalizeQuota`) is the one shared
+  read-time normalization: passed resets count as reset (100% remaining, reset
+  unknown) until the next refresh, and an unused Codex week makes its 5-hour
+  window unused. `poolCodex` and the refresher's `snapshot()` (the CPA tab and
+  the metric bridge) both go through it. The CPA tab notes corrected windows
+  and the value the snapshot reported. `windowClass` moved to
+  `server/metrics/window-class.js` (re-exported by `pool.js`).
+- Tests (`server/pool.test.js`): the unused-week rule on the normalized
+  snapshot, the pool, the public `cpa.codex.5h` value, and the refresher's
+  snapshot; the passed-reset rule on the real snapshot's shape; boundaries
+  (reset exactly now, future reset, unknown remaining), idempotence, and
+  the stored snapshot staying unchanged.

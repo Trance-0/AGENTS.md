@@ -106,7 +106,14 @@ export async function renderQuota(body, api) {
         const value = window.remainingPercent;
         row.append(node("strong", window.label), node("span", value === null ? "Unknown remaining" : `${value.toFixed(1)}% remaining`));
         if (value !== null) { const meter = node("meter"); meter.min = 0; meter.max = 100; meter.low = 10; meter.high = 50; meter.optimum = 100; meter.value = value; meter.setAttribute("aria-label", `${account.label} ${window.label} remaining`); row.append(meter); }
-        row.append(node("small", window.resetsAt ? `Resets ${new Date(window.resetsAt).toLocaleString()}` : "Reset time unavailable")); box.append(row);
+        row.append(node("small", window.resetsAt ? `Resets ${new Date(window.resetsAt).toLocaleString()}` : window.assumed ? "Next reset starts with the next use" : "Reset time unavailable"));
+        // The server's read-time correction (server/metrics/quota-normalize.js).
+        const reported = window.reported?.remainingPercent;
+        const was = Number.isFinite(reported) ? ` (snapshot said ${reported.toFixed(1)}%)` : "";
+        if (window.assumed === "reset-passed") row.append(node("small", `Reset passed at ${new Date(window.reported.resetsAt).toLocaleString()}; counted as 100% remaining until the next refresh${was}.`, "quota-assumed"));
+        else if (window.assumed === "weekly-unused") row.append(node("small", `The weekly window shows no usage, so this 5-hour window counts as 100% remaining${was}.`, "quota-assumed"));
+        if (window.assumed) row.dataset.assumed = window.assumed;
+        box.append(row);
       }
       accounts.append(box);
     }

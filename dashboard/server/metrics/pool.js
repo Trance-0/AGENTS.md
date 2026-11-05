@@ -7,20 +7,18 @@
 // excluded from that class's mean and reported as "n of m accounts". Only
 // numbers leave this module: no account labels, IDs, emails, or raw responses.
 
-export const FIVE_HOURS = 5 * 3600;
-export const ONE_WEEK = 7 * 86400;
-const CODEX_PROVIDERS = new Set(["codex", "openai"]);
+import { normalizeQuota } from "./quota-normalize.js";
+import { FIVE_HOURS, ONE_WEEK, windowClass } from "./window-class.js";
 
-export function windowClass(seconds) {
-  if (!Number.isFinite(seconds)) return null;
-  if (Math.abs(seconds - FIVE_HOURS) <= 3600) return "fiveHour";
-  if (Math.abs(seconds - ONE_WEEK) <= 86400) return "week";
-  return null;
-}
+export { FIVE_HOURS, ONE_WEEK, windowClass };
+const CODEX_PROVIDERS = new Set(["codex", "openai"]);
 
 // { fiveHour, week, updatedAt } where each window is
 // { remainingPercent (integer mean or null), resetAt (earliest future reset or null), accounts: n, total: m }.
-export function poolCodex(snapshot, now = Date.now()) {
+// The snapshot is normalized first (server/metrics/quota-normalize.js: passed
+// resets and unused weeks count as 0 used), the same view the admin CPA tab shows.
+export function poolCodex(rawSnapshot, now = Date.now()) {
+  const snapshot = normalizeQuota(rawSnapshot, now);
   const accounts = (snapshot?.accounts || []).filter(account => CODEX_PROVIDERS.has(String(account.provider || "").toLowerCase()));
   const result = { updatedAt: Number.isFinite(snapshot?.updatedAt) ? snapshot.updatedAt : null };
   for (const name of ["fiveHour", "week"]) {
