@@ -417,3 +417,53 @@ isolated OIDC fixture as viewer and admin (desktop and 390 px).
   read-only deployment settings; admin sidebar lists all eight items and an
   in-browser toggle (no bearer) disables Build & LKG, removes it from a
   viewer's sidebar, and re-enables it; config editor loads.
+
+
+## 2026-11-05 — Missing parent reply after worker completion
+
+The worker represented by the reported elapsed-time events completed its tools
+and wrote a final 703-character GPT-6 Astra result. The next agent/model start
+belonged to its parent announcement, which retried unavailable CPA Opus and
+stopped making visible progress. The gateway stayed alive and did not suffer
+an OOM. The worker's saved result remained intact.
+
+The parent announcement recovery path had two defects in OpenClaw:
+`src/agents/subagent-announce.ts` submitted queued recovery without
+`expectFinal`, allowing an accepted acknowledgment to remove the queue item;
+and it sent no model timeout, inheriting a much longer agent execution budget
+than its 90-second announcement RPC. Extracted the delivery functions into
+`subagent-announce-delivery.ts` to keep both files below the source line cap.
+Queued and direct paths now check final results and reserve bounded time for
+the configured fallback models. A rejected or aborted result stays retryable.
+
+The dashboard also dropped colon-containing announcement IDs through an
+identifier regex. It now preserves validated long announcement IDs, records
+reply-generation metadata without private text, warns once when an announcement
+has no result after 90 seconds, and uses ASCII separators in new activity rows.
+Persisted event text had valid UTF-8; the reported replacement characters were
+not present in stored events. Raw logs and private session outputs remain private.
+
+Recovered the worker result in the original local OpenClaw parent conversation,
+with the unfinished scheduling step clearly marked. No task steps were invented
+or marked complete. Preserved the original transcript and runtime snapshots.
+
+Validation: 28 OpenClaw announcement tests, full TypeScript check, targeted
+lint/format, and the application build passed. The queued-ack regression failed
+before the fix and passed after it. All 28 dashboard Node 22 tests passed.
+A real isolated parent announcement returned a final CPA GPT-6 Astra response
+in 6.5 seconds. A second live check verified the same gateway run ID and
+reply-generated metadata in the public stream. External message delivery was
+disabled for these checks. Evidence is retained under ignored
+`logs/announce-postfix-live.log`, `logs/announcement-final-live.log`, and
+`logs/openclaw-announcement-regression.log`.
+
+Applied this repair to the currently running services while preserving newer
+concurrent dashboard releases, all mounts, environment, and model order. Prior
+containers/images are retained.
+
+Follow-up (same day): a fallback retry re-emits `model_start` with the same
+announcement run ID, which reset the pending timer and could warn again. The
+reader now keeps the first start per run ID, and the pending-warning test
+covers a retry. The owner authorized the source rollout: the dashboard change
+ships through the `agent-dashboard` Jenkins job on `ai-infra-v0`, and the
+OpenClaw source commit was pushed to its private origin.

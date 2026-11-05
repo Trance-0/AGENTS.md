@@ -484,3 +484,21 @@ bullets specific: filenames, command names, outcomes.
   No live CPA management key was imported: the administrator enters it after
   deployment. Actual remaining quota is unverified until that setup. Jenkins
   deployment changes are prepared; this round's push needs owner approval.
+
+- 2026-11-05: Diagnosed missing parent reply after a successful worker result.
+  OpenClaw queued announcements accepted acknowledgments as completion and
+  lacked model deadlines. Added final-result checks and bounded attempts,
+  split the oversized delivery module, and passed 28 focused tests, full
+  type-check, lint, and build. Recovered the saved result in local parent chat.
+- 2026-11-05: Fixed colon-containing announcement IDs, added public reply
+  generation metadata and one-time pending warnings, and used ASCII activity
+  separators. All 28 dashboard Node 22 tests and real gateway reply/run-ID
+  verification passed. Preserved concurrent UI changes, runtime mounts,
+  environment, model order, recordings, and private payload boundaries.
+  Runtime backups remain local.
+- 2026-11-05: Finished the announcement rollout. Pending warnings no longer
+  repeat when a fallback retry re-emits `model_start` for the same run ID;
+  the pending-warning test covers the retry. Ran the Jenkins-equivalent
+  `node --test server/*.test.js` in the dashboard image, committed as
+  Nesbitt-bot, and pushed `ai-infra-v0` with owner authorization so Jenkins
+  deploys it. Docs touched this round contain no server IPs or tunnel ports.

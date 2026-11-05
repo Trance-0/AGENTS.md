@@ -7,13 +7,17 @@ export function writeActivity(directory, type, event, context) {
   const timestamp = new Date().toISOString();
   const record = {
     eventId: randomUUID(), timestamp, type, agentId: context.agentId,
-    success: event.success !== false && !event.error && event.result?.isError !== true && event.lastAssistant?.stopReason !== "error",
+    success: event.success !== false && !event.error && event.result?.isError !== true && event.lastAssistant?.stopReason !== "error" && event.lastAssistant?.stopReason !== "aborted",
   };
   if (event.toolName) record.toolName = event.toolName;
   if (event.model) record.model = event.model;
   if (event.provider) record.provider = event.provider;
   const runId = event.runId || context.runId;
-  if (typeof runId === "string" && /^[a-zA-Z0-9_-]{1,120}$/.test(runId)) record.runId = runId;
+  if (typeof runId === "string" && /^[a-zA-Z0-9_.:-]{1,256}$/.test(runId)) record.runId = runId;
+  if (type === "model_output") {
+    record.replyChars = (event.assistantTexts || []).filter(text => typeof text === "string").reduce((sum, text) => sum + text.trim().length, 0);
+    if (["stop", "end_turn", "toolUse", "length", "error", "aborted"].includes(event.lastAssistant?.stopReason)) record.stopReason = event.lastAssistant.stopReason;
+  }
   if (Number.isFinite(event.durationMs)) record.durationMs = Math.max(0, Math.round(event.durationMs));
   // File activity is public metadata. Never copy commands, contents, or other arguments.
   if (["read", "write", "edit"].includes(event.toolName)) {

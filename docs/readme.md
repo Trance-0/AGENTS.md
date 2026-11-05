@@ -82,3 +82,8 @@ The `agent-dashboard` Jenkins job pulls `ai-infra-v0` from GitHub on push and
 builds/tests/deploys that revision. Runtime env is private on `local-docker`;
 SCM never reads local source. The deployment retains recording data and rollback
 containers. See the [Jenkins runbook](deployment/dashboard.md#jenkins-webhook-deployment-013).
+
+Announcement activity retains gateway run IDs and safe reply-generation status.
+The stream reports a parent reply pending after 90 seconds without a completed
+model event. Private conversation text is not inferred from lifecycle markers.
+See the development log for the local parent-announcement delivery repair.

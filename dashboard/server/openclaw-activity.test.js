@@ -89,3 +89,42 @@ test("relay agent activity is labelled as AstrBot receipt without message conten
   assert.equal(status.lastFailed, false);
   assert.equal(activityEvent({ ...base, agentId: "main", type: "agent_start" }).source, "openclaw");
 });
+
+
+test("announcement run IDs survive and reply-generation metadata excludes content", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "activity-announcement-"));
+  try {
+    const runId = "announce:v1:agent:main:subagent:worker:completed-run";
+    writeActivity(directory, "model_output", { runId, model: "gpt-6-astra", provider: "cpa", assistantTexts: ["Private answer"], lastAssistant: { stopReason: "stop" } }, { agentId: "main" });
+    const record = JSON.parse(fs.readFileSync(path.join(directory, fs.readdirSync(directory)[0]), "utf8").trim());
+    assert.equal(record.runId, runId);
+    assert.equal(record.replyChars, 14);
+    const event = activityEvent(record);
+    assert.equal(event.runId, runId);
+    assert.match(event.msg, /reply generated/);
+    assert.ok(!JSON.stringify(record).includes("Private answer"));
+    assert.ok(!event.msg.includes("\ufffd"));
+    assert.match(activityEvent({ ...record, success: false, replyChars: 0 }).msg, /reply not generated/);
+  } finally { fs.rmSync(directory, { recursive: true }); }
+});
+
+
+test("stalled parent announcements produce one explicit pending warning", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "activity-pending-"));
+  const events = [];
+  let now = Date.now();
+  try {
+    const reader = new ActivityReader({ directory, cursorFile: path.join(directory, "cursor.json"), publish: event => events.push(event), now: () => now });
+    reader.poll();
+    const file = path.join(directory, "activity-2026-11-05.jsonl");
+    const record = { type: "model_start", eventId: "pending-test", timestamp: new Date(now).toISOString(), agentId: "main", runId: "announce:v1:worker:run", model: "gpt-6-astra" };
+    fs.writeFileSync(file, JSON.stringify(record) + "\n");
+    reader.poll(); now += 90001; reader.poll(); reader.poll();
+    fs.appendFileSync(file, JSON.stringify({ ...record, eventId: "retry-test" }) + "\n");
+    reader.poll(); now += 90001; reader.poll();
+    assert.equal(events.filter(event => event.openclawEvent === "announcement_pending").length, 1);
+    fs.appendFileSync(file, JSON.stringify({ ...record, eventId: "finished-test", type: "model_output", replyChars: 12 }) + "\n");
+    reader.poll();
+    assert.equal(reader.pendingAnnouncements.size, 0);
+  } finally { fs.rmSync(directory, { recursive: true }); }
+});
