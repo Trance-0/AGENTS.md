@@ -214,8 +214,13 @@ other agents and bindings. This deployment uses:
 
 Since 0.2.5 its only tool is `dashboard_stream`, and the dashboard decides
 per turn what it may do (see [OpenClaw live control](#openclaw-live-control-title-description-chat-moderation-widgets-0-2-5)).
-Before 0.2.5 it was `deny: ["*"]`, which is why it answered that tool use and
-operational access were disabled.
+Before 0.2.5 it was `deny: ["*"]`, and the workspace `AGENTS.md` said "Do not
+use tools"; together they are why it answered that tool use and operational
+access were disabled. The workspace instructions (host-only, not in this
+repository) now say that `dashboard_stream` is its only tool, that the
+dashboard decides per turn from the verified sign-in, and that a refusal is
+final. The previous text is backed up in the private
+`~/.local/state/agent-dashboard/` directory.
 
 Its workspace contains only public host/personality instructions. The existing
 private main and relay workspaces are not shared. The gateway's existing
@@ -841,3 +846,13 @@ Their `maxTokens` went from 8192 to 32000 (OpenClaw caps requests at 32000),
 because reasoning tokens count against `max_completion_tokens`.
 Model-start activity now records the run's level (`thinking`, parsed from the
 runtime line only) and the log shows `model cpa/gpt-6-astra, thinking high`.
+
+Measured after deployment (same arithmetic prompt, direct API calls): the
+official OpenAI `gpt-6-astra` used 101 reasoning tokens at `low` and 140 at
+`high` with similar latency (about 5.4 s), so the paid fallback now costs more
+reasoning tokens per turn. CPA `gpt-6-astra` returned identical reasoning
+tokens at `low` and `high` (72 and 72), so CPA currently does not apply
+`reasoning_effort` for that model; fixing that is a CPA (CLIProxyAPI) setting,
+not an OpenClaw one. The bigger latency cost is unrelated to thinking: CPA does
+not list `claude-opus-5-5-high`, so every turn spends about 20 s on the failing
+primary before falling back.

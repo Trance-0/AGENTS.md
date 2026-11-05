@@ -723,3 +723,12 @@ and fell back to `cpa/gpt-6-astra`; the agent said its thinking effort was low.
     - grant lifetime and session keys on real chat turns.
   - Also added: player moderation, the thinking metadata, and the session-key header in the auth mock.
   - The new `scripts/control-browser-check.mjs` passed with the five existing browser checks in the Playwright 1.58.2 image against the isolated OIDC fixture.
+- Production (0.2.5, Jenkins build 21):
+  - The owner's own stream ("OpenClaw Live", started by `main`) was live, so no test stream could start; it was not ended or changed. No test recording was created.
+  - Real gateway round trips:
+    - A prompt-injection attempt sent to `dashboard-host` in an administrator-pattern session with no dashboard grant called `dashboard_stream` `title`. The pcp backstop let the allowlisted tool through. The dashboard refused it (403) and logged a private warning. The title was unchanged.
+    - A `main` test session (`gateway call agent`, no delivery) read `status`. Its `title` attempt was refused (409: another OpenClaw session owns the live recording).
+  - Both runs were `thinking high` on Opus and the Astra fallback, visible in the public activity lines.
+  - The usage line, rendered from production metrics and the quota snapshot without publishing, read `Codex pool 5h 100% left, resets in 4h 12m; weekly 20% left, resets in 3d 9h 17m (quota as of 49m ago) · today 1.5M tokens, est. cost unpriced; paid fallback 36.8K tokens`. No model prices are configured, so cost shows as unpriced.
+  - A positive administrator-turn round trip and chat removal in production need a signed-in administrator, and no test account was available. Both are covered by the fixture and browser checks.
+- Host workspace instructions (`dashboard-host/AGENTS.md`, host-only) said "Do not use tools". They now describe the per-turn policy; the backup is in `~/.local/state/agent-dashboard/`.
