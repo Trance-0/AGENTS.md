@@ -16,6 +16,8 @@ export function initialState() {
     widgets: {},
     metrics: {},
     activity: { lastT: null, thinkingSince: null, tools: 0, talkUntil: null, provider: null, taps: [] },
+    // Forced avatar expression { expression, until } (recording time), or null.
+    avatar: null,
   };
 }
 
@@ -41,7 +43,7 @@ function reduceActivity(activity, event, t) {
   return next;
 }
 
-function reduceWidget(state, event) {
+function reduceWidget(state, event, t) {
   const data = event.data;
   if (!data || typeof data !== "object") return state;
   if (event.op === "create" || event.op === "update") {
@@ -55,6 +57,11 @@ function reduceWidget(state, event) {
     delete widgets[event.target];
     return { ...state, widgets };
   }
+  if (event.op === "avatar") {
+    if (data.expression === "auto") return { ...state, avatar: null };
+    if (typeof data.expression !== "string" || !Number.isFinite(data.seconds)) return state;
+    return { ...state, avatar: { expression: data.expression, until: t + data.seconds } };
+  }
   if (event.op === "metrics") {
     const values = data.values;
     if (!values || typeof values !== "object") return state;
@@ -66,7 +73,7 @@ function reduceWidget(state, event) {
 export function reduce(state, event, t) {
   if (!event || typeof event !== "object") return state;
   if (t === undefined) t = event.t;
-  if (event.kind === "widget") return event.sv === SCENE_SV ? reduceWidget(state, event) : state;
+  if (event.kind === "widget") return event.sv === SCENE_SV ? reduceWidget(state, event, t) : state;
   if (event.kind === "log" && typeof event.openclawEvent === "string" && HOST_SOURCES.has(event.source)) {
     return { ...state, activity: reduceActivity(state.activity, event, t) };
   }

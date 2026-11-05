@@ -42,6 +42,7 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
       let body = ""; for await (const chunk of req) body += chunk;
       assert.equal(req.headers.authorization, "Bearer test-gateway-token");
       assert.equal(JSON.parse(body).model, "openclaw:dashboard-host");
+      assert.match(req.headers["x-openclaw-session-key"], /^agent:dashboard-host:openai-user:dashboard-(?:admin-)?[a-f0-9-]{36}$/);
       return res.end(JSON.stringify({ choices: [{ message: { content: "Welcome to the stream!" } }] }));
     }
     if (url.pathname === "/userinfo") {
@@ -296,6 +297,9 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
       const sceneCheck = spawn(process.execPath, [path.join(root, "scripts/scene-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie, DASHBOARD_VIEWER_COOKIE: viewerHeaders.cookie, DASHBOARD_STREAM_TOKEN: "test-stream-token" }, stdio: "inherit" });
       const [sceneCode] = await once(sceneCheck, "exit");
       assert.equal(sceneCode, 0);
+      const controlCheck = spawn(process.execPath, [path.join(root, "scripts/control-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie, DASHBOARD_STREAM_TOKEN: "test-stream-token" }, stdio: "inherit" });
+      const [controlCode] = await once(controlCheck, "exit");
+      assert.equal(controlCode, 0);
     }
     const toggle = "/api/panels/settings/toggle";
     // Browser path: admin session + same-origin header. Automation path: admin session + bearer.

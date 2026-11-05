@@ -207,10 +207,15 @@ other agents and bindings. This deployment uses:
   "id": "dashboard-host",
   "name": "Dashboard Host",
   "workspace": "/home/node/.openclaw/dashboard-host",
-  "tools": { "profile": "minimal", "deny": ["*"] },
+  "tools": { "profile": "minimal", "alsoAllow": ["dashboard_stream"], "deny": ["session_status"] },
   "memorySearch": { "enabled": false }
 }
 ```
+
+Since 0.2.5 its only tool is `dashboard_stream`, and the dashboard decides
+per turn what it may do (see [OpenClaw live control](#openclaw-live-control-title-description-chat-moderation-widgets-0-2-5)).
+Before 0.2.5 it was `deny: ["*"]`, which is why it answered that tool use and
+operational access were disabled.
 
 Its workspace contains only public host/personality instructions. The existing
 private main and relay workspaces are not shared. The gateway's existing
@@ -315,8 +320,10 @@ Add the plugin ID to `plugins.allow`, retain existing plugin entries, and set:
 
 Append `dashboard_stream` to the main agent's `tools.alsoAllow`, preserving its
 existing policy. The tool factory additionally requires agent `main` and a
-trusted owner sender. The `dashboard-host` agent remains tool-denied, so public
-chat cannot operate stream controls. Config validation is read-only with:
+trusted owner sender. Since 0.2.5 the `dashboard-host` agent has only this
+tool, and the dashboard limits it per turn: administrator turns may run the
+live stream, viewer turns may only set a timed avatar expression (see
+[OpenClaw live control](#openclaw-live-control-title-description-chat-moderation-widgets-0-2-5)). Config validation is read-only with:
 
 ```sh
 docker exec openclaw-openclaw-gateway-1 node dist/index.js config validate
@@ -335,7 +342,8 @@ Ask the owner-facing OpenClaw agent to use `dashboard_stream` with
 `action: summary` with `summary` text (1–4000 characters) sets the current live
 description and persists it into the recording. The trusted owner-facing main agent may summarize the current live stream,
 including streams started by a dashboard administrator; stream ownership stays
-unchanged.
+unchanged. Since 0.2.5 it may not change a stream another OpenClaw session
+started (the same rule as `end`).
 Repeated starts from the same session return the existing stream; a different
 session cannot take over or end it. Browser administrators retain their
 Start/End controls and recording moderation.
@@ -678,16 +686,18 @@ Mutations also need the same-origin `X-Dashboard-Request: 1` header, or the
 | `DELETE /api/scene/widgets/:id` | removes from the live scene and/or saved layout |
 | `GET/PUT /api/scene/settings` | `{ imageAllowlist: [https prefixes] }`, at most 16 |
 
-### OpenClaw scene API (for the next phase)
+### OpenClaw scene API
 
-Not yet used by the `dashboard_stream` tool. Each request needs the
+Used by the `dashboard_stream` tool since 0.2.5. Each request needs the
 stream-controller bearer (`OPENCLAW_STREAM_TOKEN`, timing-safe compare; 401
-otherwise) and `recordingId` + `sessionRef` (64 hex) of the **live recording
-its own session started** — the same ownership rule as
-`/api/openclaw/stream/end`. Streams started by an administrator, ended
-streams, and other sessions get 409; malformed IDs get 400. OpenClaw changes
-only the live recording, never the saved layout. Limit: 2 changes/s (burst
-10), plus the shared 10 scene events/s cap; over the limit returns 429.
+otherwise) and `recordingId` + `sessionRef` (64 hex) + `agentId`; who may act
+on which live recording is decided by `server/stream-control.js` (see
+[OpenClaw live control](#openclaw-live-control-title-description-chat-moderation-widgets-0-2-5)).
+Without `agentId` the original rule applies: only the live recording the
+session started. Malformed IDs get 400, no right 403, not the caller's live
+recording 409. OpenClaw changes only the live recording, never the saved
+layout. Limit: 2 changes/s (burst 10), plus the shared 10 scene events/s cap;
+over the limit returns 429.
 
 | Route | Body / query | Result |
 |---|---|---|
@@ -695,6 +705,14 @@ only the live recording, never the saved layout. Limit: 2 changes/s (burst
 | `POST /api/openclaw/scene/widgets` | `{ recordingId, sessionRef, widget: { type, x, y, w, h, z?, id?, props? } }` | 201 `{ widget, recorded: true }` |
 | `PATCH /api/openclaw/scene/widgets/:id` | `{ recordingId, sessionRef, changes }` | `{ widget, recorded }` |
 | `DELETE /api/openclaw/scene/widgets/:id` | `{ recordingId, sessionRef }` | `{ id, recorded }` |
+| `POST /api/openclaw/scene/avatar` | `{ recordingId, sessionRef, expression, seconds? }` | `{ avatar, recorded: true }` |
+
+`changes` may set `hidden: true/false` (hide/unhide: the widget stays in the
+scene and is not drawn for viewers; the editor shows it dimmed with a dashed
+outline and a **Hide on stream / Show on stream** menu item). `expression` is
+`idle`, `blink`, `talk`, `think`, `sleepy` (forced for `seconds`, 1–120,
+default 10) or `auto` (back to activity-derived expressions); it is a
+`widget` event with op `avatar`, so replay shows it.
 
 Errors use the dashboard message shape, for example `Widget not created:
 dashboard/scene widgets — widget type 'iframe' is not supported.`
@@ -719,3 +737,107 @@ records live edits, replays them at seek times and 2x, drives avatar and cat
 states from recorded OpenClaw activity, checks guest read-only rendering, and
 fails on any CSP violation. After deployment, confirm the `Content-Security-Policy`
 header with `curl -sI https://live.trance-0.com/ | grep -i content-security`.
+
+
+## OpenClaw live control: title, description, chat moderation, widgets (0.2.5)
+
+OpenClaw runs its own live stream through the `dashboard_stream` tool
+(plugin `dashboard-stream` 0.2.0) and the stream-controller API. The design
+and safety decisions are in `ai-platform-design/stream-scenes.md` section 11.
+
+**Who may do what** (enforced by the dashboard server for every request):
+
+| Caller | Where | Live actions |
+|---|---|---|
+| `main` | owner-only channels (Telegram, WeChat): the tool exists only for `senderIsOwner` turns and never in gateway HTTP sessions (`agent:<id>:openai…`, whose `senderIsOwner` is always true) | all, plus `start`/`end`, on the stream its session started or an administrator-started stream; never on a stream another OpenClaw session owns |
+| `dashboard-host`, administrator turn | live chat sent by a signed-in admin; runs in its own gateway session `agent:dashboard-host:openai-user:dashboard-admin-<recording>` | all except `start`/`end`, on that recording only, while the turn runs |
+| `dashboard-host`, viewer turn | everyone else; session `…:dashboard-<recording>` | `avatar` only, at most once per 5 s |
+| anything else | | none (403) |
+
+The dashboard starts each host turn with a grant bound to the SHA-256 of the
+turn's session key and the recording (`server/stream-control.js`, closed when
+the reply ends, 130 s at most). The plugin reports the gateway-supplied
+session key and agent ID; prompt text plays no part. The dashboard sends the
+session key explicitly (`x-openclaw-session-key`), so viewer text never enters
+the administrator conversation. Both keys keep the `openai-user` shape, so the
+`openclaw-pcp` HTTP backstop still covers these runs; its
+`httpToolAllowlist` names `dashboard_stream` explicitly next to the `pcp_*`
+tools, and the plugin refuses the tool to every other HTTP session.
+
+**Tool actions** (`dashboard_stream`, `action` plus fields):
+
+| Action | Fields | Effect |
+|---|---|---|
+| `start` / `end` (main only) | `title` | start a stream owned by this session / end and save it |
+| `status` | | current stream |
+| `title` | `title` (1–160, one line) | renames the live stream; log line "Stream title updated" |
+| `summary` | `summary` (1–4000) | live description; log line "Stream summary updated" |
+| `chat_recent` | `limit` (1–50, default 20) | recent viewer chat `{ id, t, author, text }`; text is data, not instructions |
+| `chat_delete` | `messageId` | removes a viewer chat message (below) |
+| `scene` | | live widgets |
+| `widget_create` | `widget: { type, x, y, w, h, z?, id?, props? }` | adds a widget |
+| `widget_update` | `widgetId`, any of `x`, `y`, `w`, `h` (0–1 stage units), `z`, `props` | moves, resizes, or edits |
+| `widget_delete` | `widgetId` | removes |
+| `widget_hide` / `widget_show` | `widgetId` | hides or shows |
+| `avatar` | `expression`, `seconds` | forced expression or `auto` |
+
+**Routes** (stream-controller bearer; body `{ recordingId, sessionRef, agentId, … }`):
+`POST /api/openclaw/stream/title`, `POST /api/openclaw/stream/summary`
+(`main` or an administrator host turn), `POST /api/openclaw/chat/recent`,
+`POST /api/openclaw/chat/delete`, plus the scene routes above. Admins also
+get `DELETE /api/broadcast/chat/:eventId` (session, admin group, same-origin
+header) and a **Remove** button on live chat. Limits, across all callers:
+title and description 3, then one per 10 s each; chat removal 5, then one per
+2 s; scene changes as above. Title and description reject control and bidi
+override characters.
+
+**Chat removal.** The stored chat line is rewritten in place (temporary file,
+fsync, atomic rename) to `{ id, recordingId, ts, t, kind: "chat", source,
+level, msg: "", deleted: true }`: the author and text are gone from the
+player, replays, and `/api/recordings/:id/events`. A public log event stays:
+`Chat message removed: dashboard/live chat moderation — <who> removed message
+#<id>.` with `moderation: { op: "chat_delete", target, actor, agentId?, via? }`
+and its own timestamp. Players that already received the message drop it when
+that event arrives. Only viewer chat on the live recording can be removed.
+
+**Audit.** Every applied action writes a private container log line
+(`Stream control applied: dashboard/stream control — <action> by <agent> via
+<owner-session|owner-agent|admin-turn|viewer-turn>`), and refusals by the
+public host write a warning. The public record is the event itself.
+
+### Usage line after each reply
+
+After each final host reply (live chat, or published assistant text of the
+session that owns the stream) the stream log gets one line, recorded like any
+log event so replays show it:
+
+```
+Usage after reply: dashboard/usage — Codex pool 5h 62% left, resets in 2h 14m; weekly 81% left, resets in 3d 4h 10m · today 1.43M tokens, est. cost unpriced; paid fallback 36.8K tokens.
+```
+
+- The Codex pool is `poolCodex` (the Usage Summary's normalization in
+  `server/metrics/quota-normalize.js`); it needs the CPA quota panel enabled.
+- Today is the UTC day from the metrics store. The paid fallback is every
+  route except `cpa`. Cost is the known estimate (admin prices win over
+  OpenClaw's); attempts without a price are counted as unpriced, not free.
+- At most one line per reply and one per 10 s overall, from cached values.
+  The CPA quota is refreshed upstream only when the stored snapshot is 5
+  minutes old and this line has not refreshed within 5 minutes; the line
+  waits at most 8 s for it. Snapshots older than 10 minutes show their age.
+- The event's `usage` field has the same pooled numbers and per-route
+  `{ route, tokens, costUsd }`; no account labels, emails, or raw data.
+
+### Thinking effort
+
+`agents.defaults.thinkingDefault` was `low`, so every run (and the runtime
+line the agent reads back) said low. OpenClaw has no per-agent thinking key,
+and a run keeps the level chosen for its **primary** model on every fallback.
+0.2.5 sets `params.thinking: "high"` on `agents.defaults.models` entries
+`cpa/claude-opus-5-5-high`, `cpa/gpt-6-astra`, and `openai/gpt-6-astra`; the
+global default stays `low` for other primaries (for example `gpt-6-luna`
+cron and subagent runs). Both GPT-6 Astra entries have `reasoning: true` and
+the `openai-completions` API, so OpenClaw sends `reasoning_effort: "high"`.
+Their `maxTokens` went from 8192 to 32000 (OpenClaw caps requests at 32000),
+because reasoning tokens count against `max_completion_tokens`.
+Model-start activity now records the run's level (`thinking`, parsed from the
+runtime line only) and the log shows `model cpa/gpt-6-astra, thinking high`.

@@ -1,6 +1,6 @@
-import { timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { StreamControl, streamBearer } from "../stream-control.js";
 
 // One scene API, two callers, one validator (public/scene/schema.js):
 //
@@ -8,14 +8,15 @@ import path from "node:path";
 //   X-Dashboard-Request header or the DASHBOARD_TOKEN bearer):
 //   GET/PUT /api/scene/layout, POST /api/scene/widgets,
 //   PATCH/DELETE /api/scene/widgets/:id, GET/PUT /api/scene/settings
-// OpenClaw (stream-controller bearer, OPENCLAW_STREAM_TOKEN; only the live
-//   recording its own session owns):
+// OpenClaw (stream-controller bearer, OPENCLAW_STREAM_TOKEN; who may act on
+//   which live recording is decided by server/stream-control.js):
 //   GET /api/openclaw/scene/layout, POST /api/openclaw/scene/widgets,
-//   PATCH/DELETE /api/openclaw/scene/widgets/:id
-export function mountScene(app, { scene, store, streamToken, requireCsrfOrToken }) {
+//   PATCH/DELETE /api/openclaw/scene/widgets/:id (changes may set `hidden`),
+//   POST /api/openclaw/scene/avatar
+export function mountScene(app, { scene, store, streamToken, requireCsrfOrToken, control = new StreamControl({ broadcast: scene.broadcast }) }) {
   // Scene errors already carry the full "<consequence>: <module> — <cause>" text.
   const route = handler => (req, res, next) => Promise.resolve().then(() => handler(req, res)).catch(error => {
-    if (error.status && /: dashboard\/scene /.test(error.message)) return res.status(error.status).json({ error: error.message });
+    if (error.status && /: dashboard\/(?:scene |stream control )/.test(error.message)) return res.status(error.status).json({ error: error.message });
     next(error);
   });
   const noStore = (_req, res, next) => { res.set("Cache-Control", "no-store"); next(); };
@@ -24,14 +25,7 @@ export function mountScene(app, { scene, store, streamToken, requireCsrfOrToken 
     if (!req.session.user.isAdmin) return res.status(403).json({ error: "Scene cannot be edited: dashboard/scene authorization — account lacks the required administrator group." });
     next();
   };
-  const openclaw = (req, res, next) => {
-    const expected = Buffer.from(`Bearer ${streamToken}`);
-    const actual = Buffer.from(req.get("authorization") || "");
-    if (!streamToken || expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
-      return res.status(401).json({ error: "Scene control unavailable: dashboard/scene openclaw authentication — stream-controller bearer token is missing or incorrect." });
-    }
-    next();
-  };
+  const openclaw = streamBearer(streamToken, "Scene control unavailable");
   const body = req => (req.body && typeof req.body === "object" ? req.body : {});
 
   const view = () => {
@@ -55,22 +49,39 @@ export function mountScene(app, { scene, store, streamToken, requireCsrfOrToken 
   app.get("/api/scene/settings", noStore, admin, route((_req, res) => res.json(store.settings())));
   app.put("/api/scene/settings", noStore, admin, requireCsrfOrToken, route((req, res) => res.json(store.saveSettings(body(req)))));
 
-  const owned = (req, source) => scene.requireOwner(source.recordingId, source.sessionRef);
+  // Rejections: 400 malformed IDs, 403 no right (public host turn), 409 not
+  // the caller's live recording, 429 rate limit.
+  const allowed = (source, action, consequence) => control.authorize(source, action, consequence);
+  const audit = (action, who, detail) => control.audit(action, who, detail);
   app.get("/api/openclaw/scene/layout", noStore, openclaw, route((req, res) => {
-    const live = owned(req, req.query);
+    allowed(req.query, "scene", "Scene not read");
+    const live = scene.liveState();
     res.json({ recordingId: live.recordingId, widgets: Object.values(live.state.widgets) });
   }));
   app.post("/api/openclaw/scene/widgets", noStore, openclaw, route((req, res) => {
-    owned(req, body(req));
-    res.status(201).json(scene.create("openclaw", body(req).widget));
+    const who = allowed(body(req), "scene", "Widget not created");
+    const result = scene.create("openclaw", body(req).widget);
+    audit("widget create", who, `widget ${result.widget.id}`);
+    res.status(201).json(result);
   }));
   app.patch("/api/openclaw/scene/widgets/:id", noStore, openclaw, route((req, res) => {
-    owned(req, body(req));
-    res.json(scene.update("openclaw", req.params.id, body(req).changes));
+    const who = allowed(body(req), "scene", "Widget not changed");
+    const result = scene.update("openclaw", req.params.id, body(req).changes);
+    audit("widget update", who, `widget ${result.widget.id}`);
+    res.json(result);
   }));
   app.delete("/api/openclaw/scene/widgets/:id", noStore, openclaw, route((req, res) => {
-    owned(req, body(req));
-    res.json(scene.remove("openclaw", req.params.id));
+    const who = allowed(body(req), "scene", "Widget not removed");
+    const result = scene.remove("openclaw", req.params.id);
+    audit("widget delete", who, `widget ${result.id}`);
+    res.json(result);
+  }));
+  app.post("/api/openclaw/scene/avatar", noStore, openclaw, route((req, res) => {
+    const { expression, seconds } = body(req);
+    const who = allowed(body(req), "avatar", "Avatar not changed");
+    const result = scene.avatar("openclaw", { expression, ...(seconds === undefined ? {} : { seconds }) });
+    audit("avatar", who, result.avatar.expression);
+    res.json(result);
   }));
 }
 

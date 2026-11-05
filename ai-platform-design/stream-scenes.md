@@ -684,3 +684,77 @@ implementation differs from sections 2–7, this section wins.
    started?
 9. Is a server snapshot every 5 minutes acceptable, or should snapshots be
    client-only until windowed fetching is needed?
+
+## 11. OpenClaw live control and safety (dashboard 0.2.5)
+
+Owner request: OpenClaw runs its own live stream (title, description, chat
+moderation, widgets, avatar) and the public host stops refusing all tool use.
+Operator reference: `docs/deployment/dashboard.md`, "OpenClaw live control".
+
+**Threat.** `dashboard-host` answers public viewers. A viewer must never be
+able to make it delete other people's chat, rename the stream, or deface the
+scene, whatever the viewer writes. Prompt instructions are not a control;
+only the dashboard server can decide, per request.
+
+Decisions:
+
+1. **Two trusted controllers, both checked server-side**
+   (`server/stream-control.js`).
+   - `main` is owner-only. The plugin creates its tool only for
+     `senderIsOwner` turns, and never in gateway HTTP sessions
+     (`agent:<id>:openai…`), because the OpenAI-compatible endpoint hard-codes
+     `senderIsOwner: true` for any caller holding the gateway token.
+   - `dashboard-host` gets rights only through a **per-turn grant**. The
+     dashboard opens it when it sends a chat turn, keyed by the SHA-256 of
+     that turn's gateway session key and bound to the recording, and closes it
+     when the reply ends (130 s at most). The role comes from the sender's
+     dashboard session (`isAdmin`), never from message text.
+2. **Separate sessions.** Administrator turns run in
+   `agent:dashboard-host:openai-user:dashboard-admin-<recording>`; viewer
+   turns in `…:dashboard-<recording>`. The dashboard sets them explicitly with
+   `x-openclaw-session-key`, so earlier viewer messages are never in the
+   administrator conversation's history. A grant for one session never covers
+   the other.
+3. **Viewer turns: avatar only.** A viewer grant allows a timed avatar
+   expression (at most once per 5 s; the plugin also offers viewer sessions
+   only that action). Everything else is 403 and logged privately.
+4. **Ownership, consistent with decision 8.** OpenClaw makes live changes;
+   admins do setup.
+   - `main` may act on the stream its session started or on an
+     administrator-started stream, but never on a stream another OpenClaw
+     session owns. This is the `end` rule, now also applied to `summary`.
+   - An administrator host turn may act on the recording it was sent to: the
+     administrator could make the same change by hand.
+   - Requests without an agent ID keep the old owner-session-only rule.
+5. **Residual risk, accepted and documented.** In an administrator turn the
+   model can read viewer chat (`chat_recent`) and widget text, which could
+   carry injected instructions. The exposure is bounded:
+   - only while an administrator is chatting;
+   - only on that recording;
+   - only through the rate-limited actions;
+   - always publicly recorded.
+
+   The tool descriptions and the administrator prompt mark tool output as
+   data.
+6. **The pcp HTTP backstop stays on.** Both host session keys keep the
+   `openai-user` shape that `openclaw-pcp`'s backstop matches. Instead of a
+   session-key scheme that dodges it, its `httpToolAllowlist` names
+   `dashboard_stream` explicitly. The plugin is what keeps the tool away from
+   every other HTTP session.
+7. **Chat deletion removes content, keeps the fact.** The stored chat line is
+   rewritten without author or text (atomic replace). A public `moderation`
+   log event records who removed it (role and agent, no personal name), which
+   message ID, and when.
+8. **Visibility and avatar overrides are scene events.**
+   - `hidden` is an optional widget field: kept in state, not drawn for viewers.
+   - `op: "avatar"` with `{ expression, seconds }` or `auto` is folded by the
+     shared reducer, so live, seek, and every playback rate agree.
+   - A forced expression wins over the derived one (including sleepy) until it
+     times out.
+9. **Usage line.** One public line after each final reply.
+   - It shows pooled Codex 5 h / weekly windows from the shared normalization,
+     and today's tokens and estimated cost with the paid fallback broken out.
+   - It uses cached values. The upstream refresh runs at most every 5 minutes;
+     at most one line per 10 s.
+   - The owner approved showing cost here, which extends section 5's
+     "cost stays out of the widget".

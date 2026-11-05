@@ -227,6 +227,7 @@ function connectStream() {
   stream.addEventListener("event", event => {
     const data = JSON.parse(event.data);
     state.liveEvents.set(data.id, data);
+    if (data.moderation?.op === "chat_delete" && state.liveEvents.has(data.moderation.target)) state.liveEvents.set(data.moderation.target, { ...state.liveEvents.get(data.moderation.target), msg: "", author: undefined, deleted: true });
     if (state.liveEvents.size > 1000) state.liveEvents.delete(state.liveEvents.keys().next().value);
     if (state.viewingLive) player.add(data);
   });
@@ -245,7 +246,8 @@ function connectStream() {
 
 let chatKey;
 function renderChat(events) {
-  const key = `${player?.recording?.id}:${events.at(-1)?.id}:${events.length}`;
+  const live = player?.recording?.status === "live" && player.recording.id === state.stream?.id;
+  const key = `${player?.recording?.id}:${events.at(-1)?.id}:${events.length}:${live && state.user?.isAdmin}`;
   if (key === chatKey) return;
   chatKey = key;
   const messages = $("#chat-messages");
@@ -255,6 +257,18 @@ function renderChat(events) {
     const text = document.createElement("span"); text.textContent = event.msg;
     const time = document.createElement("time"); time.textContent = formatTime(event.t);
     line.append(time, author, text);
+    // Administrators may remove viewer chat from the live recording (recorded as a moderation event).
+    if (live && state.user?.isAdmin) {
+      const remove = document.createElement("button");
+      remove.type = "button"; remove.className = "chat-remove"; remove.textContent = "Remove";
+      remove.setAttribute("aria-label", `Remove message ${event.id} from ${event.author || "Viewer"}`);
+      remove.onclick = async () => {
+        remove.disabled = true;
+        try { await api(`/api/broadcast/chat/${event.id}`, { method: "DELETE" }); $("#chat-status").textContent = `Message #${event.id} removed.`; }
+        catch (error) { remove.disabled = false; report(error, $("#chat-status")); }
+      };
+      line.append(remove);
+    }
     return line;
   }));
   messages.scrollTop = messages.scrollHeight;

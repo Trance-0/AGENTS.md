@@ -681,3 +681,45 @@ stale 5-hour value in the pooled quota.
   snapshot; the passed-reset rule on the real snapshot's shape; boundaries
   (reset exactly now, future reset, unknown remaining), idempotence, and
   the stored snapshot staying unchanged.
+
+
+## 2026-11-05 — OpenClaw runs its own live stream; usage line; high thinking (0.2.5)
+
+Owner report from the live log: the public host replied that tool use and
+operational access were disabled; a turn on `cpa/claude-opus-5-5-high` failed
+and fell back to `cpa/gpt-6-astra`; the agent said its thinking effort was low.
+
+- Root causes:
+  - `dashboard-host` had `tools: { deny: ["*"] }`. Its system prompt (`server/chat.js`) also said "No tool use".
+  - `agents.defaults.thinkingDefault` was `low` and nothing overrode it. OpenClaw has no per-agent thinking key. A run keeps the level resolved for its primary model on every fallback, so per-model params on GPT-6 Astra alone would not apply while it is a fallback.
+  - The Opus failure is the known CPA `auth_unavailable` (0.1.4 notes).
+- Live control:
+  - New tool actions: `title`, `summary`, `chat_recent`, `chat_delete`, `scene`, `widget_create/update/delete/hide/show`, `avatar`.
+  - New routes: `/api/openclaw/stream/title`, `/api/openclaw/chat/recent`, `/api/openclaw/chat/delete`, `/api/openclaw/scene/avatar`, and admin `DELETE /api/broadcast/chat/:eventId` with a Remove button.
+  - Widgets gained an optional `hidden` field. The scene event `op: "avatar"` forces an expression for a timeout.
+  - Server-side authorization lives in `server/stream-control.js`: owner agent, per-turn grants for the public host, and viewer turns limited to the avatar. Design and safety decisions: `ai-platform-design/stream-scenes.md` section 11.
+- Chat removal:
+  - The stored line is rewritten without author or text (atomic replace).
+  - A public moderation event keeps the actor role, message ID, and time.
+- Usage line (`server/usage-line.js`):
+  - Shows the pooled Codex windows via `poolCodex`, the 0.2.4 normalization, reused rather than copied.
+  - Shows today's UTC tokens and estimated cost, with the paid (non-CPA) fallback broken out. New `MetricsStore.routeTotals` shares the report's cost expression.
+  - At most once per reply and once per 10 s, from cached values. Upstream refresh at most every 5 minutes.
+- Thinking: model-start activity now records `thinking` from the runtime line only, and the log shows it next to the model.
+- OpenClaw config (through the dashboard config store, validated, backup `openclaw-20261105T233450958Z-e76625953e5b.json` in the dashboard data volume's `openclaw-config-backups/`):
+  - `params.thinking: "high"` on `cpa/claude-opus-5-5-high`, `cpa/gpt-6-astra`, and `openai/gpt-6-astra`.
+  - `maxTokens` 8192 → 32000 on both GPT-6 Astra entries.
+  - `dashboard-host` tools: `minimal` + `alsoAllow: ["dashboard_stream"]`, `deny: ["session_status"]`.
+  - `openclaw-pcp` `httpToolAllowlist` adds `dashboard_stream`; the backstop stays on.
+  - The gateway restarted itself for the plugin config. Telegram and WeChat were running afterwards.
+- Tests:
+  - New `server/stream-control.test.js` covers:
+    - per-caller tool actions;
+    - the owner round trip, including storage redaction;
+    - host grants: none, viewer, admin, wrong recording;
+    - ownership and rate limits;
+    - schema and replay of hidden and avatar;
+    - usage text, gap, and refresh gating;
+    - grant lifetime and session keys on real chat turns.
+  - Also added: player moderation, the thinking metadata, and the session-key header in the auth mock.
+  - The new `scripts/control-browser-check.mjs` passed with the five existing browser checks in the Playwright 1.58.2 image against the isolated OIDC fixture.

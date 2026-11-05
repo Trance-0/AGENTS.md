@@ -120,7 +120,7 @@ export class SceneEditor {
       const { widget } = await this.request(`/api/scene/widgets/${encodeURIComponent(id)}`, "PATCH", { changes });
       if (!this.active) return;
       this.widgets[id] = widget;
-      if (record) this.push({ label: "change", undo: () => this.update(id, { x: before.x, y: before.y, w: before.w, h: before.h, z: before.z, props: before.props }, { record: false }) });
+      if (record) this.push({ label: "change", undo: () => this.update(id, { x: before.x, y: before.y, w: before.w, h: before.h, z: before.z, props: before.props, hidden: !!before.hidden }, { record: false }) });
       this.render(id);
     } catch (error) {
       if (!this.active) return;
@@ -181,6 +181,7 @@ export class SceneEditor {
       { id: "duplicate", label: "Duplicate", run: () => this.guarded(this.create({ type: widget.type, ...offset(widget, 0.03), props: widget.props })) },
       { id: "forward", label: "Bring forward", run: () => this.guarded(this.update(id, { z: clamp(Math.max(widget.z, ...zs) + 1, 0, LIMITS.zMax) })) },
       { id: "back", label: "Send back", run: () => this.guarded(this.update(id, { z: clamp(Math.min(widget.z, ...zs) - 1, 0, LIMITS.zMax) })) },
+      { id: "visibility", label: widget.hidden ? "Show on stream" : "Hide on stream", run: () => this.guarded(this.update(id, { hidden: !widget.hidden })) },
       { id: "delete", label: "Delete", danger: true, run: () => this.guarded(this.remove(id)) },
     ], () => this.renderer.nodes.get(id)?.el.focus());
   }

@@ -2,7 +2,7 @@ import { createChat } from "./chat.js";
 import { Viewers } from "./viewers.js";
 import { config } from "./config.js";
 
-export function mountBroadcast(app, broadcast, { requireAuth, requireAdmin, requireCsrf }) {
+export function mountBroadcast(app, broadcast, { requireAuth, requireAdmin, requireCsrf, control, usageLine, emit = () => {} }) {
   const viewers = new Viewers(config.sessionSecret, config.oidc.redirectUri.startsWith("https://"));
   const identifyViewer = viewers.identify.bind(viewers);
   const route = handler => (req, res, next) => Promise.resolve().then(() => handler(req, res)).catch(next);
@@ -31,7 +31,15 @@ export function mountBroadcast(app, broadcast, { requireAuth, requireAdmin, requ
     if (typeof hidden !== "boolean" || !Number.isFinite(score) || score < 0 || score > 100) return res.status(400).json({ error: "Recording cannot be edited: dashboard/recording moderation — visibility must be boolean and recommendation score must be between 0 and 100." });
     res.json({ recording: broadcast.update(req.params.id, { hidden, score }) });
   }));
-  app.post("/api/chat", requireAuth, requireCsrf, createChat(broadcast));
+  app.post("/api/chat", requireAuth, requireCsrf, createChat(broadcast, { control, usageLine }));
+  // Administrator chat moderation on the live recording (same record as OpenClaw's chat_delete).
+  app.delete("/api/broadcast/chat/:eventId", requireAuth, requireAdmin, requireCsrf, route((req, res) => {
+    const eventId = /^\d{1,9}$/.test(req.params.eventId) ? Number(req.params.eventId) : -1;
+    if (eventId < 0) return res.status(400).json({ error: "Chat message not removed: dashboard/live chat moderation — message ID must be a number." });
+    const event = broadcast.deleteChat(eventId, { kind: "admin", label: "an administrator" });
+    emit({ source: "dashboard", level: "info", msg: `Stream control applied: dashboard/live chat moderation — administrator removed message #${eventId}.` });
+    res.json({ removed: eventId, eventId: event.id });
+  }));
   app.get("/api/stream", identifyViewer, (req, res) => {
     const disconnect = viewers.connect(req.viewerId);
     res.set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "X-Accel-Buffering": "no", Connection: "keep-alive" });

@@ -1,8 +1,8 @@
 {
   "id": "dashboard-stream",
   "name": "Dashboard Stream",
-  "version": "0.1.4",
-  "description": "Owner-controlled dashboard streaming and public lifecycle events.",
+  "version": "0.2.0",
+  "description": "Owner-controlled dashboard streaming, administrator-approved live control, and public lifecycle events.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

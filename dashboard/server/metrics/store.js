@@ -4,6 +4,9 @@ import { DatabaseSync } from "node:sqlite";
 
 const name = value => typeof value === "string" && /^[a-zA-Z0-9_.:/-]{1,160}$/.test(value);
 const tokens = value => Number.isSafeInteger(value) && value >= 0 && value <= 1e12;
+// Estimated cost in nano-USD per usage row: an administrator price wins over
+// the price OpenClaw recorded; NULL when neither is known.
+const COST_NANO = `CASE WHEN p.route IS NOT NULL THEN ROUND(1000*(e.input*p.input+e.output*p.output+e.cacheRead*p.cacheRead+e.cacheWrite*p.cacheWrite)) ELSE e.costNano END`;
 const fail = reason => Object.assign(new Error(`Usage unavailable: dashboard/metrics storage — ${reason}.`), { status: 400 });
 
 export class MetricsStore {
@@ -47,6 +50,12 @@ export class MetricsStore {
   tokensBetween(start, end) {
     return this.db.prepare("SELECT COALESCE(SUM(total), 0) AS tokens FROM usage_events WHERE timestamp>=? AND timestamp<=?").get(start, end).tokens;
   }
+  // Per-route tokens and estimated cost in [start, end]: [{ route, tokens, costUsd (known part or null), unpriced (attempts) }].
+  routeTotals(start, end) {
+    return this.db.prepare(`SELECT e.route, SUM(e.total) AS tokens, SUM(${COST_NANO}) AS costNano, SUM(CASE WHEN (${COST_NANO}) IS NULL THEN 1 ELSE 0 END) AS unpriced
+      FROM usage_events e LEFT JOIN model_prices p ON p.route=e.route AND p.model=e.model WHERE e.timestamp>=? AND e.timestamp<=? GROUP BY e.route ORDER BY tokens DESC`)
+      .all(start, end).map(row => ({ route: row.route, tokens: row.tokens ?? 0, costUsd: row.costNano === null ? null : row.costNano / 1e9, unpriced: row.unpriced ?? 0 }));
+  }
   prices() { return this.db.prepare("SELECT * FROM model_prices ORDER BY route,model").all(); }
   savePrice(value) {
     if (!name(value?.route) || !name(value?.model)) throw fail("select a valid route and model");
@@ -61,7 +70,7 @@ export class MetricsStore {
     const params = [start, now, route, route, model, model];
     const from = `FROM usage_events e LEFT JOIN model_prices p ON p.route=e.route AND p.model=e.model
       WHERE e.timestamp>=? AND e.timestamp<=? AND (?='' OR e.route=?) AND (?='' OR e.model=?)`;
-    const cost = `CASE WHEN p.route IS NOT NULL THEN ROUND(1000*(e.input*p.input+e.output*p.output+e.cacheRead*p.cacheRead+e.cacheWrite*p.cacheWrite)) ELSE e.costNano END`;
+    const cost = COST_NANO;
     const sums = `COUNT(*) AS attempts, SUM(e.success) AS successes, SUM(e.input) AS input, SUM(e.output) AS output,
       SUM(e.cacheRead) AS cacheRead, SUM(e.cacheWrite) AS cacheWrite, SUM(e.total) AS tokens,
       SUM(${cost}) AS costNano, SUM(CASE WHEN (${cost}) IS NULL THEN 1 ELSE 0 END) AS unpriced`;

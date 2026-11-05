@@ -4,6 +4,7 @@ import path from "node:path";
 const types = new Set(["agent_start", "model_start", "model_output", "tool_start", "tool_end", "agent_end"]);
 const safeRunId = value => typeof value === "string" && /^[a-zA-Z0-9_.:-]{1,256}$/.test(value);
 const safeName = value => typeof value === "string" && /^[a-zA-Z0-9_.:/-]{1,120}$/.test(value);
+const THINKING = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "adaptive"]);
 
 export function activityEvent(record) {
   if (!types.has(record.type) || !safeName(record.agentId) || !safeName(record.eventId) || !Number.isFinite(Date.parse(record.timestamp))) return null;
@@ -12,7 +13,8 @@ export function activityEvent(record) {
     ? record.path.replace(/[\x00-\x1f\x7f]/g, "").slice(0, 512) : undefined;
   const failed = record.success === false;
   const action = record.type === "tool_start" ? "started" : record.type === "tool_end" ? "completed" : "recorded";
-  const detail = tool ? `${tool}${filename ? ` ${filename}` : ""}` : safeName(record.model) ? `${safeName(record.provider) ? record.provider + "/" : ""}${record.model}` : record.agentId;
+  const thinking = THINKING.has(record.thinking) ? record.thinking : undefined;
+  const detail = tool ? `${tool}${filename ? ` ${filename}` : ""}` : safeName(record.model) ? `${safeName(record.provider) ? record.provider + "/" : ""}${record.model}${thinking ? `, thinking ${thinking}` : ""}` : record.agentId;
   const replyChars = Number.isSafeInteger(record.replyChars) && record.replyChars >= 0 ? record.replyChars : undefined;
   const replyDetail = record.type === "model_output" && replyChars !== undefined
     ? failed ? "; reply not generated" : replyChars > 0 ? `; reply generated (${replyChars} characters; text belongs to its conversation)` : "; no reply text generated"
@@ -29,6 +31,7 @@ export function activityEvent(record) {
     ...(safeName(record.model) ? { model: record.model } : {}),
     ...(safeRunId(record.runId) ? { runId: record.runId } : {}),
     ...(replyChars === undefined ? {} : { replyChars }),
+    ...(thinking ? { thinking } : {}),
     ...(filename ? { filePath: filename } : {}),
     ...(Number.isFinite(record.durationMs) ? { durationMs: record.durationMs } : {}),
     msg: relay

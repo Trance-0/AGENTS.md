@@ -40,3 +40,12 @@ test("controls auto-hide only while playing and never over a menu, keyboard focu
   assert.equal(controlsShouldHide({ playing: true, pointerInside: false, idleMs: CONTROLS_LEAVE_MS - 1 }), false);
   assert.ok(CONTROLS_LEAVE_MS < CONTROLS_IDLE_MS);
 });
+
+test("chat moderation removes the live copy of a deleted chat message", async () => {
+  const { applyModeration, isChat } = await import("../public/player.js");
+  const events = [{ id: 1, kind: "chat", msg: "bad", author: "A" }, { id: 2, kind: "log", msg: "x" }];
+  applyModeration(events, { id: 3, kind: "log", moderation: { op: "chat_delete", target: 2 } });
+  assert.equal(events[1].deleted, undefined, "only chat messages are removed");
+  applyModeration(events, { id: 4, kind: "log", moderation: { op: "chat_delete", target: 1 } });
+  assert.deepEqual([events[0].msg, events[0].author, events.filter(isChat).length], ["", undefined, 0]);
+});

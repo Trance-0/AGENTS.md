@@ -77,7 +77,7 @@ try {
   await page.waitForFunction(() => document.querySelectorAll(".scene-stage .scene-widget").length === 4);
   assert.equal((await layout(page)).layout.version, 1, "drawing a widget saves the layout");
   await clickWidget(page, "Hello from the stream");
-  assert.deepEqual(await page.locator(".scene-menu [role=menuitem]").allTextContents(), ["Edit properties…", "Create new…", "Duplicate", "Bring forward", "Send back", "Delete"]);
+  assert.deepEqual(await page.locator(".scene-menu [role=menuitem]").allTextContents(), ["Edit properties…", "Create new…", "Duplicate", "Bring forward", "Send back", "Hide on stream", "Delete"]);
   await menu(page, "edit");
   await page.locator("#scene-field-text").fill("Scene check title");
   await page.locator("#scene-field-size").fill("40");

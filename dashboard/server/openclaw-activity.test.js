@@ -128,3 +128,20 @@ test("stalled parent announcements produce one explicit pending warning", () => 
     assert.equal(reader.pendingAnnouncements.size, 0);
   } finally { fs.rmSync(directory, { recursive: true }); }
 });
+
+test("model starts record the run's thinking level from the runtime line, never the prompt", async () => {
+  const { mkdtempSync, readFileSync, readdirSync, rmSync } = await import("node:fs");
+  const { writeActivity } = await import("../openclaw-plugin/activity-log.js");
+  const dir = mkdtempSync(path.join(os.tmpdir(), "thinking-"));
+  try {
+    writeActivity(dir, "model_start", { model: "gpt-6-astra", provider: "cpa", systemPrompt: "SECRET\nRuntime: agent=main | model=cpa/gpt-6-astra | thinking=high" }, { agentId: "main" });
+    writeActivity(dir, "model_start", { model: "gpt-6-astra", provider: "cpa", systemPrompt: "thinking=xhigh in prose only" }, { agentId: "main" });
+    const [first, second] = readFileSync(path.join(dir, readdirSync(dir)[0]), "utf8").trim().split("\n").map(line => JSON.parse(line));
+    assert.equal(first.thinking, "high");
+    assert.equal(second.thinking, undefined);
+    assert.ok(!JSON.stringify(first).includes("SECRET"));
+    const event = activityEvent({ ...first });
+    assert.equal(event.thinking, "high");
+    assert.match(event.msg, /cpa\/gpt-6-astra, thinking high/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

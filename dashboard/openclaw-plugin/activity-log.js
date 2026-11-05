@@ -12,6 +12,12 @@ export function writeActivity(directory, type, event, context) {
   if (event.toolName) record.toolName = event.toolName;
   if (event.model) record.model = event.model;
   if (event.provider) record.provider = event.provider;
+  // Thinking level of this model attempt, from the runtime line OpenClaw puts
+  // in its system prompt ("Runtime: ... | thinking=high"). Only the level is kept.
+  if (type === "model_start" && typeof event.systemPrompt === "string") {
+    const level = /^Runtime: .*?\bthinking=(off|minimal|low|medium|high|xhigh|adaptive)\b/m.exec(event.systemPrompt)?.[1];
+    if (level) record.thinking = level;
+  }
   const runId = event.runId || context.runId;
   if (typeof runId === "string" && /^[a-zA-Z0-9_.:-]{1,256}$/.test(runId)) record.runId = runId;
   if (type === "model_output") {

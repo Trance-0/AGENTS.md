@@ -92,6 +92,9 @@ export class SceneRenderer {
       Object.assign(el.style, { left: `${widget.x * 100}%`, top: `${widget.y * 100}%`, width: `${widget.w * 100}%`, height: `${widget.h * 100}%`, zIndex: String(widget.z) });
       el.classList.toggle("selected", this.selected === widget.id);
       el.classList.toggle("mirrored", !!widget.props.mirror);
+      // Hidden widgets are not drawn for viewers; the editor shows them dimmed so they can be shown again.
+      el.hidden = !!widget.hidden && !this.override;
+      el.classList.toggle("scene-hidden", !!widget.hidden);
       if (this.override) {
         el.tabIndex = 0;
         el.setAttribute("role", "button");

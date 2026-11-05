@@ -11,6 +11,10 @@
 export const SCENE_SV = 1;
 export const LIMITS = Object.freeze({ widgets: 24, widgetBytes: 1536, eventBytes: 2048, allowlist: 16, urlLength: 512, minSize: 0.02, zMax: 999 });
 export const WIDGET_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+// Avatar expressions OpenClaw may force for a while (`auto` returns to the
+// activity-derived picture). Seconds are whole numbers.
+export const AVATAR_STATES = Object.freeze(["idle", "blink", "talk", "think", "sleepy"]);
+export const AVATAR_SECONDS = Object.freeze({ min: 1, max: 120, default: 10 });
 
 // Text colours, taken from the witch avatar's palette.
 export const PALETTE = Object.freeze({
@@ -94,6 +98,20 @@ const plain = value => value !== null && typeof value === "object" && !Array.isA
 const round = value => Math.round(value * 10000) / 10000;
 // Control characters and bidi overrides could disguise text in a public overlay.
 const UNSAFE_TEXT = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+// Same rule for multi-line text (stream descriptions): newlines and tabs allowed.
+const UNSAFE_MULTILINE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+export const unsafeText = (text, { multiline = false } = {}) => (multiline ? UNSAFE_MULTILINE : UNSAFE_TEXT).test(text);
+
+// Validates a forced avatar expression: { expression, seconds } or { expression: "auto" }.
+export function validateAvatarState(input) {
+  if (!plain(input)) fail("the avatar state must be an object");
+  for (const key of Object.keys(input)) if (!["expression", "seconds"].includes(key)) fail(`unknown avatar field '${key}'`);
+  if (input.expression === "auto") return { expression: "auto" };
+  if (!AVATAR_STATES.includes(input.expression)) fail(`avatar expression must be one of ${AVATAR_STATES.join(", ")}, or auto`);
+  const seconds = input.seconds ?? AVATAR_SECONDS.default;
+  if (!Number.isInteger(seconds) || seconds < AVATAR_SECONDS.min || seconds > AVATAR_SECONDS.max) fail(`avatar seconds must be a whole number from ${AVATAR_SECONDS.min} to ${AVATAR_SECONDS.max}`);
+  return { expression: input.expression, seconds };
+}
 
 // Normalizes the admin image allowlist: HTTPS URL prefixes ending in "/".
 export function normalizeAllowlist(list) {
@@ -155,7 +173,8 @@ function checkProp(type, key, spec, value, allowlist, embeds) {
 // defaults; unknown top-level fields, unknown props, and wrong types fail.
 export function validateWidget(input, { allowlist = [], embeds = [] } = {}) {
   if (!plain(input)) fail("a widget must be an object");
-  for (const key of Object.keys(input)) if (!["id", "type", "x", "y", "w", "h", "z", "props"].includes(key)) fail(`unknown widget field '${key}'`);
+  for (const key of Object.keys(input)) if (!["id", "type", "x", "y", "w", "h", "z", "props", "hidden"].includes(key)) fail(`unknown widget field '${key}'`);
+  if (input.hidden !== undefined && typeof input.hidden !== "boolean") fail("widget field 'hidden' must be true or false");
   const schema = typeof input.type === "string" && Object.hasOwn(WIDGET_TYPES, input.type) ? WIDGET_TYPES[input.type] : null;
   if (!schema) fail(`widget type '${String(input.type).slice(0, 40)}' is not supported`);
   if (typeof input.id !== "string" || !WIDGET_ID.test(input.id)) fail("widget ID must be 1-32 lowercase letters, digits, or hyphens");
@@ -178,15 +197,16 @@ export function validateWidget(input, { allowlist = [], embeds = [] } = {}) {
     const required = (spec.type === "url" || spec.type === "embed") && value === "";
     props[key] = required ? fail(`${input.type} field 'props.${key}' is required`) : checkProp(input.type, key, spec, value, allowlist, embeds);
   }
-  const widget = { id: input.id, type: input.type, x, y, w, h, z, props };
+  // Hidden widgets stay in the scene (position, props) but are not drawn for viewers.
+  const widget = { id: input.id, type: input.type, x, y, w, h, z, props, ...(input.hidden ? { hidden: true } : {}) };
   if (JSON.stringify(widget).length > LIMITS.widgetBytes) fail(`widget exceeds ${LIMITS.widgetBytes} bytes`);
   return widget;
 }
 
-// PATCH semantics: geometry, z, and individual props may change; id and type never do.
+// PATCH semantics: geometry, z, visibility, and individual props may change; id and type never do.
 export function mergeWidget(existing, changes, options) {
   if (!plain(changes)) fail("widget changes must be an object");
-  for (const key of Object.keys(changes)) if (!["x", "y", "w", "h", "z", "props"].includes(key)) fail(key === "id" || key === "type" ? `widget field '${key}' cannot be changed` : `unknown widget field '${key}'`);
+  for (const key of Object.keys(changes)) if (!["x", "y", "w", "h", "z", "props", "hidden"].includes(key)) fail(key === "id" || key === "type" ? `widget field '${key}' cannot be changed` : `unknown widget field '${key}'`);
   if (changes.props !== undefined && !plain(changes.props)) fail("widget field 'props' must be an object");
   return validateWidget({ ...existing, ...changes, props: { ...existing.props, ...(changes.props || {}) } }, options);
 }

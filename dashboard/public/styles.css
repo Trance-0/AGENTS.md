@@ -372,6 +372,8 @@ button:disabled { opacity: .45; cursor: default; }
 .chat-message time { color: var(--text-faint); font: 11px var(--mono); }
 .chat-message strong { color: var(--accent); }
 .chat-message span { flex-basis: 100%; white-space: pre-wrap; }
+.chat-remove { margin-left: auto; border: 0; background: none; color: var(--text-faint); font: 11px var(--mono); cursor: pointer; padding: 0; }
+.chat-remove:hover, .chat-remove:focus-visible { color: var(--accent); text-decoration: underline; }
 textarea, .broadcast-controls input, .recording-row input[type=number] { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
 #chat-input { display: block; width: 100%; margin: 8px 0; resize: vertical; }
 #chat-status { line-height: 1.5; }

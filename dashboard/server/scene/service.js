@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { LIMITS, SCENE_SV, WIDGET_TYPES, mergeWidget, validateWidget } from "../../public/scene/schema.js";
+import { LIMITS, SCENE_SV, WIDGET_TYPES, mergeWidget, validateAvatarState, validateWidget } from "../../public/scene/schema.js";
 import { initialState, reduce } from "../../public/scene/reduce.js";
 
 // Scene widget operations shared by the admin editor and OpenClaw. The server
@@ -9,8 +9,9 @@ import { initialState, reduce } from "../../public/scene/reduce.js";
 //
 // - Admin edits always update the saved default layout. While a stream is
 //   live they are also recorded as events against the live scene.
-// - OpenClaw edits change only the live recording its session owns; they never
-//   rewrite the administrator's default layout.
+// - OpenClaw edits change only the live recording (who may act on it is
+//   decided by server/stream-control.js); they never rewrite the
+//   administrator's default layout.
 // - When a stream starts, the saved layout is replayed as opening events.
 
 const fail = (status, consequence, reason) => Object.assign(new Error(`${consequence}: dashboard/scene ${status === 429 ? "rate limit" : "widgets"} — ${reason}.`), { status });
@@ -96,12 +97,16 @@ export class SceneService {
       this.emit({ source: "dashboard", level: "warn", msg: "Scene change dropped: dashboard/scene rate limit — more than 10 scene events per second across all producers." });
       throw fail(429, "Scene change not recorded", "the stream accepts at most 10 scene events per second; retry shortly");
     }
-    const what = op === "metrics" ? "Scene metrics updated" : `Scene ${TYPE_LABEL(data.widget?.type ?? this.live?.state.widgets[target]?.type)} widget ${{ create: "added", update: "changed", delete: "removed" }[op]}`;
+    const previous = this.live?.state.widgets[target];
+    const verb = op === "update" && previous && !!previous.hidden !== !!data.widget?.hidden ? (data.widget.hidden ? "hidden" : "shown") : { create: "added", update: "changed", delete: "removed" }[op];
+    const what = op === "metrics" ? "Scene metrics updated" : op === "avatar" ? "Avatar expression set" : `Scene ${TYPE_LABEL(data.widget?.type ?? previous?.type)} widget ${verb}`;
     const payload = {
       kind: "widget", sv: SCENE_SV, op, target, data,
       eventRef: `${actor}-${op}-${target}-${this.now().toString(36)}-${(this.sequence++).toString(36)}`,
       source: actor, level: "info",
-      msg: op === "metrics" ? `${what}: dashboard/scene metrics — ${Object.keys(data.values).length} pooled public value(s) refreshed.` : `${what}: dashboard/scene — by ${ACTORS[actor]}.`,
+      msg: op === "metrics" ? `${what}: dashboard/scene metrics — ${Object.keys(data.values).length} pooled public value(s) refreshed.`
+        : op === "avatar" ? `${what}: dashboard/scene avatar — by ${ACTORS[actor]}, ${data.expression === "auto" ? "back to automatic expressions" : `${data.expression} for ${data.seconds} s`}.`
+        : `${what}: dashboard/scene — by ${ACTORS[actor]}.`,
     };
     if (JSON.stringify(payload).length + 256 > LIMITS.eventBytes) throw fail(400, "Scene change not recorded", `the event would exceed ${LIMITS.eventBytes} bytes`);
     const event = this.broadcast.publish(payload);
@@ -114,14 +119,6 @@ export class SceneService {
   }
 
   options() { return this.store.options(); }
-
-  // Throws unless `recordingId` is live and owned by `sessionRef` (the same rule as /api/openclaw/stream/end).
-  requireOwner(recordingId, sessionRef) {
-    if (typeof recordingId !== "string" || !/^[a-f0-9-]{36}$/.test(recordingId) || typeof sessionRef !== "string" || !/^[a-f0-9]{64}$/.test(sessionRef)) throw fail(400, "Scene change not accepted", "a live recording ID and a valid session reference are required");
-    const active = this.broadcast.active;
-    if (!active || active.id !== recordingId || active.sessionRef !== sessionRef) throw fail(409, "Scene change not accepted", "this session does not own the live recording");
-    return this.liveState();
-  }
 
   newId(taken) {
     let id;
@@ -177,6 +174,17 @@ export class SceneService {
     if (inLive) this.publish(actor, "delete", id, {});
     this.notify("delete");
     return { id, recorded: inLive, layoutVersion };
+  }
+
+  // Forced avatar expression on the live scene (every avatar widget), recorded
+  // as a `widget` event with op `avatar` so replay shows the same picture.
+  avatar(actor, input) {
+    this.take(actor);
+    const state = this.validate(() => validateAvatarState(input), "Avatar not changed");
+    if (!this.liveState()) throw fail(409, "Avatar not changed", "no stream is live");
+    this.publish(actor, "avatar", "avatar", state);
+    this.notify("avatar");
+    return { avatar: state, recorded: true };
   }
 
   validate(fn, consequence) {

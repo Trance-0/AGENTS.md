@@ -30,6 +30,8 @@ import { SceneService } from "./scene/service.js";
 import { MetricsBridge } from "./scene/bridge.js";
 import { mountScene, contentSecurityPolicy, embedSecurityPolicy, embedPaths } from "./scene/routes.js";
 import { embedStatic } from "./scene/embed-static.js";
+import { StreamControl } from "./stream-control.js";
+import { UsageLine } from "./usage-line.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
@@ -163,14 +165,17 @@ function requireCsrf(req, res, next) {
 }
 
 app.get("/auth/avatar", requireAuth, serveAvatar);
-mountBroadcast(app, broadcast, { requireAuth, requireAdmin, requireCsrf });
-mountOpenClaw(app, broadcast);
+// The metrics routes own the shared CPA quota refresher the usage line reuses.
+const quota = mountMetrics(app, { store: metrics, secrets: metricsSecrets, requireAuth, requireAdmin, requireCsrf, isEnabled });
+const control = new StreamControl({ broadcast, emit });
+const usageLine = new UsageLine({ broadcast, metrics, quota, secrets: metricsSecrets, isEnabled, emit });
+mountBroadcast(app, broadcast, { requireAuth, requireAdmin, requireCsrf, control, usageLine, emit });
+mountOpenClaw(app, broadcast, { control, usageLine });
 const configStore = config.openclaw.configFile
   ? new OpenClawConfigStore({ file: config.openclaw.configFile, backupDir: path.join(config.dataDir, "openclaw-config-backups") })
   : null;
 mountOpenClawConfig(app, configStore, { requireAuth, requireAdmin, requireCsrf, isEnabled });
-const quota = mountMetrics(app, { store: metrics, secrets: metricsSecrets, requireAuth, requireAdmin, requireCsrf, isEnabled });
-mountScene(app, { scene, store: sceneStore, streamToken: config.openclaw.streamToken, requireCsrfOrToken });
+mountScene(app, { scene, store: sceneStore, streamToken: config.openclaw.streamToken, requireCsrfOrToken, control });
 new MetricsBridge({ scene, broadcast, metrics, quota, secrets: metricsSecrets, isEnabled, emit }).start();
 
 function requireToken(req, res, next) {

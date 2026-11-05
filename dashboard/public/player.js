@@ -8,6 +8,16 @@ export const formatTime = seconds => {
 // Metric ticks update widgets only; every other scene event keeps its caption in the log.
 export const isLogEvent = event => event.kind !== "chat" && !(event.kind === "widget" && event.op === "metrics");
 
+// A moderation event removes a viewer chat message: the server already
+// rewrote the stored line; this drops the copy a live player received earlier.
+export function applyModeration(events, event) {
+  if (event?.moderation?.op !== "chat_delete") return;
+  const index = events.findIndex(item => item.id === event.moderation.target && item.kind === "chat");
+  if (index >= 0) events[index] = { ...events[index], msg: "", author: undefined, deleted: true };
+}
+
+export const isChat = event => event.kind === "chat" && !event.deleted;
+
 export function previewAt(events, time) {
   return events.filter(event => isLogEvent(event) && event.t <= time).slice(-5);
 }
@@ -144,6 +154,7 @@ export class Player {
     if (event.recordingId !== this.recording?.id || this.events.some(item => item.id === event.id)) return;
     this.events.push(event);
     this.timeline.push(event);
+    applyModeration(this.events, event);
     if (this.follow) this.time = this.duration();
     this.render();
   }
@@ -214,7 +225,7 @@ export class Player {
       $("#stream-log").replaceChildren(...logs.map(event => logLine(event)));
       $("#captions").textContent = !this.recording ? "The stream is offline. Choose a recording or return when the host goes live." : this.recording.status === "live" ? "Live with OpenClaw" : "Recorded stream";
     }
-    this.onChat(visible.filter(event => event.kind === "chat"));
+    this.onChat(visible.filter(isChat));
     const marks = $("#event-marks");
     // Only warnings and worse get a progress-bar checkpoint; info stays in the log.
     marks.replaceChildren(...this.events.filter(event => event.kind !== "chat" && MARK_LEVELS.has(event.level)).slice(-300).map(event => {

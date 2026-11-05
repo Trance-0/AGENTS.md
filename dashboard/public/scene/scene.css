@@ -6,6 +6,8 @@
 .scene-back .scene-embed, .scene-back .scene-embed * { pointer-events: none !important; user-select: none; }
 .scene-stage.editing .scene-embed { outline: 2px dashed rgba(79, 182, 200, .8); outline-offset: -2px; }
 .scene-widget { position: absolute; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; overflow: hidden; color: #fdf6f3; font-family: "Roboto", system-ui, sans-serif; line-height: 1.15; }
+.scene-widget[hidden] { display: none; }
+.scene-widget.scene-hidden { opacity: .4; outline: 2px dashed rgba(253, 246, 243, .7); }
 .scene-widget canvas { width: 100%; height: 100%; display: block; }
 .scene-widget img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .scene-widget img[data-fit="cover"] { object-fit: cover; }

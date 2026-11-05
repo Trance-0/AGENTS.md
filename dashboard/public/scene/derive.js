@@ -34,6 +34,8 @@ export function onPaidFallback(state) {
 
 export function avatarExpression(state, t) {
   const activity = state.activity;
+  // A forced expression (OpenClaw `avatar` action) wins until it times out.
+  if (state.avatar && t < state.avatar.until && EXPRESSIONS.includes(state.avatar.expression)) return state.avatar.expression;
   if (onPaidFallback(state)) return "sleepy";
   if (activity.talkUntil !== null && t < activity.talkUntil) return "talk";
   const recent = activity.lastT !== null && t - activity.lastT < THINK_TIMEOUT;

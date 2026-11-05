@@ -132,6 +132,59 @@ export class BroadcastStore {
     return this.status();
   }
 
+  retitle(title, by = "OpenClaw") {
+    if (!this.active) throw Object.assign(new Error("Title cannot be updated: dashboard/stream title — no stream is live."), { status: 409 });
+    this.active.title = title;
+    this.save(this.active);
+    this.publish({ source: "openclaw", msg: `Stream title updated: dashboard/stream title — ${by} renamed the live stream.`, title });
+    this.notify("status", this.status());
+    return this.status();
+  }
+
+  // Removes one viewer chat message from the live recording. The stored line
+  // is rewritten without its author and text (atomic replace, same event ID
+  // and time), so the player, replays, and the events API no longer have it.
+  // A public `moderation` log event keeps who removed which message ID and
+  // when, never the content. Players that already received the message drop
+  // it when that event arrives.
+  deleteChat(eventId, actor) {
+    if (!this.active) throw Object.assign(new Error("Chat message not removed: dashboard/live chat moderation — no stream is live."), { status: 409 });
+    if (!Number.isSafeInteger(eventId) || eventId < 0 || eventId >= this.active.eventCount) throw Object.assign(new Error("Chat message not removed: dashboard/live chat moderation — message ID is not in the live recording."), { status: 404 });
+    const file = this.filename(this.active.id, "ndjson");
+    const temporary = `${file}.moderate`;
+    const descriptor = fs.openSync(temporary, "w");
+    let found = null;
+    try {
+      for (const event of this.scanEvents(this.active.id)) {
+        let line = event;
+        if (event.id === eventId) {
+          if (event.kind !== "chat") { found = "not-chat"; break; }
+          if (event.deleted) { found = "deleted"; break; }
+          found = "chat";
+          line = { id: event.id, recordingId: event.recordingId, ts: event.ts, t: event.t, kind: "chat", source: event.source, level: event.level, msg: "", deleted: true };
+        }
+        fs.writeSync(descriptor, JSON.stringify(line) + "\n");
+      }
+      if (found === "chat") fs.fsyncSync(descriptor);
+    } finally { fs.closeSync(descriptor); }
+    if (found !== "chat") {
+      fs.rmSync(temporary, { force: true });
+      throw Object.assign(new Error(`Chat message not removed: dashboard/live chat moderation — ${found === "deleted" ? "the message was already removed" : found === "not-chat" ? "the ID belongs to a log event, not a viewer chat message" : "message ID is not in the live recording"}.`), { status: found === "deleted" ? 409 : 404 });
+    }
+    fs.renameSync(temporary, file);
+    const label = actor.label || "a moderator";
+    return this.publish({ source: "dashboard", msg: `Chat message removed: dashboard/live chat moderation — ${label} removed message #${eventId}.`, moderation: { op: "chat_delete", target: eventId, actor: actor.kind, ...(actor.agentId ? { agentId: actor.agentId } : {}), ...(actor.via ? { via: actor.via } : {}) } });
+  }
+
+  // Recent viewer chat on the live recording for moderation: IDs, author
+  // display names, and text, newest last.
+  recentChat(limit = 20) {
+    if (!this.active) return [];
+    const start = Math.max(0, this.active.eventCount - 2000);
+    return this.readEvents(this.active.id, start, 2000).filter(event => event.kind === "chat" && !event.deleted).slice(-limit)
+      .map(event => ({ id: event.id, t: Math.round(event.t), author: event.author || "Viewer", text: String(event.msg).slice(0, 300) }));
+  }
+
   update(id, changes) {
     const recording = this.get(id);
     if (recording.status === "live") throw Object.assign(new Error("Recording cannot be edited: dashboard/recording moderation — end the stream before changing visibility or score."), { status: 409 });
