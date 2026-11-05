@@ -29,6 +29,7 @@ import { SceneStore } from "./scene/store.js";
 import { SceneService } from "./scene/service.js";
 import { MetricsBridge } from "./scene/bridge.js";
 import { mountScene, contentSecurityPolicy, embedSecurityPolicy, embedPaths } from "./scene/routes.js";
+import { embedStatic } from "./scene/embed-static.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
@@ -229,7 +230,7 @@ app.use((err, _req, res, _next) => {
 
 // --- Scene embeds (read-only static builds; off unless configured) ---
 const embedHeaders = (_req, res, next) => { res.set({ "Content-Security-Policy": embedSecurityPolicy(), "X-Content-Type-Options": "nosniff" }); next(); };
-if (config.circtimeEmbedDir) app.use("/embed/circtime", embedHeaders, express.static(config.circtimeEmbedDir, { fallthrough: false, dotfiles: "deny", index: "index.html", redirect: true }));
+if (embedPaths(config).includes("/embed/circtime/")) app.use("/embed/circtime", embedHeaders, embedStatic(config.circtimeEmbedDir));
 app.use("/embed", (_req, res) => res.status(404).type("text/plain").send("Embed unavailable: dashboard/scene embeds — this page is not served by this deployment."));
 
 // --- Static frontend ---

@@ -624,3 +624,31 @@ circtime uptime radar for AI-infra health.
   URL and integrity always pointed at 0.2.0, so installed images were correct;
   the field is restored.
 
+## 2026-11-05 — circtime embed enabled (0.2.3)
+
+- Contract from the circtime deployment: static Vite build at
+  `/home/motuariki/Documents/DockerVolumes/circtime/dist`, entry
+  `?embed=1&theme=`, relative JSON (`circtime-config.json`,
+  `uptime-history.json` once, `uptime-latest.json` every 60 s),
+  `circtime-theme` messages checked against `parent_origin`, module scripts.
+- `server/scene/embed-static.js` replaces `express.static` for this path:
+  CORS `*` for GET/HEAD only (405 otherwise), `no-cache` + ETag for JSON/HTML,
+  immutable hashed assets, brotli/gzip via `node:zlib` cached by size and
+  mtime, trailing-slash redirect, dotfile/traversal refusal. Kept the sandbox
+  without `allow-same-origin`; the CORS route works for module scripts and
+  fetches from the opaque origin (verified in Chromium with the real build).
+- `embedPaths` requires `index.html` in the directory, so an empty mount point
+  keeps the route off. `deploy.py` and `compose.yaml` mount the default host
+  path read-only; a missing build skips the mount with a warning.
+- Renderer: iframe src `?embed=1&theme=<resolved>&parent_origin=<origin>`;
+  theme changes post `{ type: "circtime-theme", theme }`.
+- circtime offers no frame-rate option (only React's internal scheduler
+  knob), so it runs at full rate while visible; noted, not changed.
+- Tests: `auth.test.js` fixture now follows the same contract (module script,
+  relative JSON); route checks for CORS, credentials absence, br/gzip, cache
+  headers, 304, 405, redirect, traversal, dotfiles. The scene browser check
+  asserts embed mode, a rendered canvas, CORS loads of config/history/JS from
+  origin `null`, theme by URL and by message without reload, selectable and
+  copyable log text over the embed, and no CSP violations. On the host it also
+  ran against the real circtime build (`DASHBOARD_CIRCTIME_DIR`).
+

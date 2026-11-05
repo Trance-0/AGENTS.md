@@ -192,21 +192,21 @@ export class SceneRenderer {
     }
   }
 
-  // Same-origin dashboard paths only; the theme rides along as query params,
-  // and later changes arrive by postMessage.
+  // Same-origin dashboard paths only. The embed contract (circtime): embed=1,
+  // the resolved theme (the dark radar is faint on light), and parent_origin so
+  // the opaque-origin frame can verify where theme messages come from.
   embedSrc(path) {
     if (typeof path !== "string" || !/^\/embed\/[a-z0-9-]+\/$/.test(path)) return null;
-    const theme = globalThis.dashboardTheme;
-    const params = new URLSearchParams({ theme: document.documentElement.dataset.theme || "dark", preference: theme?.read?.() || "system" });
+    const params = new URLSearchParams({ embed: "1", theme: document.documentElement.dataset.theme || "dark", parent_origin: location.origin });
     if (this.reduced()) params.set("motion", "reduce");
     return `${path}?${params}`;
   }
 
   postTheme() {
-    const message = { type: "dashboard-theme", theme: document.documentElement.dataset.theme || "dark", preference: globalThis.dashboardTheme?.read?.() || "system" };
-    // The sandboxed frame has an opaque origin, so "*" is the only target that
+    const theme = document.documentElement.dataset.theme || "dark";
+    // The sandboxed frame's origin is "null", so "*" is the only target that
     // reaches it; the message carries nothing but the public theme name.
-    for (const node of this.nodes.values()) node.frame?.contentWindow?.postMessage(message, "*");
+    for (const node of this.nodes.values()) node.frame?.contentWindow?.postMessage({ type: "circtime-theme", theme }, "*");
   }
 
   text(node, label, value, sub) {

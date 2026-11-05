@@ -52,6 +52,8 @@ const openclaw = (path, body) => fetch(baseURL + path, { method: "POST", headers
 
 try {
   const admin = await context(process.env.DASHBOARD_TEST_COOKIE);
+  const embedResponses = [];
+  admin.on("response", response => { if (response.url().includes("/embed/circtime/")) embedResponses.push(response); });
   const page = await open(admin);
   // Offline with nothing loaded the stage is empty: scenes come only from recorded events.
   assert.equal(await widgetCount(page), 0, "no recording, no scene");
@@ -147,21 +149,34 @@ try {
   const frame = page.locator(".scene-back .scene-embed iframe");
   await frame.waitFor({ state: "attached" });
   assert.equal(await frame.getAttribute("sandbox"), "allow-scripts", "no allow-same-origin");
-  assert.match(await frame.getAttribute("src"), /^\/embed\/circtime\/\?theme=(dark|light)&preference=/);
+  assert.equal(await frame.getAttribute("referrerpolicy"), "no-referrer");
+  const src = new URL(await frame.getAttribute("src"), baseURL);
+  assert.deepEqual([src.pathname, src.searchParams.get("embed"), src.searchParams.get("parent_origin")], ["/embed/circtime/", "1", new URL(baseURL).origin]);
+  assert.ok(["light", "dark"].includes(src.searchParams.get("theme")), "the resolved dashboard theme is passed");
   const layers = await page.evaluate(() => ({ back: getComputedStyle(document.querySelector(".scene-back")).zIndex, log: getComputedStyle(document.querySelector("#stream-log")).zIndex, events: getComputedStyle(document.querySelector(".scene-back iframe")).pointerEvents, opacity: getComputedStyle(document.querySelector(".scene-back .scene-embed")).opacity, box: document.querySelector(".scene-back .scene-embed").getBoundingClientRect().width / document.querySelector(".scene-stage").getBoundingClientRect().width }));
   assert.deepEqual(layers, { back: "0", log: "1", events: "none", opacity: "0.3", box: 1 }, "full stage, behind the log, faint, never interactive");
   const embedded = () => page.frames().find(item => item.url().includes("/embed/circtime/"));
-  await page.waitForFunction(() => true);
-  for (let i = 0; i < 50 && !(await embedded()?.evaluate(() => document.documentElement.dataset.loadedAt).catch(() => null)); i++) await page.waitForTimeout(100);
+  for (let i = 0; i < 100 && !(await embedded()?.evaluate(() => document.documentElement.dataset.theme && document.querySelector("canvas")?.getBoundingClientRect().width > 0).catch(() => null)); i++) await page.waitForTimeout(100);
+  assert.ok(await embedded().evaluate(() => document.documentElement.classList.contains("circtime-embed") && document.querySelector("canvas").getBoundingClientRect().width > 100), "the radar renders inside the stage in embed mode");
+  // JSON and module scripts load through the sandbox: CORS requests from the opaque (null) origin.
+  for (let i = 0; i < 50 && !["circtime-config.json", "uptime-history.json"].every(name => embedResponses.some(response => response.url().includes(name))); i++) await page.waitForTimeout(100);
+  for (const name of ["circtime-config.json", "uptime-history.json", ".js"]) {
+    const response = embedResponses.find(item => new URL(item.url()).pathname.endsWith(name));
+    assert.ok(response, `embed loaded ${name}`);
+    assert.equal(response.status(), 200, name);
+    assert.equal((await response.allHeaders())["access-control-allow-origin"], "*", name);
+    if (name.endsWith(".json")) assert.equal(await response.request().headerValue("origin"), "null", `${name} was fetched from the sandbox's opaque origin`);
+  }
   const themeNow = await page.evaluate(() => document.documentElement.dataset.theme);
   assert.equal(await embedded().evaluate(() => document.documentElement.dataset.theme), themeNow, "the embed receives the dashboard theme");
-  const loadedAt = await embedded().evaluate(() => document.documentElement.dataset.loadedAt);
+  const loadedAt = await embedded().evaluate(() => performance.timeOrigin);
   await page.locator("#theme-toggle").click();
   await page.waitForFunction(() => document.documentElement.dataset.theme !== "");
   const themeNext = await page.evaluate(() => document.documentElement.dataset.theme);
   for (let i = 0; i < 30 && (await embedded().evaluate(() => document.documentElement.dataset.theme)) !== themeNext; i++) await page.waitForTimeout(100);
   assert.equal(await embedded().evaluate(() => document.documentElement.dataset.theme), themeNext, "theme changes arrive by postMessage");
-  assert.equal(await embedded().evaluate(() => document.documentElement.dataset.loadedAt), loadedAt, "without reloading the embed");
+  assert.equal(await embedded().evaluate(() => performance.timeOrigin), loadedAt, "without reloading the embed");
+  await page.screenshot({ path: `${shots}/scene-embed-theme-switched.png` });
   await page.evaluate(() => globalThis.dashboardTheme.set("system"));
   // Log text over the embed stays selectable and copyable; pointer input never lands in the frame.
   const line = page.locator("#stream-log .log-line .msg").first();

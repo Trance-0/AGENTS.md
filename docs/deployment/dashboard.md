@@ -29,8 +29,8 @@ shows both its starting and completed file-path events in the public player.
 The browser connects to `https://live.trance-0.com`. Its remote reverse proxy
 terminates TLS and routes HTTP to a private FRP remote TCP port. The existing local
 `frpc` container uses host networking and forwards requests to
-`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.2.2` using image
-`agent-dashboard:0.2.2`, with Node.js 22 as the unprivileged `node` user.
+`127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.2.3` using image
+`agent-dashboard:0.2.3`, with Node.js 22 as the unprivileged `node` user.
 
 ## Casdoor setup
 
@@ -173,8 +173,8 @@ and without `admin-agent` must receive 403 for mutations, including panel
 toggles, even with a valid bearer token. Remove any temporary test identities after testing.
 
 ```sh
-docker logs --timestamps --tail 100 agent-dashboard-v0.2.2
-docker inspect agent-dashboard-v0.2.2 --format '{{.State.Health.Status}}'
+docker logs --timestamps --tail 100 agent-dashboard-v0.2.3
+docker inspect agent-dashboard-v0.2.3 --format '{{.State.Health.Status}}'
 ```
 
 Docker retains three rotated JSON log files of up to 10 MB each. Application
@@ -186,7 +186,7 @@ never be included in logs.
 
 Before a future update, retain the current image under a distinct local tag.
 To roll back, restore the previous source revision or retag the retained image
-as `agent-dashboard:0.2.2`, then run
+as `agent-dashboard:0.2.3`, then run
 `docker compose -f dashboard/compose.yaml up -d --no-build`. Keep the private
 environment file and state volume. To remove just the dashboard exposure,
 restore the saved FRP configuration, validate it, and restart `frpc`; other
@@ -626,24 +626,42 @@ holds the image allowlist (HTTPS prefixes) and a reset to the built-in layout.
 ### Embed widget (circtime)
 
 The `embed` widget shows a dashboard-served page behind the log: a sandboxed
-iframe (`allow-scripts` only, opaque origin), `pointer-events: none`, default
-full stage at 30% opacity, and part of the built-in layout when available.
-Its page must be on the server-side allowlist; today that is only
-`/embed/circtime/`, served from `CIRCTIME_EMBED_DIR` (absent or empty: the
-route returns 404 and no embed can be placed). Jenkins mounts the build
-read-only when `CIRCTIME_EMBED_HOST_DIR` names a host directory containing
-`index.html` (`scripts/deploy.py` maps it to `/embed-src/circtime` and sets
-`CIRCTIME_EMBED_DIR`); for Compose, add the same read-only bind and set
-`CIRCTIME_EMBED_DIR=/embed-src/circtime`. Embed responses carry
-`Content-Security-Policy: default-src 'self'; script-src 'self'; style-src
-'self'; img-src 'self' data:; connect-src 'self'; ...; frame-ancestors 'self'`
-and `X-Content-Type-Options: nosniff`; dotfiles are refused. The page receives
-`?theme=light|dark&preference=system|light|dark` (plus `motion=reduce` when
-motion is reduced) and later `postMessage` events `{ type: "dashboard-theme",
-theme, preference }`. Because the frame has an opaque origin, any data the page
-fetches must be static files under the same path (classic, non-module scripts
-load fine; CORS-mode requests such as module scripts or `fetch` would need an
-explicit decision, see the design doc).
+iframe (`sandbox="allow-scripts"`, `referrerpolicy="no-referrer"`, opaque
+origin), `pointer-events: none`, default full stage at 30% opacity, and part of
+the built-in layout when available. Its page must be on the server-side
+allowlist; today only `/embed/circtime/`, the circtime uptime radar.
+
+- **Mount.** Host directory `/home/motuariki/Documents/DockerVolumes/circtime/dist`
+  (override with `CIRCTIME_EMBED_HOST_DIR`), mounted read-only at
+  `/embed-src/circtime` with `CIRCTIME_EMBED_DIR` pointing there, by both
+  `scripts/deploy.py` and `compose.yaml`. If the directory has no
+  `index.html`, the deploy skips the mount (warning, not a failure) and the
+  route stays off (404); an empty Compose mount point behaves the same.
+- **Entry.** `/embed/circtime/?embed=1&theme=<light|dark>&parent_origin=<dashboard origin>`
+  (resolved theme, because the dark radar is faint on light). Theme changes
+  are posted as `{ type: "circtime-theme", theme }` with target `"*"` (the
+  frame's origin is `null`; only the theme name is sent); circtime accepts them
+  only from its parent at `parent_origin`.
+- **CORS instead of `allow-same-origin`.** The opaque-origin frame loads its
+  module script, stylesheet, and JSON as cross-origin requests, so this path
+  alone answers `Access-Control-Allow-Origin: *` (no credentials headers) for
+  GET/HEAD; other methods get 405. The content is a public, sanitized status
+  page and needs no cookies. This keeps the embed unable to read dashboard
+  cookies, storage, or APIs, which `allow-same-origin` would not.
+- **Caching and compression.** JSON and HTML: `Cache-Control: no-cache` with
+  weak ETags (304 on match). Vite-hashed `assets/*-<hash>.*`:
+  `public, max-age=31536000, immutable`. JSON, JS, CSS, HTML, and SVG are
+  brotli- or gzip-compressed in-process (`server/scene/embed-static.js`,
+  `node:zlib`, no new dependency) and cached by size and mtime.
+- **Headers.** `Content-Security-Policy: default-src 'self'; script-src
+  'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; ...;
+  frame-ancestors 'self'`, `X-Content-Type-Options: nosniff`. Dotfiles,
+  traversal, and non-file paths are 404; the entry URL without its trailing
+  slash redirects to it.
+- **Known limits.** circtime has no frame-rate option; it animates at the
+  browser's full rate while visible (browsers throttle hidden tabs). Its DNS
+  analyzer worker runs only from a button, which cannot be clicked through
+  `pointer-events: none`, and the CSP blocks its external lookups anyway.
 
 ### Admin API
 

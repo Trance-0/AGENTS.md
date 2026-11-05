@@ -68,13 +68,32 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     const configFile = path.join(dir, "openclaw-config", "openclaw.json");
     await mkdir(path.dirname(configFile));
     await writeFile(configFile, JSON.stringify({ gateway: { bind: "loopback" }, agents: { defaults: { model: { primary: "cpa/claude-opus-5-5-high", fallbacks: ["cpa/gpt-6-astra", "openai/gpt-6-astra"] } }, list: [{ id: "main" }, { id: "dashboard-host", name: "Dashboard Host", model: "cpa/gpt-6-astra", workspace: "/private/workspace" }] }, channels: { telegram: { botToken: "literal-telegram-secret", groupPolicy: "allowlist" } } }, null, 2) + "\n");
-    // Stand-in for the circtime build: a static page with no inline code (CSP clean),
-    // reporting the theme it received by query string and postMessage.
+    // The circtime embed: the real build when DASHBOARD_CIRCTIME_DIR names one
+    // (host browser gate), otherwise a stand-in with the same contract — a
+    // crossorigin module script and relative JSON fetches from an opaque-origin
+    // sandbox, documentElement.dataset.theme from ?theme= and from
+    // {type:"circtime-theme"} messages sent by the parent named in parent_origin.
     const embedDir = path.join(dir, "circtime");
-    await mkdir(embedDir);
-    await writeFile(path.join(embedDir, "index.html"), '<!doctype html><html><head><meta charset="utf-8"><title>circtime fixture</title><link rel="stylesheet" href="style.css"><script src="app.js" defer></script></head><body><main id="radar">Uptime radar fixture</main></body></html>\n');
-    await writeFile(path.join(embedDir, "style.css"), "body { margin: 0; background: transparent; color: #4fb6c8; font: 64px sans-serif; }\n");
-    await writeFile(path.join(embedDir, "app.js"), 'const root = document.documentElement;\nroot.dataset.theme = new URLSearchParams(location.search).get("theme") || "unset";\nroot.dataset.loadedAt = String(performance.timeOrigin);\naddEventListener("message", event => { if (event.data?.type === "dashboard-theme") root.dataset.theme = event.data.theme; });\n');
+    if (process.env.DASHBOARD_CIRCTIME_DIR) await cp(process.env.DASHBOARD_CIRCTIME_DIR, embedDir, { recursive: true });
+    else {
+      await mkdir(path.join(embedDir, "assets"), { recursive: true });
+      await writeFile(path.join(embedDir, "index.html"), '<!doctype html><html><head><meta charset="utf-8"><title>circtime fixture</title><script type="module" crossorigin src="./assets/index-Fx1x2x3x.js"></script><link rel="stylesheet" crossorigin href="./assets/index-Cs1s2s3s.css"></head><body><canvas id="radar" width="320" height="180"></canvas></body></html>\n');
+      await writeFile(path.join(embedDir, "assets/index-Cs1s2s3s.css"), "body { margin: 0; background: transparent; } canvas { width: 100%; height: 100vh; display: block; }\n");
+      await writeFile(path.join(embedDir, "assets/index-Fx1x2x3x.js"), [
+        'const params = new URLSearchParams(location.search), root = document.documentElement;',
+        'root.dataset.theme = params.get("theme") || "system";',
+        'root.dataset.loadedAt = String(performance.timeOrigin);',
+        'root.classList.toggle("circtime-embed", params.get("embed") === "1");',
+        'addEventListener("message", event => { if (event.source !== parent || event.origin !== params.get("parent_origin")) return; if (event.data?.type === "circtime-theme") root.dataset.theme = event.data.theme; });',
+        'const [config, latest] = await Promise.all(["circtime-config.json", "uptime-history.json"].map(name => fetch("./" + name, { cache: "no-store" }).then(response => response.json())));',
+        'const context = document.querySelector("#radar").getContext("2d");',
+        'context.fillStyle = "#22c55e"; context.beginPath(); context.arc(160, 90, 80, 0, Math.PI * 2); context.fill();',
+        'root.dataset.services = String(config.infrastructure.length + latest.samples.length);',
+      ].join("\n") + "\n");
+      await writeFile(path.join(embedDir, "circtime-config.json"), JSON.stringify({ version: 2, infrastructure: [{ id: "ai-host" }] }));
+      await writeFile(path.join(embedDir, "uptime-latest.json"), JSON.stringify({ checks: [{ id: "openclaw-gateway", status: "up" }] }));
+      await writeFile(path.join(embedDir, "uptime-history.json"), JSON.stringify({ samples: Array.from({ length: 2000 }, (_, i) => ({ t: i, status: "up" })) }));
+    }
     const metricsKeyFile = path.join(dir, "metrics-key");
     await writeFile(metricsKeyFile, randomBytes(32), { mode: 0o400 });
     const usageDir = path.join(dir, "usage-logs");
@@ -146,16 +165,30 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     assert.match(asset.headers.get("cache-control"), /max-age=31536000, immutable/);
     assert.equal((await request("/scene/assets/witch-idle.svg")).status, 404, "only hashed asset names exist");
     assert.match(page.headers.get("content-security-policy"), /frame-src 'self';.*frame-ancestors 'none'/);
-    const embedPage = await request("/embed/circtime/");
+    const embedPage = await request("/embed/circtime/?embed=1&theme=dark");
     assert.equal(embedPage.status, 200);
     assert.match(embedPage.headers.get("content-type"), /^text\/html/);
     assert.match(embedPage.headers.get("content-security-policy"), /^default-src 'self'; script-src 'self';.*frame-ancestors 'self'$/);
     assert.equal(embedPage.headers.get("x-content-type-options"), "nosniff");
-    assert.equal((await request("/embed/circtime/app.js")).status, 200);
-    assert.equal((await request("/embed/circtime")).status, 301, "the directory URL gets its trailing slash");
+    assert.equal(embedPage.headers.get("access-control-allow-origin"), "*", "the opaque-origin sandbox loads modules and JSON over CORS");
+    assert.equal(embedPage.headers.get("access-control-allow-credentials"), null);
+    const json = await request("/embed/circtime/uptime-history.json", { headers: { "accept-encoding": "br, gzip" } });
+    assert.deepEqual([json.status, json.headers.get("content-encoding"), json.headers.get("cache-control"), json.headers.get("vary")], [200, "br", "no-cache", "Accept-Encoding"]);
+    assert.ok(Array.isArray(JSON.parse(await json.text()).samples ?? []) , "fetch decodes brotli transparently");
+    const gz = await request("/embed/circtime/circtime-config.json", { headers: { "accept-encoding": "gzip" } });
+    assert.equal(gz.headers.get("content-encoding"), "gzip");
+    const embedAsset = (await readFile(path.join(embedDir, "index.html"), "utf8")).match(/assets\/index-[A-Za-z0-9_-]+\.js/)[0];
+    const script = await request(`/embed/circtime/${embedAsset}`, { headers: { "accept-encoding": "gzip" } });
+    assert.deepEqual([script.status, script.headers.get("cache-control"), script.headers.get("content-encoding")], [200, "public, max-age=31536000, immutable", "gzip"]);
+    assert.match(script.headers.get("content-type"), /javascript/);
+    assert.equal((await request(`/embed/circtime/${embedAsset}`, { headers: { "if-none-match": script.headers.get("etag") } })).status, 304);
+    const posted = await request("/embed/circtime/uptime-latest.json", { method: "POST", body: "{}" });
+    assert.deepEqual([posted.status, posted.headers.get("allow"), posted.headers.get("access-control-allow-origin")], [405, "GET, HEAD", null], "GET and HEAD only");
+    assert.equal((await request("/embed/circtime?embed=1")).headers.get("location"), "/embed/circtime/?embed=1", "the entry URL gets its trailing slash");
     assert.equal((await request("/embed/elsewhere/")).status, 404, "only allowlisted embed paths are served");
-    assert.notEqual((await request("/embed/circtime/%2e%2e/%2e%2e/package.json")).status, 200, "no path traversal out of the embed directory");
-    assert.notEqual((await request("/embed/circtime/.env")).status, 200);
+    assert.equal((await request("/embed/circtime/%2e%2e/%2e%2e/package.json")).status, 404, "no path traversal out of the embed directory");
+    assert.equal((await request("/embed/circtime/..%2f..%2fpackage.json")).status, 404);
+    assert.equal((await request("/embed/circtime/.env")).status, 404);
     const allowed = await login(["trance-0/app-agent", "trance-0/admin-agent"]);
     const callback = await request(`/auth/callback?code=${allowed.code}&state=${allowed.state}`, { headers: allowed.headers });
     assert.equal(callback.status, 302);

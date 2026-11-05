@@ -644,7 +644,11 @@ implementation differs from sections 2–7, this section wins.
   the built-in layout when an embed is served. The dashboard theme is passed as
   `?theme=&preference=` and later changes by `postMessage({ type:
   "dashboard-theme", theme, preference }, "*")` (the opaque origin leaves no
-  narrower target; the message is a public theme name). The dashboard CSP
+  narrower target; the message is a public theme name). 0.2.3 adopts the
+  circtime contract: `?embed=1&theme=<resolved>&parent_origin=<origin>` and
+  `{ type: "circtime-theme", theme }` messages; the frame's module script and
+  JSON load over CORS (`Access-Control-Allow-Origin: *`, GET/HEAD, no
+  credentials, this path only) rather than granting `allow-same-origin`. The dashboard CSP
   changes `frame-src 'none'` to `frame-src 'self'`; embed pages get their own
   policy with `frame-ancestors 'self'` and no external origins. Because embeds
   always sit behind the log, their `z` orders them only among embeds.

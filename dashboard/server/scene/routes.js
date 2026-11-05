@@ -1,4 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 
 // One scene API, two callers, one validator (public/scene/schema.js):
 //
@@ -98,6 +100,8 @@ export function embedSecurityPolicy() {
 }
 
 // Dashboard-served embed paths the scene validator accepts, from server config.
+// A configured directory without index.html (for example an empty mount
+// point created by Compose) leaves the embed off.
 export function embedPaths({ circtimeEmbedDir }) {
-  return circtimeEmbedDir ? ["/embed/circtime/"] : [];
+  return circtimeEmbedDir && fs.existsSync(path.join(circtimeEmbedDir, "index.html")) ? ["/embed/circtime/"] : [];
 }

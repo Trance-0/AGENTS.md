@@ -67,12 +67,12 @@ def main():
         raise RuntimeError("Deployment cannot start: dashboard/config mount — shared OpenClaw config directory has no openclaw.json.")
     # Optional circtime uptime-radar build for the scene embed widget, mounted
     # read-only. Unset or missing: the dashboard serves no embeds (route 404).
-    embed_dir = Path(os.environ["CIRCTIME_EMBED_HOST_DIR"]) if os.environ.get("CIRCTIME_EMBED_HOST_DIR") else None
+    embed_dir = Path(os.environ.get("CIRCTIME_EMBED_HOST_DIR", "/home/motuariki/Documents/DockerVolumes/circtime/dist"))
     embed_args = []
-    if embed_dir and (embed_dir / "index.html").is_file():
+    if (embed_dir / "index.html").is_file():
         embed_args = ["-e", "CIRCTIME_EMBED_DIR=/embed-src/circtime", "--mount", f"type=bind,src={embed_dir},dst=/embed-src/circtime,readonly"]
-    elif embed_dir:
-        log.warning("Embed not mounted: dashboard/deployment embeds — %s has no index.html; the circtime embed stays off.", embed_dir.name)
+    else:
+        log.warning("Embed not mounted: dashboard/deployment embeds — circtime build directory has no index.html; deploying with the embed route off.")
     # Keep the encryption key outside recording/database backups and out of
     # OpenClaw's mounts. Never regenerate an existing key during deployment.
     metrics_key = env_file.parent / "metrics-encryption.key"

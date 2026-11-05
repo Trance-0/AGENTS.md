@@ -3,6 +3,9 @@ import test from "node:test";
 import { LIMITS, builtinLayout, imageUrlAllowed, mergeWidget, normalizeAllowlist, validateLayout, validateWidget } from "../public/scene/schema.js";
 import { contentSecurityPolicy, embedPaths, embedSecurityPolicy } from "./scene/routes.js";
 import { fitRect } from "../public/scene/editor.js";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 const base = { id: "t1", type: "text", x: 0.1, y: 0.1, w: 0.3, h: 0.1 };
 const rejects = (input, pattern, options) => assert.throws(() => validateWidget(input, options), error => error.status === 400 && pattern.test(error.reason), `expected ${pattern}`);
@@ -78,7 +81,11 @@ test("editor rectangles stay on stage and avatars stay square", () => {
 });
 
 test("embeds accept only dashboard-served allowlisted paths and default to a faint full-stage backdrop", () => {
-  const embeds = embedPaths({ circtimeEmbedDir: "/srv/circtime" });
+  const dir = mkdtempSync(path.join(os.tmpdir(), "embed-dir-"));
+  assert.deepEqual(embedPaths({ circtimeEmbedDir: dir }), [], "an empty mount point leaves the embed off");
+  writeFileSync(path.join(dir, "index.html"), "<!doctype html>");
+  const embeds = embedPaths({ circtimeEmbedDir: dir });
+  rmSync(dir, { recursive: true, force: true });
   assert.deepEqual(embeds, ["/embed/circtime/"]);
   assert.deepEqual(embedPaths({ circtimeEmbedDir: "" }), [], "no directory, no embeds");
   const embed = props => ({ id: "e1", type: "embed", x: 0, y: 0, w: 1, h: 1, props });
