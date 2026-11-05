@@ -5,6 +5,11 @@ import { quotaWindow } from "./metrics/cpa.js";
 import { normalizeQuota } from "./metrics/quota-normalize.js";
 import { createQuotaRefresher } from "./metrics/quota-refresh.js";
 import { metricValues } from "./scene/bridge.js";
+import { UsageLine } from "./usage-line.js";
+import { BroadcastStore } from "./broadcast.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { formatAge, formatCountdown, formatTokens } from "../public/scene/format.js";
 
 const now = Date.UTC(2026, 10, 5, 12);
@@ -92,15 +97,18 @@ test("a window whose reset time has passed counts as reset until the next refres
     account("antigravity", [], { error: "Quota unavailable: dashboard/CPA account — upstream response could not be read." }),
   ] };
   const normalized = normalizeQuota(snapshot, now);
-  for (const item of normalized.accounts.slice(0, 3)) {
+  // Accounts 2 and 3 (weeks at 31% and 30%): the passed 5-hour reset counts as reset.
+  for (const item of normalized.accounts.slice(1, 3)) {
     assert.equal(item.windows[0].remainingPercent, 100);
     assert.equal(item.windows[0].resetsAt, null, "the next reset is unknown until the next refresh");
     assert.equal(item.windows[0].assumed, "reset-passed");
   }
   assert.equal(normalized.accounts[1].windows[0].reported.remainingPercent, 0);
+  // Account 1 (week exhausted): the passed 5-hour reset does not restore capacity.
+  assert.deepEqual(normalized.accounts[0].windows[0], { label: "Primary window", windowSeconds: 18000, remainingPercent: 0, resetsAt: null, reported: { remainingPercent: 72, resetsAt: now - 9 * 60e3 }, assumed: "weekly-exhausted" });
   assert.deepEqual(normalized.accounts.slice(0, 3).map(item => item.windows[1]), snapshot.accounts.slice(0, 3).map(item => item.windows[1]), "weekly windows with future resets are untouched");
   const pooled = poolCodex(snapshot, now);
-  assert.deepEqual(pooled.fiveHour, { remainingPercent: 100, resetAt: null, accounts: 3, total: 3 });
+  assert.deepEqual(pooled.fiveHour, { remainingPercent: 66, resetAt: null, accounts: 3, total: 3 }, "(0 + 100 + 100) / 3");
   assert.deepEqual(pooled.week, { remainingPercent: 20, resetAt: now + 82 * 3600e3, accounts: 3, total: 3 });
   // A passed weekly reset also clears the 5-hour window (rule 2 follows rule 1).
   const week = normalizeQuota({ accounts: [account("codex", [w(18000, 50, 3600e3), w(604800, 10, -1)])] }, now).accounts[0].windows;
@@ -112,4 +120,48 @@ test("a window whose reset time has passed counts as reset until the next refres
   assert.equal(normalizeQuota({ accounts: [account("codex", [w(18000, null, -1)])] }, now).accounts[0].windows[0].remainingPercent, 100);
   assert.equal(normalizeQuota(null, now), null);
   assert.ok(!/label|account \d|upstream/.test(JSON.stringify(pooled)), "pooled output stays label-free");
+});
+
+test("an exhausted Codex week counts its 5-hour window as 0% remaining", () => {
+  const exhausted = (fiveHourResetIn, weekResetIn = 82 * 3600e3) => ({ updatedAt: now - 60e3, accounts: [
+    account("codex", [w(18000, 72, fiveHourResetIn), w(604800, 0, weekResetIn)]),
+    account("codex", [w(18000, 40, 3600e3), w(604800, 50, 86400e3)]),
+  ] });
+  // 72% on the 5-hour window, week exhausted: 0 in the pool.
+  const plain = normalizeQuota(exhausted(2 * 3600e3), now).accounts[0].windows[0];
+  assert.deepEqual([plain.remainingPercent, plain.resetsAt, plain.assumed, plain.reported], [0, null, "weekly-exhausted", { remainingPercent: 72, resetsAt: now + 2 * 3600e3 }]);
+  assert.deepEqual(poolCodex(exhausted(2 * 3600e3), now).fiveHour, { remainingPercent: 20, resetAt: now + 3600e3, accounts: 2, total: 2 }, "(0 + 40) / 2; the exhausted account's 5-hour reset is not the next reset");
+  assert.deepEqual(poolCodex({ accounts: [exhausted(2 * 3600e3).accounts[0]] }, now).fiveHour.remainingPercent, 0);
+  // The 5-hour reset has passed: still 0 while the week is exhausted.
+  const passed = normalizeQuota(exhausted(-5 * 60e3), now).accounts[0].windows[0];
+  assert.deepEqual([passed.remainingPercent, passed.assumed, passed.reported.remainingPercent], [0, "weekly-exhausted", 72]);
+  assert.equal(poolCodex({ accounts: [exhausted(-5 * 60e3).accounts[0]] }, now).fiveHour.remainingPercent, 0);
+  // The weekly reset itself has passed: the week counts as reset, so the 5-hour rule does not fire.
+  const weekReset = normalizeQuota(exhausted(2 * 3600e3, -1), now).accounts[0].windows;
+  assert.equal(weekReset[1].assumed, "reset-passed");
+  assert.deepEqual([weekReset[0].remainingPercent, weekReset[0].assumed], [100, "weekly-unused"], "not forced to 0; the reset week is unused, so rule 2 applies as before");
+  // Idempotent, and the stored snapshot is unchanged.
+  const once = normalizeQuota(exhausted(-5 * 60e3), now);
+  assert.deepEqual(normalizeQuota(once, now), once);
+  // Not Codex: an exhausted Claude week leaves its 5-hour window alone.
+  assert.equal(normalizeQuota({ accounts: [account("claude", [w(18000, 72, 3600e3), w(604800, 0, 86400e3)])] }, now).accounts[0].windows[0].remainingPercent, 72);
+});
+
+test("the usage line (OpenClaw replies) picks up the exhausted-week rule through normalizeQuota", async () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "usage-exhausted-"));
+  try {
+    const broadcast = new BroadcastStore(directory);
+    const live = broadcast.start("Usage");
+    // The real snapshot's shape: one exhausted week (5h said 72%), two 5-hour resets passed.
+    const snapshot = { updatedAt: now - 60e3, accounts: [
+      account("codex", [w(18000, 72, -9 * 60e3), w(604800, 0, 82 * 3600e3)]),
+      account("codex", [w(18000, 0, -8 * 60e3), w(604800, 31, 128 * 3600e3)]),
+      account("codex", [w(18000, 0, -8 * 60e3), w(604800, 30, 128 * 3600e3)]),
+    ] };
+    const quota = { snapshot: () => normalizeQuota(snapshot, now), refresh: async () => snapshot };
+    const line = new UsageLine({ broadcast, metrics: { routeTotals: () => [] }, quota, secrets: { read: () => ({}) }, isEnabled: async () => true, now: () => now });
+    const event = await line.after(live.id);
+    assert.match(event.msg, /Codex pool 5h 66% left; weekly 20% left, resets in 3d 10h 0m/);
+    assert.equal(event.usage.codex.fiveHour.remainingPercent, 66);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });

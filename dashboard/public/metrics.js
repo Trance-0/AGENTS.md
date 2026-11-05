@@ -112,6 +112,7 @@ export async function renderQuota(body, api) {
         const was = Number.isFinite(reported) ? ` (snapshot said ${reported.toFixed(1)}%)` : "";
         if (window.assumed === "reset-passed") row.append(node("small", `Reset passed at ${new Date(window.reported.resetsAt).toLocaleString()}; counted as 100% remaining until the next refresh${was}.`, "quota-assumed"));
         else if (window.assumed === "weekly-unused") row.append(node("small", `The weekly window shows no usage, so this 5-hour window counts as 100% remaining${was}.`, "quota-assumed"));
+        else if (window.assumed === "weekly-exhausted") row.append(node("small", `5h counted as 0%: weekly quota exhausted${was}.`, "quota-assumed"));
         if (window.assumed) row.dataset.assumed = window.assumed;
         box.append(row);
       }

@@ -3,7 +3,7 @@
 // snapshot through this function, so they always agree.
 //
 // A snapshot is a point-in-time copy of upstream quota windows and goes stale
-// between refreshes. Two rules correct what is known to have changed since:
+// between refreshes. Three rules, applied in this order, correct it:
 //
 // 1. Reset passed: a window whose reported reset time is already in the past
 //    has reset, so it counts as 0 used (100% remaining) until the next
@@ -12,14 +12,20 @@
 // 2. Unused week (Codex): when an account's weekly window shows 0 usage, its
 //    5-hour window cannot hold usage either (every 5-hour request also counts
 //    toward the week), so a nonzero 5-hour value is stale and counts as 0 used.
+// 3. Exhausted week (Codex): when an account's weekly window has 0% remaining
+//    (after rule 1, so a passed weekly reset counts as 100% and this does not
+//    fire), the account cannot serve requests, so its 5-hour window counts as
+//    0% remaining whatever it reports. This wins over rule 1: a passed 5-hour
+//    reset does not restore capacity while the week is exhausted.
 //
 // Corrected windows keep the reported value in `reported` and say why in
-// `assumed` ("reset-passed" or "weekly-unused") for the admin tab. Pure: the
-// stored snapshot is never modified.
+// `assumed` ("reset-passed", "weekly-unused", or "weekly-exhausted") for the
+// admin tab. Pure: the stored snapshot is never modified.
 import { windowClass } from "./window-class.js";
 
 const CODEX_PROVIDERS = new Set(["codex", "openai"]);
 const FULL = 100;
+const EMPTY = 0;
 
 export function normalizeQuota(snapshot, now = Date.now()) {
   if (!snapshot || !Array.isArray(snapshot.accounts)) return snapshot ?? null;
@@ -33,8 +39,19 @@ function normalizeAccount(account, now) {
     return { ...window, remainingPercent: FULL, resetsAt: null, reported: { remainingPercent: window.remainingPercent ?? null, resetsAt: window.resetsAt }, assumed: "reset-passed" };
   });
   if (CODEX_PROVIDERS.has(String(account.provider || "").toLowerCase())) {
-    const weekUnused = windows.some(window => windowClass(window.windowSeconds) === "week" && window.remainingPercent === FULL);
-    if (weekUnused) {
+    const weekly = windows.filter(window => windowClass(window.windowSeconds) === "week" && Number.isFinite(window.remainingPercent));
+    const weekUnused = weekly.some(window => window.remainingPercent >= FULL);
+    const weekExhausted = weekly.some(window => window.remainingPercent <= EMPTY);
+    if (weekExhausted) {
+      // Rule 3 wins, including over a passed 5-hour reset (rule 1). The
+      // snapshot's own value is kept in `reported`, never the aged one. The
+      // 5-hour reset brings no capacity back, so it is not a "next reset".
+      windows = windows.map(window => {
+        if (windowClass(window.windowSeconds) !== "fiveHour" || window.assumed === "weekly-exhausted") return window;
+        const reported = window.reported ?? { remainingPercent: window.remainingPercent ?? null, resetsAt: window.resetsAt ?? null };
+        return { ...window, remainingPercent: EMPTY, resetsAt: null, reported, assumed: "weekly-exhausted" };
+      });
+    } else if (weekUnused) {
       windows = windows.map(window => windowClass(window.windowSeconds) !== "fiveHour" || window.assumed || !Number.isFinite(window.remainingPercent) || window.remainingPercent >= FULL ? window
         : { ...window, remainingPercent: FULL, resetsAt: null, reported: { remainingPercent: window.remainingPercent, resetsAt: window.resetsAt ?? null }, assumed: "weekly-unused" });
     }

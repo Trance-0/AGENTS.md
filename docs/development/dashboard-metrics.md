@@ -38,8 +38,9 @@ A stored snapshot is a point-in-time copy and goes stale between refreshes.
 Every reader (the CPA quota tab, the Usage Summary, the public `cpa.codex.*`
 widget values) reads it through one shared function,
 `normalizeQuota(snapshot, now)` in `server/metrics/quota-normalize.js`, so all
-surfaces agree. Other features that show quota should call it too. It applies
-two rules at read time and never rewrites the stored snapshot:
+surfaces agree, as does the OpenClaw usage line after each reply (through
+`poolCodex`). Other features that show quota should call it too. It applies
+three rules at read time, in this order, and never rewrites the stored snapshot:
 
 1. **Reset passed.** A window whose reported reset time is at or before `now`
    counts as reset: 100% remaining, reset time unknown (the next window starts
@@ -47,10 +48,18 @@ two rules at read time and never rewrites the stored snapshot:
 2. **Unused week (Codex).** When an account's weekly window shows 0 usage
    (100% remaining), its 5-hour window also counts as 0 used. Rule 2 runs
    after rule 1, so a passed weekly reset clears the 5-hour window too.
+3. **Exhausted week (Codex, 0.2.7).** When an account's weekly window has 0%
+   remaining, the account cannot serve requests, so its 5-hour window counts
+   as 0% remaining whatever it reports, with no next reset (a 5-hour reset
+   brings no capacity back). This wins over rule 1: a passed 5-hour reset does
+   not restore capacity while the week is exhausted. A passed *weekly* reset
+   makes the week count as reset (100%), so this rule does not fire and rule 2
+   applies instead.
 
 A corrected window keeps the snapshot's value in `reported` and the reason in
-`assumed` (`reset-passed` or `weekly-unused`); the CPA quota tab shows that
-note under the window. Pooled values carry neither.
+`assumed` (`reset-passed`, `weekly-unused`, or `weekly-exhausted`); the CPA
+quota tab shows a note under the window, for example "5h counted as 0%: weekly
+quota exhausted (snapshot said 72.0%)". Pooled values carry neither.
 
 ## CC Switch references
 

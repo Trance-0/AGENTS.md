@@ -810,3 +810,25 @@ dashboard state out of the named volume into a host directory.
 - Exercised before the push on a throwaway volume and directory on the host:
   first run copied and verified (owners 1000:1000, file modes kept), second
   run kept the directory; real data verification is in the deploy notes below.
+
+## 2026-11-05 — CPA pool: an exhausted week empties the 5-hour window (0.2.7)
+
+Owner correction to 0.2.4: the case the real snapshot showed (one Codex
+account with its weekly window at 0% remaining while its 5-hour window said
+72%) must count that account's 5-hour window as 0% remaining, because the
+account cannot serve requests.
+
+- `normalizeQuota` (`server/metrics/quota-normalize.js`) gains rule 3,
+  applied after the passed-reset aging and winning over it: weekly 0% → 5-hour
+  0%, reset `null`, `assumed: "weekly-exhausted"`, the snapshot's own value in
+  `reported`. A passed weekly reset still counts the week as reset, so the
+  rule does not fire. Rules 1 and 2 are unchanged.
+- CPA tab note: "5h counted as 0%: weekly quota exhausted (snapshot said N%)".
+- Real stored snapshot (read on the host, no labels): pooled 5-hour **100% →
+  66%** (3 of 3 accounts; per-account 5-hour values 100/100/100 reported, the
+  exhausted-week account now 0); weekly unchanged at 20%.
+- Tests (`server/pool.test.js`): exhausted week with 72% on the 5-hour window
+  pools to 0; with the 5-hour reset passed still 0; with the weekly reset
+  passed the 5-hour window is not forced (rule 2 gives 100%); idempotence; not
+  applied to Claude; the real snapshot's shape pools to 66%; and the OpenClaw
+  usage line (`UsageLine`, unchanged) renders "Codex pool 5h 66% left".
