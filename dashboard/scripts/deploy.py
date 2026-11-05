@@ -62,6 +62,9 @@ def main():
     activity_dir = Path(os.environ.get("OPENCLAW_ACTIVITY_HOST_DIR", "/home/motuariki/Documents/DockerVolumes/openclaw/activity"))
     if not activity_dir.is_dir():
         raise RuntimeError("Deployment cannot start: dashboard/activity mount — shared OpenClaw activity directory is absent.")
+    config_dir = Path(os.environ.get("OPENCLAW_CONFIG_HOST_DIR", "/home/motuariki/Documents/DockerVolumes/openclaw/config"))
+    if not (config_dir / "openclaw.json").is_file():
+        raise RuntimeError("Deployment cannot start: dashboard/config mount — shared OpenClaw config directory has no openclaw.json.")
     created = None
     try:
         if old:
@@ -82,7 +85,9 @@ def main():
         created = subprocess.check_output(["docker", "create", "--name", name, "--restart", "unless-stopped", "--network", "host",
             "--env-file", str(env_file), "-e", "HOST=127.0.0.1", "-e", "PORT=14143",
             "-e", "OPENCLAW_ACTIVITY_DIR=/var/log/openclaw-activity",
+            "-e", "OPENCLAW_CONFIG_FILE=/openclaw-config/openclaw.json",
             "--mount", f"type=bind,src={activity_dir},dst=/var/log/openclaw-activity,readonly",
+            "--mount", f"type=bind,src={config_dir},dst=/openclaw-config",
             "--mount", f"type=volume,src={volume},dst=/app/data", "--log-opt", "max-size=10m", "--log-opt", "max-file=3",
             "--label", "com.trance0.service=agent-dashboard", "--label", f"org.opencontainers.image.version={version}",
             "--health-cmd", "node -e \"fetch('http://127.0.0.1:14143/healthz',{signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",

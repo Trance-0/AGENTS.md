@@ -12,8 +12,12 @@ export function activityEvent(record) {
   const failed = record.success === false;
   const action = record.type === "tool_start" ? "started" : record.type === "tool_end" ? "completed" : "recorded";
   const detail = tool ? `${tool}${filename ? ` ${filename}` : ""}` : safeName(record.model) ? `${safeName(record.provider) ? record.provider + "/" : ""}${record.model}` : record.agentId;
+  // The `relay` agent only serves AstrBot (QQ/WeChat/Telegram adapters), so its
+  // lifecycle doubles as AstrBot's "message received / answered" signal.
+  const relay = record.agentId === "relay";
+  const relayPhase = { agent_start: "message received", model_start: "model started", model_output: "reply generated", agent_end: "request completed" }[record.type] || action;
   return {
-    source: "openclaw", level: failed ? "warn" : "info", openclawEvent: record.type,
+    source: relay ? "astrbot" : "openclaw", level: failed ? "warn" : "info", openclawEvent: record.type,
     eventRef: record.eventId, agentId: record.agentId,
     activityTimestamp: Date.parse(record.timestamp),
     ...(safeName(record.provider) ? { provider: record.provider } : {}),
@@ -21,7 +25,9 @@ export function activityEvent(record) {
     ...(safeName(record.runId) ? { runId: record.runId } : {}),
     ...(filename ? { filePath: filename } : {}),
     ...(Number.isFinite(record.durationMs) ? { durationMs: record.durationMs } : {}),
-    msg: `OpenClaw ${failed ? "failed" : action}: openclaw/${record.type} — ${detail}${failed ? ", operation reported failure" : ""}.`,
+    msg: relay
+      ? `AstrBot relay ${failed ? "failed" : relayPhase}: astrbot/openclaw relay — ${detail}${failed ? ", operation reported failure" : ""}.`
+      : `OpenClaw ${failed ? "failed" : action}: openclaw/${record.type} — ${detail}${failed ? ", operation reported failure" : ""}.`,
   };
 }
 

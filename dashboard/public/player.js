@@ -7,6 +7,8 @@ export function previewAt(events, time) {
   return events.filter(event => event.kind !== "chat" && event.t <= time).slice(-5);
 }
 
+const MARK_LEVELS = new Set(["warn", "error", "fatal", "critical"]);
+
 export class Player {
   constructor(onChat) {
     this.events = [];
@@ -98,7 +100,8 @@ export class Player {
     }
     this.onChat(visible.filter(event => event.kind === "chat"));
     const marks = $("#event-marks");
-    marks.replaceChildren(...this.events.filter(event => event.kind !== "chat").slice(-300).map(event => {
+    // Only warnings and worse get a progress-bar checkpoint; info stays in the log.
+    marks.replaceChildren(...this.events.filter(event => event.kind !== "chat" && MARK_LEVELS.has(event.level)).slice(-300).map(event => {
       const mark = document.createElement("span");
       mark.className = `event-mark ${event.level}`;
       mark.style.left = `${duration ? event.t / duration * 100 : 0}%`;

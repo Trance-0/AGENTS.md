@@ -73,3 +73,19 @@ test("model activity identifies the actual provider, model, and gateway run", ()
   assert.equal(event.model, "gpt-6-astra");
   assert.equal(event.runId, "chatcmpl_verified");
 });
+
+test("relay agent activity is labelled as AstrBot receipt without message content", async () => {
+  const { noteRelayActivity, relayStatus } = await import("./relay-status.js");
+  const base = { eventId: "relay-1", timestamp: new Date().toISOString(), agentId: "relay", success: true };
+  const started = activityEvent({ ...base, type: "agent_start" });
+  assert.equal(started.source, "astrbot");
+  assert.match(started.msg, /^AstrBot relay message received: astrbot\/openclaw relay/);
+  noteRelayActivity(started);
+  noteRelayActivity(activityEvent({ ...base, eventId: "relay-2", type: "model_output", provider: "cpa", model: "gpt-6-astra" }));
+  noteRelayActivity(activityEvent({ ...base, eventId: "relay-3", type: "agent_end" }));
+  const status = relayStatus();
+  assert.equal(status.requests, 1);
+  assert.equal(status.lastModel, "cpa/gpt-6-astra");
+  assert.equal(status.lastFailed, false);
+  assert.equal(activityEvent({ ...base, agentId: "main", type: "agent_start" }).source, "openclaw");
+});

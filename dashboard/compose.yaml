@@ -1,7 +1,7 @@
 services:
   dashboard:
-    image: agent-dashboard:0.1.4
-    container_name: agent-dashboard-v0.1.4
+    image: agent-dashboard:0.1.5
+    container_name: agent-dashboard-v0.1.5
     build:
       context: .
     network_mode: host
@@ -11,9 +11,12 @@ services:
       HOST: 127.0.0.1
       PORT: "14143"
       OPENCLAW_ACTIVITY_DIR: /var/log/openclaw-activity
+      OPENCLAW_CONFIG_FILE: /openclaw-config/openclaw.json
     volumes:
       - dashboard-state:/app/data
       - ${OPENCLAW_ACTIVITY_HOST_DIR:-/home/motuariki/Documents/DockerVolumes/openclaw/activity}:/var/log/openclaw-activity:ro
+      # Live OpenClaw config: read-write here (admin editor), read-only in OpenClaw.
+      - ${OPENCLAW_CONFIG_HOST_DIR:-/home/motuariki/Documents/DockerVolumes/openclaw/config}:/openclaw-config:rw
     logging:
       driver: json-file
       options:

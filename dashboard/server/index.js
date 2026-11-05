@@ -3,6 +3,7 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
+import { timingSafeEqual } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import express from "express";
 import session from "express-session";
@@ -17,6 +18,9 @@ import { mountOpenClaw } from "./openclaw-routes.js";
 import { mountBroadcast } from "./broadcast-routes.js";
 import { avatarUrl, serveAvatar } from "./avatar.js";
 import { watchActivity } from "./openclaw-activity.js";
+import { OpenClawConfigStore } from "./openclaw-config.js";
+import { mountOpenClawConfig, CONFIG_ROUTE } from "./openclaw-config-routes.js";
+import { noteRelayActivity } from "./relay-status.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
@@ -34,7 +38,7 @@ async function fetchWithTimeout(url, { timeout = 5000, ...init } = {}) {
 
 async function loadPanels() {
   const dir = path.join(__dirname, "panels");
-  const files = (await fs.readdir(dir)).filter((f) => f.endsWith(".js"));
+  const files = (await fs.readdir(dir)).filter((f) => f.endsWith(".js") && !f.startsWith("."));
   const ctx = { fetch: fetchWithTimeout, config };
   for (const file of files) {
     const mod = await import(pathToFileURL(path.join(dir, file)).href);
@@ -56,6 +60,7 @@ if (config.openclaw.activityDir) {
     directory: config.openclaw.activityDir,
     cursorFile: path.join(config.dataDir, "openclaw-activity-cursor.json"),
     publish: event => {
+      noteRelayActivity(event);
       if (!broadcast.active || event.activityTimestamp < broadcast.active.startedAt) return;
       if (activityRecordingId !== broadcast.active.id) { activityRecordingId = broadcast.active.id; activityEvents.clear(); }
       if (activityEvents.has(event.eventRef)) return;
@@ -70,7 +75,9 @@ const MemoryStore = createMemoryStore(session);
 const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", "loopback");
-app.use(express.json({ limit: "16kb" }));
+// Small JSON bodies everywhere except the config editor, which parses its own (larger) body.
+const smallJson = express.json({ limit: "16kb" });
+app.use((req, res, next) => (req.path === CONFIG_ROUTE ? next() : smallJson(req, res, next)));
 
 app.use(
   session({
@@ -141,13 +148,18 @@ function requireCsrf(req, res, next) {
 app.get("/auth/avatar", requireAuth, serveAvatar);
 mountBroadcast(app, broadcast, { requireAuth, requireAdmin, requireCsrf });
 mountOpenClaw(app, broadcast);
+const configStore = config.openclaw.configFile
+  ? new OpenClawConfigStore({ file: config.openclaw.configFile, backupDir: path.join(config.dataDir, "openclaw-config-backups") })
+  : null;
+mountOpenClawConfig(app, configStore, { requireAuth, requireAdmin, requireCsrf, isEnabled });
 
 function requireToken(req, res, next) {
   if (!hasDashboardToken) {
     return res.status(503).json({ error: "Panel cannot be changed: dashboard/mutation authorization — dashboard token is not configured." });
   }
-  const header = req.headers.authorization ?? "";
-  if (header !== `Bearer ${config.dashboardToken}`) {
+  const actual = Buffer.from(req.headers.authorization ?? "");
+  const expected = Buffer.from(`Bearer ${config.dashboardToken}`);
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
     return res.status(401).json({ error: "Panel cannot be changed: dashboard/mutation authorization — bearer token is missing or incorrect." });
   }
   next();
@@ -194,8 +206,8 @@ app.listen(config.port, config.host, () => {
   emit({ source: "jenkins", level: "info", msg: `Service monitoring is configured: dashboard/startup — endpoint ${config.jenkins.endpoint}` });
 });
 
-// Seed a heartbeat so the progress bar always has movement even when quiet.
+// Quiet heartbeat (every 5 minutes) so an idle stream still shows it is alive.
 setInterval(() => {
   emit({ source: "dashboard", level: "info", msg: `Dashboard is running: dashboard/heartbeat — uptime ${uptimeSeconds()}s` });
   broadcast.publish({ source: "stream", msg: "Stream is running: dashboard/broadcast heartbeat — waiting for the next viewer message." });
-}, 30000);
+}, 5 * 60 * 1000);

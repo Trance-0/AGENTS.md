@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { cp, mkdtemp, rm, symlink } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -64,7 +64,10 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     await cp(path.join(root, "public"), path.join(dir, "public"), { recursive: true });
     await cp(path.join(root, "package.json"), path.join(dir, "package.json"));
     await symlink(path.join(root, "node_modules"), path.join(dir, "node_modules"));
-    child = spawn(process.execPath, ["server/index.js"], { cwd: dir, env: { ...process.env, NODE_ENV: "test", HOST: "127.0.0.1", PORT: String(port), OIDC_ISSUER: issuer, OIDC_CLIENT_ID: "test-dashboard", OIDC_CLIENT_SECRET: "test-client-secret", OIDC_REDIRECT_URI: "https://live.example.test/auth/callback", OIDC_REQUIRED_GROUP: "trance-0/app-agent", SESSION_SECRET: "test-session-secret", DASHBOARD_TOKEN: "test-mutation-token", OPENCLAW_ENDPOINT: issuer, OPENCLAW_TOKEN: "test-gateway-token", ASTRBOT_ENDPOINT: issuer, JENKINS_ENDPOINT: issuer } });
+    const configFile = path.join(dir, "openclaw-config", "openclaw.json");
+    await mkdir(path.dirname(configFile));
+    await writeFile(configFile, JSON.stringify({ gateway: { bind: "loopback" }, channels: { telegram: { botToken: "literal-telegram-secret", groupPolicy: "allowlist" } } }, null, 2) + "\n");
+    child = spawn(process.execPath, ["server/index.js"], { cwd: dir, env: { ...process.env, NODE_ENV: "test", HOST: "127.0.0.1", PORT: String(port), OIDC_ISSUER: issuer, OIDC_CLIENT_ID: "test-dashboard", OIDC_CLIENT_SECRET: "test-client-secret", OIDC_REDIRECT_URI: "https://live.example.test/auth/callback", OIDC_REQUIRED_GROUP: "trance-0/app-agent", SESSION_SECRET: "test-session-secret", DASHBOARD_TOKEN: "test-mutation-token", OPENCLAW_ENDPOINT: issuer, OPENCLAW_TOKEN: "test-gateway-token", ASTRBOT_ENDPOINT: issuer, JENKINS_ENDPOINT: issuer, OPENCLAW_CONFIG_FILE: configFile } });
     child.stdout.on("data", chunk => { output += chunk; });
     child.stderr.on("data", chunk => { output += chunk; });
     const base = `http://127.0.0.1:${port}`;
@@ -75,7 +78,8 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
       await new Promise(resolve => setTimeout(resolve, 50));
     }
     assert.ok(ready, output);
-    for (const route of ["/api/panels", "/api/uptime", "/api/panels/openclaw/data", "/api/admin/recordings"]) assert.equal((await request(route)).status, 401);
+    for (const route of ["/api/panels", "/api/uptime", "/api/panels/openclaw/data", "/api/admin/recordings", "/api/admin/openclaw-config"]) assert.equal((await request(route)).status, 401);
+    assert.equal((await request("/api/admin/openclaw-config", { method: "PUT", headers: { "x-dashboard-request": "1", "content-type": "application/json" }, body: "{}" })).status, 401);
     assert.equal((await request("/api/panels/openclaw/toggle", { method: "POST", headers: { authorization: "Bearer test-mutation-token" } })).status, 401);
     assert.equal((await request("/auth/callback?code=unsolicited&state=unsolicited")).status, 400);
     const login = async (groups, nonceOverride) => {
@@ -102,6 +106,7 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     const viewerCallback = await request(`/auth/callback?code=${viewer.code}&state=${viewer.state}`, { headers: viewer.headers });
     const viewerHeaders = { cookie: viewerCallback.headers.get("set-cookie").split(";")[0], authorization: "Bearer test-mutation-token" };
     assert.equal((await request("/api/panels/settings/toggle", { method: "POST", headers: viewerHeaders })).status, 403);
+    assert.equal((await request("/api/admin/openclaw-config", { headers: viewerHeaders })).status, 403, "viewers cannot read the OpenClaw config");
     const allowed = await login(["trance-0/app-agent", "trance-0/admin-agent"]);
     const callback = await request(`/auth/callback?code=${allowed.code}&state=${allowed.state}`, { headers: allowed.headers });
     assert.equal(callback.status, 302);
@@ -113,6 +118,19 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     assert.equal((await request("/auth/avatar", { headers })).headers.get("content-type"), "image/png");
     assert.equal((await request("/auth/avatar")).status, 401);
     const mutation = { ...headers, "x-dashboard-request": "1", "content-type": "application/json" };
+    const configView = await (await request("/api/admin/openclaw-config", { headers })).json();
+    assert.equal(configView.config.channels.telegram.botToken, "__dashboard_redacted__");
+    assert.ok(!JSON.stringify(configView).includes("literal-telegram-secret"));
+    const editedConfig = JSON.stringify({ ...configView.config, gateway: { bind: "loopback", note: "x".repeat(20000) } });
+    assert.equal((await request("/api/admin/openclaw-config", { method: "PUT", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ text: editedConfig, baseHash: configView.hash }) })).status, 403, "config writes need the same-origin header");
+    assert.equal((await request("/api/admin/openclaw-config", { method: "PUT", headers: { ...mutation, ...viewerHeaders }, body: JSON.stringify({ text: editedConfig, baseHash: configView.hash }) })).status, 403);
+    assert.equal((await request("/api/admin/openclaw-config", { method: "PUT", headers: mutation, body: JSON.stringify({ text: "{ broken", baseHash: configView.hash }) })).status, 400);
+    const savedConfig = await request("/api/admin/openclaw-config", { method: "PUT", headers: mutation, body: JSON.stringify({ text: editedConfig, baseHash: configView.hash }) });
+    assert.equal(savedConfig.status, 200, "a >16 KiB config saves through its own body limit");
+    const liveConfig = JSON.parse(await readFile(configFile, "utf8"));
+    assert.equal(liveConfig.channels.telegram.botToken, "literal-telegram-secret");
+    assert.equal(liveConfig.gateway.note.length, 20000);
+    assert.equal((await request("/api/admin/openclaw-config", { method: "PUT", headers: mutation, body: JSON.stringify({ text: editedConfig, baseHash: configView.hash }) })).status, 409);
     assert.equal((await request("/api/broadcast/start", { method: "POST", headers, body: "{}" })).status, 403);
     assert.equal((await request("/api/broadcast/start", { method: "POST", headers: { ...mutation, origin: "https://attacker.invalid" }, body: "{}" })).status, 403);
     assert.equal((await request("/api/broadcast/start", { method: "POST", headers: { ...mutation, ...viewerHeaders }, body: JSON.stringify({ title: "Viewer stream" }) })).status, 403);

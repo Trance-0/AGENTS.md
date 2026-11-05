@@ -438,3 +438,92 @@ host reply preserves the gateway completion ID as `runId`. The modern
 `before_agent_start` hook was called twice across model/prompt phases. Legitimate
 fallback attempts can still produce separate start events at different times.
 Shared file logs and the existing authenticated HTTP event path remain intact.
+
+## OpenClaw config editor and AstrBot relay (0.1.5)
+
+### Shared config directory
+
+The live OpenClaw config is `/home/motuariki/Documents/DockerVolumes/openclaw/config/openclaw.json`
+(directory mode `0700`, file `0600`, UID/GID 1000). Mounts:
+
+| Container | Mount | Access |
+| --- | --- | --- |
+| `openclaw-openclaw-gateway-1` / `openclaw-cli` | `/etc/openclaw`, with `OPENCLAW_CONFIG_PATH=/etc/openclaw/openclaw.json` | read-only |
+| `agent-dashboard-v*` | `/openclaw-config`, with `OPENCLAW_CONFIG_FILE=/openclaw-config/openclaw.json` | read-write |
+
+The directory is bind-mounted rather than the file, so the dashboard's atomic
+`rename` replacement is visible inside OpenClaw, and OpenClaw's watcher
+hot-reloads it. The old writable `~/.openclaw/openclaw.json` was moved out of
+the state directory. OpenClaw can no longer rewrite its own config: `config set`,
+onboarding, and doctor/auto-update writes fail with `EROFS`. Auto-update is off
+(`update.auto.enabled=false`) because the container image is pinned.
+
+The config holds no literal credentials. `gateway.auth.token` and
+`channels.telegram.botToken` are env SecretRefs (`OPENCLAW_GATEWAY_TOKEN`,
+`TELEGRAM_BOT_TOKEN`) supplied from OpenClaw's private `.env`. Validate it with
+`docker compose -f <openclaw>/docker-compose.yml run --rm --no-deps -T openclaw-cli config validate`.
+
+### Editing from live.trance-0.com
+
+The **OpenClaw config** panel requires a signed-in `trance-0/admin-agent` member.
+Regular viewers get 403 even for reads. Saves also require the same-origin
+`X-Dashboard-Request: 1` header.
+
+- `GET /api/admin/openclaw-config` returns the config with string values under
+  secret-looking keys (`*token`, `*secret`, `*password`, `*apiKey`, `*cookie`,
+  …) replaced by `__dashboard_redacted__`. Env SecretRefs and `*File` paths
+  are shown unchanged.
+- `PUT /api/admin/openclaw-config` with `{ text, baseHash }`:
+  - invalid JSON and non-object roots are rejected (400);
+  - a hash that no longer matches the file is rejected (409), so concurrent
+    edits never overwrite each other;
+  - placeholders are restored from the live file; a placeholder with no
+    stored original is rejected;
+  - the previous file goes to `/app/data/openclaw-config-backups/` (newest 20
+    kept) before the replacement is written as `0600`.
+- Saves are recorded in the dashboard container log with the admin's subject
+  ID, never in the public stream. Disabling the panel gates both routes
+  without a restart.
+
+This intentionally differs from build-plan Task 11 ("commit to an
+`agent-stack` branch, never edit live files"): the owner chose live editing for
+v0. Every save is backed up. Roll back by copying a backup over the live file.
+
+### AstrBot → OpenClaw relay
+
+AstrBot runs with host networking and uses provider source `openclaw`
+(`http://127.0.0.1:18789/v1`, OpenAI-compatible, gateway token, timeout 300 s).
+Its default agent-runner provider is `openclaw/relay` with no fallback, so
+OpenClaw is the only backend; OpenClaw applies its own model fallbacks. The
+model name selects OpenClaw's `relay` agent (`tools.profile: minimal`). AstrBot
+does not send the OpenAI `user` field, so every request is a new OpenClaw
+session and AstrBot supplies the conversation history. Per-platform AstrBot
+config profiles (`data/config/abconf_*.json`) keep their own provider choice;
+bind a channel to the default profile, or set its profile's provider to
+`openclaw/relay`.
+
+The dashboard shows relay receipt without an AstrBot credential. The OpenClaw
+activity file already records `relay` agent lifecycle metadata. The dashboard
+labels those events `AstrBot relay message received / reply generated /
+request completed` (source `astrbot`). The AstrBot panel shows the request
+count, the last request and reply times, and failures. Message text, senders,
+and conversation IDs are never exported.
+
+### Loopback-only listeners
+
+OpenClaw now binds `127.0.0.1:18789` (`OPENCLAW_GATEWAY_BIND=loopback`), and its
+Compose file publishes no ports under host networking. The Control UI accepts
+only loopback origins with device auth enabled; reach it through an SSH tunnel.
+AstrBot's dashboard (6185) and reverse-WebSocket listeners (6099/6199) bind
+`127.0.0.1` and are reached through the local `frpc` tunnels.
+Telegram groups use `groupPolicy: allowlist` with the owner's ID only.
+
+### Persistent git credentials for OpenClaw
+
+`~/.git-credentials` inside the container is lost when the container is
+recreated. That is why OpenClaw could not push `0360e61`. The Nesbitt-bot
+credentials now live in `/home/node/.openclaw/credentials/git-credentials`
+(`0600`) on the persistent state mount. They are wired in through
+`GIT_CONFIG_GLOBAL=/home/node/.openclaw/credentials/gitconfig`. The workspace
+`TOOLS.md`/`AGENTS.md` (injected into the system prompt) tell the agent where
+they are and how to test them before asking for a token.

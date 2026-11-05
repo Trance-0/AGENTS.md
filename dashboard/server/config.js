@@ -34,6 +34,8 @@ export const config = {
     agent: process.env.OPENCLAW_AGENT || "dashboard-host",
     streamToken: process.env.OPENCLAW_STREAM_TOKEN || "",
     activityDir: process.env.OPENCLAW_ACTIVITY_DIR || "",
+    // Shared live openclaw.json (read-write here, read-only inside OpenClaw).
+    configFile: process.env.OPENCLAW_CONFIG_FILE || "",
   },
 
   astrbot: {
