@@ -8,7 +8,7 @@ keeps only a short-lived local cache.
 Code lives in `Nesbitt-bot/personal-context-protocol` (owner repo). Plugins go
 under `thirdparty/`. The owner syncs to the `Trance-0/personal-context-protocol`
 fork, which the local Jenkins job `personal-context-protocol` builds and
-deploys to `https://pcp.trance-0.com` (FRP `dgx-pcp` 127.0.0.1:3000 → 6019).
+deploys to `https://pcp.trance-0.com` (through the local frpc tunnel).
 
 ## Decisions (owner, 2026-11-05)
 

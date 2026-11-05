@@ -142,6 +142,12 @@ from the terminal without losing visibility.
   `.env.production`, `.env.*` with real values must be in `.gitignore` and
   never staged. Also never commit real credentials, private keys, real phone
   numbers, real emails, or vendor dumps.
+- **Never publish internet-facing network details in a public repo.** Server
+  IPs, tunnel/FRP remote ports, which ports serve plain HTTP or SSH, raw
+  reverse-proxy routes, and firewall gaps stay in private host files or private
+  runbooks. Public docs say "a private FRP remote port" or use a placeholder such
+  as `<private-remote-port>`. Public hostnames (e.g. `live.trance-0.com`) and
+  loopback-only ports inside containers are fine.
 - **Never commit a file larger than 300 MB** unless the owner explicitly
   asked for it and Git LFS (or an equivalent) is configured. Check staged
   sizes (`git diff --cached --stat`) before pushing, not after.

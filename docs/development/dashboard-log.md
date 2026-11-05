@@ -60,7 +60,7 @@ admin start/end controls, recordings, visibility, and recommendation scores.
   and the deployed live-chat route both produced a real assistant reply.
 - Live verification on `https://live.trance-0.com` used a temporary Casdoor
   administrator. Start/End saved a 5.8-second recording containing the viewer
-  message and real host reply. Guest SSE worked through remote FRP port 6018.
+  message and real host reply. Guest SSE worked through the private FRP remote port.
   Chromium checked public guest playback, hover content, chat history, the
   real Casdoor avatar, and administrator controls. The avatar was fetched
   server-side from the issuer, then rendered through `/auth/avatar`.

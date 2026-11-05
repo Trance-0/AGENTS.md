@@ -27,7 +27,7 @@ The existing recording and ID survive deployment. Verify Docker reports
 shows both its starting and completed file-path events in the public player.
 
 The browser connects to `https://live.trance-0.com`. Its remote reverse proxy
-terminates TLS and routes HTTP to FRP remote TCP port 6018. The existing local
+terminates TLS and routes HTTP to a private FRP remote TCP port. The existing local
 `frpc` container uses host networking and forwards requests to
 `127.0.0.1:14143`. Docker Compose runs `agent-dashboard-v0.1.4` using image
 `agent-dashboard:0.1.4`, with Node.js 22 as the unprivileged `node` user.
@@ -117,7 +117,7 @@ name = "dgx-agent-dashboard"
 type = "tcp"
 localIP = "127.0.0.1"
 localPort = 14143
-remotePort = 6018
+remotePort = <private-remote-port>
 ```
 
 Validate before restarting the existing container:
@@ -136,7 +136,7 @@ was retained in `~/.local/state/agent-dashboard/` for this deployment.
 The remote reverse proxy must preserve `X-Forwarded-Proto: https`. The app
 trusts forwarded headers from loopback, sets Secure/HttpOnly/SameSite=Lax
 cookies, and sends `X-Accel-Buffering: no` for the log stream. Direct HTTP access
-to remote port 6018 cannot set the secure login cookie; use the HTTPS hostname.
+to a private FRP remote port cannot set the secure login cookie; use the HTTPS hostname.
 
 ## Verification and logs
 

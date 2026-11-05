@@ -312,7 +312,7 @@ bullets specific: filenames, command names, outcomes.
   run: they target the owner's platform host, which doesn't exist yet.
 - 2026-11-03: Deployed dashboard version 0.1.0 using
   `dashboard/compose.yaml` on loopback port 14143 and the existing local frpc
-  container's remote TCP port 6018, serving `https://live.trance-0.com`.
+  container's a private FRP remote TCP port, serving `https://live.trance-0.com`.
   Verified the port before assignment. Backed up the FRP config privately and
   preserved existing proxies; the private FRP config remains a local change in
   its separate checkout because it contains authentication material.
@@ -364,8 +364,8 @@ bullets specific: filenames, command names, outcomes.
   `git diff --check`. Live Casdoor/FRP/HTTPS checks and a real OpenClaw reply
   passed. Test account/cookies were removed; test recording is hidden for
   admin review. Evidence is under ignored `logs/dashboard-v0.1.1-*` paths.
-- 2026-11-04: Deployed to the existing loopback port 14143 and remote port
-  6018, preserving `dashboard_dashboard-state` and the FRP config. Backed up
+- 2026-11-04: Deployed to the existing loopback port 14143 and a private FRP remote
+  port, preserving `dashboard_dashboard-state` and the FRP config. Backed up
   prior state/config and retained the 0.1.0 image. The isolated OpenClaw host
   uses a separate workspace, no tools, and no memory search. No gateway
   restart or changes to other agents/bindings were required. Private gateway

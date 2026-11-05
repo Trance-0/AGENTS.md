@@ -23,7 +23,7 @@ only.
 Administrator-only plugins show CPA quota with encrypted management-key storage
 and OpenClaw token/cost usage by route and model.
 The local Docker deployment is available at <https://live.trance-0.com>, through
-the existing frpc container on remote port 6018. Guests can watch live streams
+the existing frpc container on a private FRP remote port. Guests can watch live streams
 and replay visible recordings; signed-in viewers can chat with the OpenClaw
 host. Administrators start/end streams and curate recordings; the owner can
 also ask OpenClaw to start a broadcast, record activity, and set its summary.

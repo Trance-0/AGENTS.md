@@ -42,7 +42,7 @@ See [metrics architecture and CC Switch references](development/dashboard-metric
 ### Jenkins, Docker, and FRP deployment
 
 The Docker Compose service binds to host loopback on port 14143. The existing
-host-network frpc container forwards it to remote TCP port 6018; the remote
+host-network frpc container forwards it to a private FRP remote TCP port; the remote
 HTTPS reverse proxy serves `https://live.trance-0.com`. Panel toggles persist in
 a named volume. The same volume holds durable recording metadata and NDJSON
 events containing public stream logs and viewer chat. Visible recordings sort
