@@ -21,6 +21,7 @@ deploys to `https://pcp.trance-0.com` (through the local frpc tunnel).
 | Owner's verified QQ DM | `relay-owner` agent: PCP tools, **no exec/files/browser** |
 | HTTP tool backstop | Yes: tools refused for HTTP-originated runs except an allowlist |
 | Plain-HTTP FRP ports | Deferred; debug only, never for real use |
+| OpenClaw-WeChat | Owner-bound: the plugin is a 1:1 binding to the owner's own WeChat account, always the `main` agent; trusted as the owner (pinned principal, see below) |
 
 ## Flows
 
@@ -73,6 +74,16 @@ channel ─▶ OpenClaw (session key from trusted peer; owner → agent:main:dir
   - Casdoor OIDC: humans only.
 - **Groups:** no cross-session recall, no claim codes, `relay` agent only.
   Every member reads the reply, so it may only use that group's own session.
+- **Owner-bound channels (OpenClaw-WeChat):** the channel is bound to exactly
+  one WeChat account, the owner's. openclaw-pcp ≥ 0.2.1 config
+  `ownerBoundChannels: ["openclaw-weixin"]` plus a pinned `ownerPrincipals`
+  entry (the exact, case-preserved principal from `session.identityLinks.owner`).
+  That principal is linked to the owner's admin user with the operator CLI
+  (`identity link`; WeChat cannot show claim links), so its grant reads the
+  owner's sessions across Telegram, QQ (`relay-owner`) and WeChat, and theirs
+  read it. No claim links on that channel. Not a blanket rule: any other
+  principal there is treated as unlinked (home session only) and logged. Groups,
+  the HTTP backstop and the service credential scope are unchanged.
 - **Claiming:** in a new trusted DM session, the plugin (not the model) appends
   a single-use, 15-minute claim link to the first reply. Claiming it on
   pcp.trance-0.com after Casdoor login links that platform identity to the
