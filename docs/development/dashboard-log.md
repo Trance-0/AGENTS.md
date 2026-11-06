@@ -832,3 +832,23 @@ account cannot serve requests.
   passed the 5-hour window is not forced (rule 2 gives 100%); idempotence; not
   applied to Claude; the real snapshot's shape pools to 66%; and the OpenClaw
   usage line (`UsageLine`, unchanged) renders "Codex pool 5h 66% left".
+
+## 2026-11-06 — All dashboard config in host bind storage (0.2.8)
+
+Owner request: the dashboard config joins its state in
+`DockerVolumes/agent-dashboard/`, so a recreated container keeps everything.
+
+- Audit (`docker inspect`, `docker diff`, compose, `deploy.py`): `/app/data`,
+  `/app/metrics`, and the metrics key were already host binds; the container
+  layer holds no data. `openclaw-config-backups/` is inside the state bind.
+  The one remaining copy outside it was the repo working tree's
+  `dashboard/.env`, byte-identical to `secrets/deploy.env`, read by
+  `compose.yaml` and by the host development instance.
+- `compose.yaml`: `env_file` defaults to `secrets/deploy.env`
+  (`DASHBOARD_ENV_FILE` overrides).
+- `scripts/deploy.py`: `DEPLOY_ENV_SOURCE` defaults to the same file; refuses
+  an env file that is a symlink or inside the checkout; keeps `secrets/` at
+  1000:1000/700, `deploy.env` at 600, and `backups/` at 700; verifies binds for
+  data, metrics, and key after start.
+- Host: the repo-tree `.env` was backed up privately and replaced by a symlink
+  to `secrets/deploy.env`, so the development instance keeps working.

@@ -5,6 +5,7 @@ import datetime
 import json
 import logging
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import time
@@ -42,7 +43,11 @@ def healthy(url: str, timeout: int = 60) -> bool:
 
 
 STATE_VOLUME = "dashboard_dashboard-state"
-DEFAULT_STATE_DIR = "/home/motuariki/Documents/DockerVolumes/agent-dashboard/state"
+STORAGE_ROOT = Path("/home/motuariki/Documents/DockerVolumes/agent-dashboard")
+DEFAULT_STATE_DIR = str(STORAGE_ROOT / "state")
+# Private runtime env (all dashboard config and secrets). Jenkins sets
+# DEPLOY_ENV_SOURCE to this path; it must never live in a repo working tree.
+DEFAULT_ENV_FILE = str(STORAGE_ROOT / "secrets" / "deploy.env")
 
 
 def helper(image: str, *mounts: str, script: str) -> str:
@@ -98,15 +103,30 @@ def prepare_state(image: str, state_dir: Path) -> None:
     helper(image, bind_mount, script="chown 1000:1000 /data && chmod 700 /data")
 
 
+def secure_private_storage(image: str, env_file: Path, backups_root: Path) -> None:
+    """Keep private files at owner 1000:1000 and modes 700 (dirs) / 600 (env).
+
+    The env file is readable by the host user so `docker compose` and a local
+    development instance can use it directly; the metrics key keeps mode 400.
+    """
+    name = shlex.quote(env_file.name)
+    helper(image, f"type=bind,src={env_file.parent},dst=/secrets",
+           script=f"chown 1000:1000 /secrets /secrets/{name} && chmod 700 /secrets && chmod 600 /secrets/{name}")
+    helper(image, f"type=bind,src={backups_root},dst=/backups", script="chmod 700 /backups")
+
+
 def main():
     root = Path(__file__).resolve().parents[1]
     version = json.loads((root / "package.json").read_text())["version"]
     image = os.environ["DASHBOARD_IMAGE"]
-    env_file = Path(os.environ["DEPLOY_ENV_SOURCE"])
+    env_file = Path(os.environ.get("DEPLOY_ENV_SOURCE", DEFAULT_ENV_FILE))
     if not env_file.is_file():
         raise RuntimeError("Deployment cannot start: dashboard/private configuration — deployment environment file is absent.")
+    if env_file.is_symlink() or root.resolve() in env_file.resolve().parents:
+        raise RuntimeError("Deployment cannot start: dashboard/private configuration — the environment file must be a regular file outside the repository checkout.")
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    backup_dir = Path("/home/motuariki/Documents/DockerVolumes/agent-dashboard/backups") / stamp
+    backups_root = STORAGE_ROOT / "backups"
+    backup_dir = backups_root / stamp
     backup_dir.mkdir(parents=True, mode=0o700)
     candidates = subprocess.check_output(["docker", "ps", "--format", "{{.Names}}"], text=True).splitlines()
     previous = [name for name in candidates if name.startswith("agent-dashboard-v")]
@@ -152,6 +172,7 @@ def main():
     if not metrics_dir.exists():
         metrics_dir.mkdir(mode=0o700)
         os.chown(metrics_dir, 1000, 1000)
+    secure_private_storage(image, env_file, backups_root)
     run("docker", "run", "--rm", "--entrypoint", "node",
         "--mount", f"type=bind,src={metrics_key},dst=/run/secrets/metrics-encryption.key,readonly",
         "--mount", f"type=bind,src={metrics_dir},dst=/app/metrics",
@@ -197,8 +218,11 @@ def main():
             "--health-interval", "30s", "--health-timeout", "5s", "--health-retries", "3", image], text=True).strip()
         run("docker", "start", created)
         mounts = json.loads(subprocess.check_output(["docker", "inspect", created]))[0]["Mounts"]
-        if not any(m["Type"] == "bind" and m["Destination"] == "/app/data" and Path(m["Source"]) == state_dir for m in mounts):
-            raise RuntimeError("Deployment failed: dashboard/state storage — the new container does not bind-mount the state directory at /app/data.")
+        # Every persistent path must be a host bind, never a volume or the container layer.
+        expected = {"/app/data": state_dir, "/app/metrics": metrics_dir, "/run/secrets/metrics-encryption.key": metrics_key}
+        for destination, source in expected.items():
+            if not any(m["Type"] == "bind" and m["Destination"] == destination and Path(m["Source"]) == source for m in mounts):
+                raise RuntimeError(f"Deployment failed: dashboard/persistent storage — the new container does not bind-mount {source} at {destination}.")
         if not healthy("http://127.0.0.1:14143/healthz") or not healthy("https://live.trance-0.com/healthz", 30):
             raise RuntimeError("Deployment failed: dashboard/health verification — local or public endpoint did not become ready.")
     except Exception:

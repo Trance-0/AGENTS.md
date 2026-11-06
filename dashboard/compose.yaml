@@ -1,12 +1,14 @@
 services:
   dashboard:
-    image: agent-dashboard:0.2.7
-    container_name: agent-dashboard-v0.2.7
+    image: agent-dashboard:0.2.8
+    container_name: agent-dashboard-v0.2.8
     build:
       context: .
     network_mode: host
     restart: unless-stopped
-    env_file: .env
+    # Private runtime env (secrets): the same host file Jenkins deploys with,
+    # owner 1000:1000, mode 600, in a 700 directory. Never in the repo tree.
+    env_file: ${DASHBOARD_ENV_FILE:-/home/motuariki/Documents/DockerVolumes/agent-dashboard/secrets/deploy.env}
     environment:
       HOST: 127.0.0.1
       PORT: "14143"

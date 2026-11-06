@@ -75,8 +75,16 @@ and back in to acquire changed memberships.
 
 ## Private configuration
 
-Copy `dashboard/.env.example` to `dashboard/.env`, set file permissions to
-`0600`, and replace all placeholder credentials. Set:
+The private runtime environment (all dashboard config and secrets) is the
+host file
+`/home/motuariki/Documents/DockerVolumes/agent-dashboard/secrets/deploy.env`
+(owner 1000:1000, mode `0600`, directory mode `0700`). Jenkins deploys with it
+(`DEPLOY_ENV_SOURCE`), and `compose.yaml` reads it by default (override with
+`DASHBOARD_ENV_FILE`). Create it from `dashboard/.env.example` and replace all
+placeholder credentials. Since 0.2.8 no copy lives in the repository working
+tree: on the host, `dashboard/.env` is only a symlink to that file for the
+local development instance (`npm start`), and `scripts/deploy.py` refuses an
+environment file that is a symlink or sits inside the checkout. Set:
 
 ```dotenv
 OIDC_ISSUER=https://auth.trance-0.com
@@ -101,7 +109,8 @@ button are per-browser preferences in `localStorage` (`agent-dashboard.theme`,
 `agent-dashboard.playbackRate`); they are never sent to the server.
 
 Verify ignored credentials with `git check-ignore dashboard/.env`. Never print
-the resolved Compose configuration: it contains the environment secrets.
+the resolved Compose configuration: it contains the environment secrets
+(`docker compose ... config --quiet` only validates).
 
 ## Start or update
 
@@ -246,6 +255,53 @@ while no dashboard container is running. Also restore
 `scene/scene-layout.v1.json` as `scene/scene-layout.json` if a saved layout
 was migrated (see "Stream scenes and widgets").
 
+
+## Dashboard storage layout (0.2.8)
+
+A recreated container keeps everything: every persistent path is a host bind
+under `/home/motuariki/Documents/DockerVolumes/`, set by both
+`scripts/deploy.py` and `compose.yaml`. Nothing persistent is in a named
+volume, the container layer, or the repository working tree.
+
+| Host path (under `DockerVolumes/`) | Container path | Owner, mode | Contents |
+|---|---|---|---|
+| `agent-dashboard/state/` | `/app/data` (rw) | 1000:1000, 700 | recordings, scenes, panel state, `openclaw-config-backups/`, activity cursor |
+| `agent-dashboard/metrics/` | `/app/metrics` (rw) | 1000:1000, 700 | `metrics.sqlite` (+WAL), encrypted CPA credential |
+| `agent-dashboard/secrets/deploy.env` | env file (not mounted) | 1000:1000, 600 | all runtime config and secrets |
+| `agent-dashboard/secrets/metrics-encryption.key` | `/run/secrets/metrics-encryption.key` (ro) | 1000:1000, 400 | metrics master key |
+| `agent-dashboard/backups/<UTC stamp>/` | not mounted | root, 700 | per-deploy `data.tar`, `metrics.tar`, replaced plugin |
+| `circtime/dist/` (circtime's) | `/embed-src/circtime` (ro) | — | embed build |
+| `openclaw/config/` (OpenClaw's) | `/openclaw-config` (rw) | — | live `openclaw.json` |
+| `openclaw/activity/` (OpenClaw's) | `/var/log/openclaw-activity` (ro) | — | activity metadata |
+
+On each deploy, `scripts/deploy.py` restores `secrets/` to 1000:1000/700,
+`deploy.env` to 600, and `backups/` to 700 (through a root helper
+container), and after start it checks that `docker inspect` shows bind mounts
+for `/app/data`, `/app/metrics`, and the key; otherwise it removes the new
+container and restarts the previous one. Sessions are in memory by design
+(sign in again after a restart). `docker diff` on the running container shows
+only mount points. The legacy `dashboard_dashboard-state` volume is still kept
+for rollback. Rollback for 0.2.8 itself: restart the retained
+`agent-dashboard-v0.2.7` container (same mounts); if the dev instance needs a
+plain file again, replace the `dashboard/.env` symlink with a copy of
+`deploy.env` (mode 600).
+
+## Jenkins storage (host)
+
+The Jenkins controller and its agents keep all data in plain bind mounts
+under `/home/motuariki/Documents/DockerVolumes/jenkins/`: `jenkins_home/`
+(controller `/var/jenkins_home`: jobs, build history, plugins, credentials),
+`agent_home/` (agent `/var/lib/jenkins`: agent secret, `secrets/*-deploy.env`,
+`backups/`), `workspace/` (node remote root, bound at the same absolute path so
+build containers resolve workspace binds), plus the empty `agent_jenkins_home/`
+and `registry_proxy_home/`. Their compose file is
+`DockerVolumes/jenkins/config/compose.yaml` (start with `config/start.sh`); it
+contains no secrets. Until 2026-11-06 the same directories were reached
+through the bind-backed named volumes `jenkins_*_persistent`; those volume
+objects are kept for rollback. Backups and the rollback procedure are in the
+private host note `DockerVolumes/jenkins/README.md`. The buildx builder state
+(`buildx_buildkit_pcp-jenkins0_state`) is a disposable build cache and stays a
+builder-managed volume.
 
 ## OpenClaw public host
 
@@ -447,7 +503,8 @@ unset JENKINS_PASSWORD
 
 Runtime env lives at
 `/home/motuariki/Documents/DockerVolumes/agent-dashboard/secrets/deploy.env`
-on the host and Jenkins agent (mode `0600`). Populate it with the same keys as
+on the host and Jenkins agent (owner 1000:1000, mode `0600`, in a `0700`
+directory; see "Dashboard storage layout (0.2.8)"). Populate it with the same keys as
 `dashboard/.env.example`. It is independent from SCM and survives pushes.
 The agent's workspace is mounted at the same absolute host path so test
 container binds resolve against the checked-out remote source.

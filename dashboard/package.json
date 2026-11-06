@@ -1,6 +1,6 @@
 {
   "name": "agent-dashboard",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "private": true,
   "type": "module",
   "description": "Self-hosted AI platform dashboard: hot-pluggable manager panels behind Casdoor OIDC, with a YouTube-style live stream window.",

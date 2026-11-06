@@ -116,7 +116,10 @@ are warnings, not successful host replies.
 
 ## Configuration
 
-Copy `.env.example` to `.env` (gitignored) and fill in real values:
+The deployed configuration is the private host file
+`/home/motuariki/Documents/DockerVolumes/agent-dashboard/secrets/deploy.env`
+(mode 600; see the deployment runbook, "Dashboard storage layout"). For local
+runs, copy `.env.example` to `.env` (gitignored) and fill in real values:
 
 | Key | Meaning |
 |---|---|
@@ -128,8 +131,8 @@ Copy `.env.example` to `.env` (gitignored) and fill in real values:
 | `OPENCLAW_STREAM_TOKEN` | Separate machine credential for the OpenClaw stream-control/event bridge. |
 | `SESSION_SECRET` | Required session signing secret; generate a random value. |
 
-Secrets never enter git. In Jenkins the same values are bound from credentials
-(see `dashboard/Jenkinsfile`), and `.env` is only for local runs.
+Secrets never enter git. Jenkins and `compose.yaml` read the private host file
+above (`DEPLOY_ENV_SOURCE` / `DASHBOARD_ENV_FILE`); `.env` is only for local runs.
 
 ## Run locally
 
@@ -147,7 +150,7 @@ Casdoor application. The public deployment uses Secure cookies and HTTPS.
 ## Public test deployment
 
 The dashboard is served at <https://live.trance-0.com>. From the repository root,
-after filling in `dashboard/.env` and preparing the metrics key/storage
+after filling in the private `secrets/deploy.env` and preparing the metrics key/storage
 described in the deployment runbook:
 
 ```sh
