@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", default="http://127.0.0.1:8081/")
-    parser.add_argument("--branch", default="ai-infra-v0")
+    parser.add_argument("--branch", default="main")
     args = parser.parse_args()
     username = os.environ.get("JENKINS_USER", "admin")
     password = os.environ["JENKINS_PASSWORD"]

@@ -559,3 +559,10 @@ bullets specific: filenames, command names, outcomes.
 - Earlier settings/scheduler and OpenCode bridge commits remain preserved.
   GitHub publishing is blocked by unavailable credentials; no remote release
   or webhook deployment is claimed. Local rollout verification follows.
+
+- Local rollout verified: dashboard 0.3.0 public/local health and anonymous
+  adapter API 401; shared adapter-policy bind is writable only in the dashboard.
+  PCP 0.4.0 app/broker and both channel plugins passed runtime checks.
+  A local signed owner request executed `python3 -c "print(7*8)"` and correctly
+  identified the attached blue image after multiple provider failures. No
+  outbound channel message was sent. The group execution allowlist remains empty.
