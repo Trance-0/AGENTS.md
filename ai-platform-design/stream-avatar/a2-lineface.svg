@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" width="200" height="220">
+<rect width="200" height="220" fill="#f6f1e8"/>
+<path d="M52 78 Q100 20 150 78 L150 150 Q100 196 52 150 Z" fill="#fff" stroke="#222" stroke-width="4"/>
+<path d="M50 84 Q72 40 118 44 Q150 50 152 92 Q132 66 98 70 Q70 72 50 84Z" fill="#222"/>
+<circle cx="82" cy="112" r="5" fill="#222"/><circle cx="120" cy="112" r="5" fill="#222"/>
+<path d="M88 140 Q101 150 114 140" stroke="#222" stroke-width="4" fill="none" stroke-linecap="round"/>
+<circle cx="70" cy="130" r="7" fill="#f4a3a3" opacity=".6"/><circle cx="132" cy="130" r="7" fill="#f4a3a3" opacity=".6"/>
+<text x="100" y="214" fill="#555" font-family="sans-serif" font-size="12" text-anchor="middle">A2 line-face (idle)</text></svg>

@@ -14,6 +14,26 @@ Two things live here:
 `codex-plugins/` holds the earlier Codex MCP versions of the same tools, kept
 for reference; the opencode ports supersede them.
 
+[`ai-platform-design/`](ai-platform-design/README.md) holds the v0 design for a
+self-hosted AI platform (AstrBot, OpenClaw, PCP, Claude Code) with a
+self-evolving, rollback-safe CI/CD loop. It is docs and check-script stubs
+only.
+
+[`dashboard/`](dashboard/README.md) is the agent dashboard behind Casdoor OIDC.
+Administrator-only plugins show CPA quota with encrypted management-key storage
+and OpenClaw token/cost usage by route and model.
+The local Docker deployment is available at <https://live.trance-0.com>, through
+the existing frpc container on a private FRP remote port. Guests can watch live streams
+and replay visible recordings; signed-in viewers can chat with the OpenClaw
+host. Administrators start/end streams and curate recordings; the owner can
+also ask OpenClaw to start a broadcast, record activity, and set its summary.
+OpenClaw writes file-read progress to a shared directory that the dashboard
+mounts read-only; live recordings show file paths and start/completion events.
+The stream host uses CPA Opus 5.5, then CPA GPT-6 Astra, then official OpenAI
+GPT-6 Astra. CPA Gemini models are disabled. The Jenkins `agent-dashboard` job
+deploys GitHub pushes to `ai-infra-v0`. See the
+[deployment runbook](docs/deployment/dashboard.md) for setup and verification.
+
 ## The plugins
 
 | Plugin | What it does |
@@ -28,6 +48,10 @@ for reference; the opencode ports supersede them.
 opencode has no plugin settings UI, so `plugin-manager` supplies one: run the
 `plugins_dashboard` tool for a `http://127.0.0.1:141xx` URL. Full behaviour,
 install steps and design notes are in [`opencode/README.md`](opencode/README.md).
+
+OpenClaw can delegate long coding tasks to a persistent OpenCode server with
+all six plugins. The local desktop and terminal UI share its sessions; see the
+[coding harness runbook](docs/deployment/opencode-harness.md).
 
 ## Install
 
@@ -72,3 +96,15 @@ EXISTING_TAGS="$(git tag --list 'opencode-*')" node scripts/plan-release.mjs pla
 The planner also validates the manifest: a plugin missing from
 `versions.json`, a declared plugin with no file, or a malformed version fails
 there rather than halfway through publishing.
+
+OpenClaw settings use grouped form controls with an optional JSON tab. The
+[scheduled-task editor](docs/development/openclaw-settings.md) manages prompts, models, schedules, time zones,
+and delivery for enabled and paused jobs through the authenticated gateway.
+
+### AstrBot adapter access
+
+Administrator channel-access settings are available at `/adapters`. The list
+editor controls owner DM execution and selected groups/senders through a private
+policy directory shared read-only with PCP. Group access starts empty; each group
+requires its own sandboxed execution agent. PCP checks each tool call against
+the current policy and live grant.

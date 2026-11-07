@@ -304,3 +304,265 @@ bullets specific: filenames, command names, outcomes.
   task placed there by an older build is dropped or stripped). Verified with
   `tsc --noEmit` over `lib/*.ts plugin/*.ts` and four sandboxed scheduler tests
   (`restart-sim`, `fix-verify2`, `new-session-test`, `seed-test`).
+- 2026-11-03: Added `ai-platform-design/` at repo root on branch `ai-infra-v0`
+  (root placement requested by the owner). It holds `design.md`,
+  `build-plan.md` (Tasks 1-11), `agent-comparison.md` and `checks/*.sh` stubs.
+  No code paths changed. Verified with `bash -n` on every check script and a
+  publish-safety scan of the branch diff. The check scripts themselves were not
+  run: they target the owner's platform host, which doesn't exist yet.
+- 2026-11-03: Deployed dashboard version 0.1.0 using
+  `dashboard/compose.yaml` on loopback port 14143 and the existing local frpc
+  container's a private FRP remote TCP port, serving `https://live.trance-0.com`.
+  Verified the port before assignment. Backed up the FRP config privately and
+  preserved existing proxies; the private FRP config remains a local change in
+  its separate checkout because it contains authentication material.
+- 2026-11-03: Created a distinct Casdoor dashboard OIDC application based on
+  Gitea's claim/signing setup, plus application and administrator groups.
+  Assigned both groups to the requested existing administrator, preserving
+  original memberships and verifying the Gitea application was unchanged.
+  Creating groups with `users` alone did not update the existing user's
+  `groups`; explicitly updating that membership fixed access.
+- 2026-11-03: Fixed missing login-state rejection and userinfo subject binding
+  in `dashboard/server/oidc.js:37`, HTTPS cookie/proxy configuration and JSON
+  toggle parsing in `dashboard/server/index.js:49`, and session regeneration
+  at `dashboard/server/index.js:74`. Added an administrator group gate for
+  mutations, bounded expiring sessions, durable panel state, and structured
+  logs. Fixed the false AstrBot outage from probing an absent `/api/health`
+  route in `dashboard/server/panels/astrbot.js:34`; probe the verified web root.
+  Added `X-Accel-Buffering: no` for SSE after public streaming timed out behind
+  the remote proxy's response buffering.
+- 2026-11-03: Passed `npm test --prefix dashboard`, the same signed-token OIDC
+  integration test under the production image's Node 22 runtime, JavaScript
+  syntax checks, Docker image build, Compose configuration validation, FRP
+  validation, `git diff --check`, and public HTTPS/remote-port health checks.
+  Live Casdoor checks confirmed admin access, viewer mutation denial, denial
+  without the application group, logout, bearer-token enforcement, panel
+  toggles, immediate SSE delivery, and all three upstream availability probes.
+  The temporary auth-check account was removed, panel state restored, and
+  temporary credential snapshots deleted. Evidence is retained in the ignored
+  `logs/dashboard-verification-20261104T033049Z.log`.
+- 2026-11-03: Updated `README.md`, `docs/readme.md`, `dashboard/README.md`, and
+  `docs/deployment/dashboard.md`. Checked ignored environment/log files,
+  staged sizes/secrets, changed-file line limits, and unrelated changes.
+  No lint/typecheck scripts are configured for this JavaScript service; those
+  checks were skipped. Jenkins was not run because this deployment uses local
+  Compose; its earlier scaffold needs alignment before use. No browser UI
+  automation was run because no browser tool is available; public HTTP,
+  authentication, panel APIs, and streaming were exercised directly. Work is
+  committed locally on the existing feature branch; no push was requested.
+
+- 2026-11-04: Shipped dashboard 0.1.1 public viewing, timed recording playback,
+  hover previews, three display modes, fetched Casdoor avatars, side chat,
+  OpenClaw host replies in the main log player, and admin Start/End plus
+  recording visibility/recommendation scores. Detailed root causes and dev
+  evidence are in `docs/development/dashboard-log.md`. Public broadcast data
+  is separate from private operational logs; panel APIs stay authenticated.
+- 2026-11-04: Passed server/storage/preview tests locally and in the Node 22
+  production image; passed Playwright Chromium guest/admin/mobile, hover,
+  replay, avatar, screen mode, chat, and moderation checks. Built the Docker
+  image, validated Compose and OpenClaw config, checked JavaScript syntax and
+  `git diff --check`. Live Casdoor/FRP/HTTPS checks and a real OpenClaw reply
+  passed. Test account/cookies were removed; test recording is hidden for
+  admin review. Evidence is under ignored `logs/dashboard-v0.1.1-*` paths.
+- 2026-11-04: Deployed to the existing loopback port 14143 and a private FRP remote
+  port, preserving `dashboard_dashboard-state` and the FRP config. Backed up
+  prior state/config and retained the 0.1.0 image. The isolated OpenClaw host
+  uses a separate workspace, no tools, and no memory search. No gateway
+  restart or changes to other agents/bindings were required. Private gateway
+  token is only in ignored `.env`; no operational snapshots are staged.
+- 2026-11-04: Reopened and synchronized `README.md`, `docs/readme.md`, dashboard
+  README, and the deployment runbook. Checked changed-file line limits, sizes,
+  ignored secrets/state/logs, doc links, version/config consistency, and
+  unrelated changes. Lint/typecheck and Jenkins were skipped because no
+  corresponding service scripts or configured pipeline exist. Work is
+  committed locally on the feature branch; no push was requested.
+
+- 2026-11-04: Added dashboard 0.1.2 OpenClaw integration: scoped machine
+  start/status/end API and owner-only `dashboard_stream` plugin tool, plus six
+  agent/model/tool lifecycle hooks. Events preserve the existing recording
+  schema, exclude private payloads, and bind to recording/session references.
+  Provider-error hooks emit warning metadata without raw errors. Detailed
+  implementation and dev evidence are in `docs/development/dashboard-log.md`.
+- 2026-11-04: Passed four server tests locally and under Node 22, Chromium
+  regression checks, Docker build, Compose/gateway config validation, installed
+  plugin/tool/hook inspection, syntax checks, public health/event checks, and
+  `git diff --check`. A real owner-agent tool call started OpenClaw Live. A real
+  logged-in viewer chat recorded one host reply plus native lifecycle events.
+  Stream is left live; temporary test identity removed. The main provider's
+  post-tool thinking-signature error remains an external limitation, recorded
+  in the development log; chat host and control tool both worked.
+- 2026-11-04: Backed up gateway config and dashboard state, retained the old
+  image, preserved mount/port/FRP state, and kept machine tokens out of Git.
+  Plugin config required gateway reload; clean exit under its existing
+  on-failure policy required `docker start`. Installed plugin path is pinned.
+  Updated README, docs/readme, dashboard README, runbook, and dev log. Audited
+  staged secrets/sizes, line limits, versions, doc links, and unrelated edits.
+  Lint/typecheck and Jenkins remain skipped because this service has no such
+  scripts or configured pipeline. Commit stays local; no push requested.
+
+- 2026-11-04: Configured the `agent-dashboard` Pipeline-from-SCM Jenkins job
+  for GitHub `ai-infra-v0`, script `dashboard/Jenkinsfile`, `local-docker`, and
+  `githubPush()`. Runtime env is private on the agent; source is remote-only.
+  Replaced the unused scaffold with versioned builds, Node 22 tests, isolated
+  smoke checks, backup, rollout/rollback, public health, and plugin updates.
+- 2026-11-04: Dashboard 0.1.3 uses SVG Play/Pause icons, signed browser-session
+  viewer identity across tabs/reconnects, owner-scoped live summary updates,
+  and durable same-recording recovery across deployment. Added tests for
+  audience identity, malformed-cookie handling, summary ownership/persistence,
+  and truncation/recovery. Chromium checks cover distinct browser contexts,
+  shared-cookie tabs, and live pause state. `npm test`, browser checks, Python
+  syntax, and Jenkins declarative validation passed locally. Remote build and
+  webhook evidence will be appended after pushing the authorized changes.
+
+- 2026-11-04: GitHub push `30d8ff1` triggered Jenkins dashboard build #1 with
+  `GitHubPushCause`; SUCCESS, exact remote SHA, all five Node 22 tests, smoke,
+  backup, rollout, public health, and plugin update verified. Live recording
+  ID stayed unchanged. Public Chromium audience/icon/summary checks passed.
+  Installed OpenClaw summary action persisted and displayed the description.
+  No DB migration needed; existing recording volume and backups retained.
+  Container checkout is prepared; owner deferred its GitHub write permission.
+  Final summary-scope correction and these results are pushed for another
+  webhook build. No local-source snapshot or manual build was used.
+
+- 2026-11-04: Fixed missing live OpenClaw file activity. The dashboard had no
+  shared log mount and HTTP lifecycle events omitted tool paths. Added a
+  daily JSONL writer, bounded reader with durable cursors, and read-only
+  dashboard mount. Only file-tool target paths and lifecycle metadata enter
+  the feed; contents, commands, credentials, and private assistant text do not.
+- 2026-11-04: All seven Node 22 server tests passed, including partial UTF-8
+  records, rotation, truncation, restart cursors, and sensitive-field exclusion.
+  An isolated container emitted read start/completion events and rejected a
+  shared-directory write with EROFS. Production health, mounts, preserved live
+  recording ID, and Chromium rendering of a real Claude file-read turn passed.
+  A second real CPA Claude turn with stored reasoning history also completed.
+- 2026-11-04: Applied a local runtime repair with prior container, image, config,
+  plugin, and recording backups retained. Jenkins deployment source now includes
+  the same read-only mount, but no GitHub push or Jenkins build was requested.
+  Python syntax, Compose validation, diff checks, and changed-file size audit
+  passed. Updated README, architecture overview, env example, and runbook.
+
+- 2026-11-04: Dashboard 0.1.4 corrects gateway HTTP-200 error-completion handling
+  and duplicate legacy start hooks. File and HTTP events retain provider/model
+  and run IDs; private payloads remain excluded. Verified ten server tests,
+  config validation, the real local gateway/token connection, two persistent
+  CPA GPT-6 Astra fallback turns, and an official OpenAI GPT-6 Astra API probe.
+  Configured CPA Opus 5.5 → CPA GPT-6 Astra → official OpenAI GPT-6 Astra for
+  defaults and dashboard-host; removed CPA Gemini definitions/aliases and
+  checked cron/session overrides. CPA Opus currently returns auth_unavailable.
+  Private config backups and detailed dev evidence are retained. Jenkins push
+  deployment will restart gateway/dashboard and verify the preserved recording.
+
+- 2026-11-04: Jenkins #4 completed SUCCESS from actual GitHub push `6f95ef2`.
+  Gateway and dashboard restarted with the final three-model order and no CPA
+  Gemini definitions. Two public-chat turns using the original live recording
+  and saved history matched their reply run IDs to successful CPA GPT-6 Astra
+  model-output events. Public Chromium rendering passed; temporary test user
+  removed. Model config, secret exclusion, docs links/line limits, and recording
+  preservation were verified. CPA Opus 5.5 remains upstream-auth unavailable;
+  official OpenAI GPT-6 Astra direct probe succeeded. Final evidence added to
+  the development log; no unrelated runtime data or source was changed.
+
+- 2026-11-04: Added administrator-only CPA quota and OpenClaw usage plugins.
+  Reviewed CC Switch's UsageDashboard, UsageTrendChart, UsageHero/model tables,
+  and SQLite schema/rollup sources at ca58c031; exact links and design decisions
+  are in docs/development/dashboard-metrics.md. No upstream code was copied.
+- 2026-11-04: CPA management credentials use AES-256-GCM with a separately
+  mounted 32-byte key. Quota windows remain per account and unknown values are
+  preserved. OpenClaw exports attempt totals by route/model to private usage
+  JSONL, independently of broadcast state. SQLite commits events/cursors
+  atomically, deduplicates replay, and stores editable token-category prices.
+  Metrics and ciphertext use host-backed storage; the master key stays separate.
+- 2026-11-04: Passed all 20 Node 22 server tests, existing Chromium player
+  regressions, new admin/viewer/guest metrics tests, token/price filters,
+  quota/unknown displays, mobile layout checks, and encrypted credential save,
+  reload, and removal. The image builds; isolated production startup and guest
+  API denial pass. Key/log mount writes fail with EROFS. Python syntax,
+  Compose validation, diff checks, changed-file line limits, and secret/size
+  audits passed. No lint/typecheck scripts are configured for this JS service.
+- 2026-11-04: Updated README, dashboard README, architecture overview, env
+  example, deployment runbook, and reference notes. Runtime version unchanged.
+  No live CPA management key was imported: the administrator enters it after
+  deployment. Actual remaining quota is unverified until that setup. Jenkins
+  deployment changes are prepared; this round's push needs owner approval.
+
+- 2026-11-05: Diagnosed missing parent reply after a successful worker result.
+  OpenClaw queued announcements accepted acknowledgments as completion and
+  lacked model deadlines. Added final-result checks and bounded attempts,
+  split the oversized delivery module, and passed 28 focused tests, full
+  type-check, lint, and build. Recovered the saved result in local parent chat.
+- 2026-11-05: Fixed colon-containing announcement IDs, added public reply
+  generation metadata and one-time pending warnings, and used ASCII activity
+  separators. All 28 dashboard Node 22 tests and real gateway reply/run-ID
+  verification passed. Preserved concurrent UI changes, runtime mounts,
+  environment, model order, recordings, and private payload boundaries.
+  Runtime backups remain local.
+- 2026-11-05: Finished the announcement rollout. Pending warnings no longer
+  repeat when a fallback retry re-emits `model_start` for the same run ID;
+  the pending-warning test covers the retry. Ran the Jenkins-equivalent
+  `node --test server/*.test.js` in the dashboard image, committed as
+  Nesbitt-bot, and pushed `ai-infra-v0` with owner authorization so Jenkins
+  deploys it. Docs touched this round contain no server IPs or tunnel ports.
+
+## 2026-11-06 — OpenClaw settings and scheduled tasks (0.2.9)
+
+- Replaced the JSON-only config editor with grouped controls and synchronized
+  UI/JSON tabs; added scheduled-task CRUD through a signed gateway device.
+- Added prompt/model/schedule/time-zone/execution/delivery forms, paused jobs,
+  conflict checks, responsive light/dark styling, and canvas URL rows.
+- Verified 77 Node 22 tests and all Chromium suites, including new settings
+  coverage. Live temporary disabled-task CRUD and stale-edit rejection passed;
+  all nine original task configurations remained unchanged.
+- Built and deployed the local 0.2.9 image with the standard helper; local and
+  public health passed, unauthenticated task access returned 401. Existing
+  host-backed state and the 0.2.8 rollback container were preserved.
+- Fixed host backup-directory ownership after the prior root-created directory
+  blocked deployment. No new dependencies, environment variables, or ports.
+- Compose validation and diff whitespace checks passed. No secrets, generated
+  binaries, or unrelated work staged; README and deployment docs match runtime.
+- Local deployment only; no GitHub push or Jenkins build claimed.
+
+## 2026-11-06 — Shared OpenCode coding harness
+
+- Installed OpenCode 1.19.5 as a persistent user service with authenticated
+  loopback HTTP and state under DockerVolumes. Verified npm archive SHA-512.
+- Installed all six repository plugins with their shared libraries; configured
+  the desktop default connection and opened the actual OpenClaw ACP session.
+- Added the native ACP HTTP backend with persistent session mapping, progress,
+  model/mode controls, resume, cancellation, and transcript-preserving close.
+- Verified 11 backend tests, systemd unit validation, Python compilation, and
+  live multi-tool turns using the existing OpenAI account through Responses.
+  CPA routes were unavailable during setup; native OpenClaw model order stays
+  unchanged. Optional Bark subscribers remain empty; no notifications sent.
+- Live OpenClaw spawn and follow-up retained the same OpenCode session and
+  recalled its previous verification token. The desktop showed both turns.
+- Found and repaired OpenClaw webchat dropping ACP reply blocks in the sibling
+  source checkout; its 14 focused tests, full type check, and app build passed.
+- README, docs/readme, and deployment guide describe actual runtime and
+  rollback. Credentials, personal state, generated binaries, and screenshots
+  remain outside Git. No unrelated source or personal session history staged.
+- The deployed webchat fix returned OPENCODE_DELIVERY_VERIFIED in both the
+  gateway final event and chat.history. Gateway environment and mount identity
+  checks passed; the prior container is retained. All nine schedules remain.
+- Diff whitespace, changed-source line/size checks, and secret-path audit
+  passed. No public push was requested.
+
+## 2026-11-06 — Adapter execution access (0.3.0)
+
+- Added `/adapters` with an administrator list editor for AstrBot group/sender
+  execution access and an owner-DM toggle. The initial group list is empty.
+- A shared private policy directory persists outside the checkout; PCP reads
+  it read-only and reauthorizes execution per tool. Saves retain backups,
+  reject stale edits and require distinct isolated group executors.
+- All 79 server tests and the Chromium settings/adapter checks passed, including
+  administrator/CSRF gates, group/member editing and mobile layout.
+- Compose and the deployment helper carry the shared policy mount.
+- Earlier settings/scheduler and OpenCode bridge commits remain preserved.
+  GitHub publishing is blocked by unavailable credentials; no remote release
+  or webhook deployment is claimed. Local rollout verification follows.
+
+- Local rollout verified: dashboard 0.3.0 public/local health and anonymous
+  adapter API 401; shared adapter-policy bind is writable only in the dashboard.
+  PCP 0.4.0 app/broker and both channel plugins passed runtime checks.
+  A local signed owner request executed `python3 -c "print(7*8)"` and correctly
+  identified the attached blue image after multiple provider failures. No
+  outbound channel message was sent. The group execution allowlist remains empty.

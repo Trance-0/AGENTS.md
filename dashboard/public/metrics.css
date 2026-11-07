@@ -1,0 +1,215 @@
+.metrics-view {
+  display: grid;
+  gap: 24px;
+  max-width: 1200px;
+}
+.metrics-toolbar,
+.metrics-pricing {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+}
+.metrics-control {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 130px;
+  font-size: 13px;
+}
+.metrics-control input,
+.metrics-control select {
+  background: var(--bg, #121212);
+  color: inherit;
+  border: 1px solid var(--border, #444);
+  border-radius: 8px;
+  padding: 10px;
+  min-width: 0;
+  max-width: 100%;
+}
+.metrics-pricing .metrics-control {
+  flex: 1;
+  min-width: 140px;
+}
+.metrics-pricing input[type="password"],
+.metrics-pricing input[type="url"] {
+  min-width: 240px;
+}
+.metrics-section {
+  padding: 20px;
+  border: 1px solid var(--border, #333);
+  border-radius: 12px;
+  background: var(--surface, #181818);
+}
+.metrics-section h2 {
+  font-size: 18px;
+  margin: 0 0 16px;
+}
+.metrics-muted,
+.metrics-status {
+  font-size: 13px;
+  color: var(--muted, #aaa);
+  line-height: 1.6;
+}
+.metrics-chart svg {
+  width: 100%;
+  min-width: 560px;
+  display: block;
+}
+.metrics-chart {
+  overflow-x: auto;
+}
+.metrics-axis {
+  fill: var(--muted, #aaa);
+  font-size: 11px;
+}
+.metrics-grid {
+  stroke: var(--border, #333);
+  stroke-width: 1;
+}
+.metrics-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  margin: 8px;
+}
+.metrics-legend span::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  background: var(--route-color);
+  border-radius: 50%;
+}
+.metrics-table-scroll {
+  overflow-x: auto;
+  margin-top: 16px;
+}
+.metrics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.metrics-table th,
+.metrics-table td {
+  padding: 13px 10px;
+  text-align: right;
+  border-bottom: 1px solid var(--border, #333);
+}
+.metrics-table th:first-child,
+.metrics-table td:first-child {
+  text-align: left;
+}
+.metrics-table th {
+  color: var(--muted, #aaa);
+  font-weight: 500;
+}
+.metrics-price-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.quota-accounts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+.quota-account {
+  border: 1px solid var(--border, #333);
+  padding: 16px;
+  border-radius: 10px;
+}
+.quota-account h3 {
+  margin: 0 0 16px;
+  font-size: 15px;
+}
+.quota-window {
+  display: grid;
+  gap: 7px;
+  margin: 18px 0;
+}
+.quota-window meter {
+  width: 100%;
+  height: 12px;
+}
+.quota-window small {
+  color: var(--muted, #aaa);
+}
+.metrics-status.tone-error {
+  color: var(--error, #ff9c9c);
+}
+.metrics-cards .value {
+  font-size: 25px;
+}
+.metrics-control select:focus-visible,
+.metrics-control input:focus-visible {
+  outline: 2px solid var(--accent, #86a7ff);
+  outline-offset: 2px;
+}
+@media (max-width: 650px) {
+  .metrics-section {
+    padding: 12px;
+  }
+  .metrics-pricing .metrics-control {
+    min-width: 100%;
+  }
+  .metrics-control input {
+    width: 100%;
+  }
+  .metrics-pricing input[type="password"],
+  .metrics-pricing input[type="url"] {
+    min-width: 0;
+  }
+  .quota-accounts {
+    grid-template-columns: 1fr;
+  }
+}
+.metrics-view,
+.metrics-view > * {
+  min-width: 0;
+}
+.metrics-view input,
+.metrics-view select {
+  max-width: 100%;
+}
+.metrics-section {
+  overflow-wrap: anywhere;
+}
+.metrics-table-scroll {
+  max-width: 100%;
+}
+.metrics-view .btn {
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+.metrics-view .btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.metrics-view .btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.metrics-cards {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.metrics-cards .value {
+  font-size: 22px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 720px) {
+  .metrics-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.quota-window small.quota-assumed {
+  color: var(--text-dim, #bbb);
+  font-style: italic;
+}

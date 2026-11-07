@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 150" width="220" height="150">
+<rect width="220" height="150" fill="#0f0f0f"/>
+<rect x="0" y="118" width="220" height="32" fill="#3a3a44"/><rect x="40" y="108" width="140" height="12" rx="3" fill="#55556a"/>
+<path d="M60 112 Q60 46 110 44 Q160 46 160 112 Z" fill="#fafafa"/>
+<path d="M70 62 L76 30 L96 50 Z M150 62 L144 30 L124 50 Z" fill="#fafafa"/>
+<circle cx="94" cy="78" r="4" fill="#222"/><circle cx="126" cy="78" r="4" fill="#222"/>
+<path d="M104 88 Q110 94 116 88" stroke="#222" stroke-width="3" fill="none" stroke-linecap="round"/>
+<ellipse cx="78" cy="108" rx="14" ry="8" fill="#fafafa" stroke="#ddd"/><ellipse cx="148" cy="70" rx="13" ry="9" fill="#fafafa" stroke="#ddd"/>
+<text x="110" y="142" fill="#aaa" font-family="sans-serif" font-size="11" text-anchor="middle">cat: left paw down (tool event)</text></svg>

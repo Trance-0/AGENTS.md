@@ -1,0 +1,73 @@
+pipeline {
+  agent { label 'local-docker' }
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    skipDefaultCheckout(true)
+    timeout(time: 20, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+  }
+  triggers { githubPush() }
+  environment {
+    DEPLOY_ENV_SOURCE = '/home/motuariki/Documents/DockerVolumes/agent-dashboard/secrets/deploy.env'
+    NO_PROXY = 'localhost,127.0.0.1,::1'
+    no_proxy = 'localhost,127.0.0.1,::1'
+  }
+  stages {
+    stage('Checkout GitHub') {
+      steps {
+        deleteDir()
+        script {
+          def revision = checkout scm
+          env.GIT_COMMIT = revision.GIT_COMMIT
+          def version = sh(script: "python3 -c 'import json; print(json.load(open(\"dashboard/package.json\"))[\"version\"])'", returnStdout: true).trim()
+          env.DASHBOARD_VERSION = version
+          env.DASHBOARD_IMAGE = "agent-dashboard:${version}-jenkins.${env.BUILD_NUMBER}"
+        }
+      }
+    }
+    stage('Build versioned image') {
+      steps { dir('dashboard') { sh 'docker build --progress plain --label org.opencontainers.image.revision="$GIT_COMMIT" -t "$DASHBOARD_IMAGE" .' } }
+    }
+    stage('Server tests') {
+      steps {
+        dir('dashboard') {
+          sh '''
+            set -eu
+            docker run --rm --entrypoint node \
+              --mount type=bind,src="$PWD/server",dst=/app/server,readonly \
+              --mount type=bind,src="$PWD/public",dst=/app/public,readonly \
+              --mount type=bind,src="$PWD/openclaw-plugin",dst=/app/openclaw-plugin,readonly \
+              "$DASHBOARD_IMAGE" --test server/*.test.js
+          '''
+        }
+      }
+    }
+    stage('Isolated smoke test') {
+      steps {
+        sh '''
+          set -eu
+          SMOKE_NAME="agent-dashboard-smoke-$BUILD_NUMBER"
+          trap 'docker rm -f "$SMOKE_NAME" >/dev/null 2>&1 || true' EXIT
+          docker run -d --name "$SMOKE_NAME" --env-file "$DEPLOY_ENV_SOURCE" \
+            -e HOST=127.0.0.1 -e PORT=14143 --tmpfs /app/data:uid=1000,gid=1000,mode=0700 \
+            "$DASHBOARD_IMAGE"
+          for i in $(seq 1 30); do
+            if docker exec "$SMOKE_NAME" node -e "fetch('http://127.0.0.1:14143/healthz',{signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then exit 0; fi
+            echo "Smoke test waiting: dashboard/CI health — service is starting (attempt $i of 30)."
+            sleep 1
+          done
+          echo 'Smoke test failed: dashboard/CI health — service did not become ready within 30 attempts.' >&2
+          exit 1
+        '''
+      }
+    }
+    stage('Backup and deploy') {
+      steps { sh 'python3 dashboard/scripts/deploy.py' }
+    }
+  }
+  post {
+    success { echo 'Deployment complete: dashboard/Jenkins pipeline — GitHub revision tested and deployed through the public URL.' }
+    failure { echo 'Deployment incomplete: dashboard/Jenkins pipeline — a required stage failed; inspect its console output.' }
+  }
+}

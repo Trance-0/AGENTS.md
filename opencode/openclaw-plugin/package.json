@@ -1,0 +1,8 @@
+{
+  "name": "opencode-server",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "openclaw": { "extensions": ["./index.js"] },
+  "scripts": { "test": "node --test runtime.test.js" }
+}

@@ -1,0 +1,16 @@
+[Unit]
+Description=OpenCode coding harness for OpenClaw
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Documents/workspace
+EnvironmentFile=%h/Documents/DockerVolumes/openclaw-opencode/server.env
+ExecStart=%h/Documents/DockerVolumes/openclaw-opencode/runtime/package/bin/opencode serve --hostname 127.0.0.1 --port 4096
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:%h/Documents/DockerVolumes/openclaw-opencode/logs/server.log
+StandardError=append:%h/Documents/DockerVolumes/openclaw-opencode/logs/server.log
+
+[Install]
+WantedBy=default.target
