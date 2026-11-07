@@ -49,6 +49,10 @@ opencode has no plugin settings UI, so `plugin-manager` supplies one: run the
 `plugins_dashboard` tool for a `http://127.0.0.1:141xx` URL. Full behaviour,
 install steps and design notes are in [`opencode/README.md`](opencode/README.md).
 
+OpenClaw can delegate long coding tasks to a persistent OpenCode server with
+all six plugins. The local desktop and terminal UI share its sessions; see the
+[coding harness runbook](docs/deployment/opencode-harness.md).
+
 ## Install
 
 opencode auto-discovers any `*.ts` in `~/.config/opencode/plugin/`. Link this

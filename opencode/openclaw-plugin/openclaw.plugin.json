@@ -1,0 +1,17 @@
+{
+  "id": "opencode-server",
+  "name": "OpenCode Server",
+  "description": "Run ACP coding sessions on the same persistent OpenCode server as the desktop UI.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["url", "credentialsFile", "stateDir", "cwd"],
+    "properties": {
+      "url": { "type": "string" },
+      "credentialsFile": { "type": "string" },
+      "stateDir": { "type": "string" },
+      "cwd": { "type": "string" },
+      "pathMap": { "type": "object", "additionalProperties": { "type": "string" } }
+    }
+  }
+}

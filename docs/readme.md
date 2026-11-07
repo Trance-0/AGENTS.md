@@ -13,6 +13,16 @@ of archives, with Manual, Local only, Directory and Auto modes.
 See [session archive transfer](development/session-archives.md) for the device
 transfer workflow, format scope, and isolated verification commands.
 
+## OpenClaw coding harness
+
+`opencode/openclaw-plugin/` implements an ACP backend that sends coding work to
+the persistent OpenCode HTTP server. All six repository plugins run there;
+the local desktop and terminal UI connect to the same session store. The
+server runs as a user systemd service with private state under DockerVolumes.
+It uses the existing OpenAI credential through Responses with high reasoning.
+See the [deployment and usage guide](deployment/opencode-harness.md) for setup,
+session resume, model controls, persistent logs, and rollback.
+
 ## Agent dashboard
 
 `dashboard/` is a Node.js 22 / Express service with a static browser UI, a

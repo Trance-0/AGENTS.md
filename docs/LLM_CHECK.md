@@ -520,3 +520,28 @@ bullets specific: filenames, command names, outcomes.
 - Compose validation and diff whitespace checks passed. No secrets, generated
   binaries, or unrelated work staged; README and deployment docs match runtime.
 - Local deployment only; no GitHub push or Jenkins build claimed.
+
+## 2026-11-06 — Shared OpenCode coding harness
+
+- Installed OpenCode 1.19.5 as a persistent user service with authenticated
+  loopback HTTP and state under DockerVolumes. Verified npm archive SHA-512.
+- Installed all six repository plugins with their shared libraries; configured
+  the desktop default connection and opened the actual OpenClaw ACP session.
+- Added the native ACP HTTP backend with persistent session mapping, progress,
+  model/mode controls, resume, cancellation, and transcript-preserving close.
+- Verified 11 backend tests, systemd unit validation, Python compilation, and
+  live multi-tool turns using the existing OpenAI account through Responses.
+  CPA routes were unavailable during setup; native OpenClaw model order stays
+  unchanged. Optional Bark subscribers remain empty; no notifications sent.
+- Live OpenClaw spawn and follow-up retained the same OpenCode session and
+  recalled its previous verification token. The desktop showed both turns.
+- Found and repaired OpenClaw webchat dropping ACP reply blocks in the sibling
+  source checkout; its 14 focused tests, full type check, and app build passed.
+- README, docs/readme, and deployment guide describe actual runtime and
+  rollback. Credentials, personal state, generated binaries, and screenshots
+  remain outside Git. No unrelated source or personal session history staged.
+- The deployed webchat fix returned OPENCODE_DELIVERY_VERIFIED in both the
+  gateway final event and chat.history. Gateway environment and mount identity
+  checks passed; the prior container is retained. All nine schedules remain.
+- Diff whitespace, changed-source line/size checks, and secret-path audit
+  passed. No public push was requested.
