@@ -7,13 +7,13 @@ import { config } from "../config.js";
 export function createOpenclawConfigPanel() {
   return {
     id: "openclaw-config",
-    title: "OpenClaw config",
+    title: "OpenClaw settings",
     adminOnly: true,
     description: "Edit OpenClaw's live openclaw.json (administrators only). OpenClaw reads it read-only and hot-reloads saves; secret values stay masked.",
     icon: "config",
     group: "openclaw",
     order: 20,
-    tabTitle: "Config",
+    tabs: [{ id: "openclaw-config", title: "Settings" }, { id: "openclaw-tasks", title: "Scheduled tasks" }],
 
     settings: () => [
       { key: "file", label: "Config file", type: "string", value: config.openclaw.configFile || "(not mounted)" },

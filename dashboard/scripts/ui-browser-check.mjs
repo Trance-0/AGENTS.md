@@ -161,7 +161,7 @@ try {
   // The config editor (admin-only) still loads.
   await adminPage.locator('[data-view="openclaw"]').click();
   await adminPage.locator('[data-tab="openclaw-config"]').click();
-  await adminPage.waitForFunction(() => document.querySelector(".config-editor .config-status")?.textContent.startsWith("Loaded"));
+  await adminPage.waitForFunction(() => document.querySelector(".config-editor .editor-status")?.textContent === "Settings are up to date");
   await admin.close();
   assert.deepEqual(errors, []);
   console.info("UI Chromium passed: system/light/dark theme with persistence and no flash, settings sync and autoplay, read-only deployment settings, viewer/admin sidebars with icons and uptime, rail and mobile menu, in-browser admin panel toggle.");

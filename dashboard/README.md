@@ -77,13 +77,31 @@ reach the browser.
 |---|---|---|
 | Live | `live-stream` | The streaming window (uptime + logs + timeline). |
 | OpenClaw · Status, Backends | `openclaw` | Gateway health, agents with model fallback chain; provider and env var names only. |
-| OpenClaw · Config | `openclaw-config` | Live `openclaw.json` editor (admin). |
+| OpenClaw · Settings, Scheduled tasks | `openclaw-config` | Grouped configuration forms with optional JSON editing; prompt, model, schedule, and delivery management (admin). |
 | Usage · Summary | `usage-summary` | Pooled Codex quota and token totals (admin). |
 | Usage · CPA quota | `cpa-quota` | Per-account quota (admin). |
 | Usage · Token metrics | `usage-metrics` | Tokens and estimated cost (admin). |
 | Adapters · AstrBot | `astrbot` | QQ/WeChat relay status. |
 | Builds | `build-status` | Jenkins build / LKG status (read-only). |
 | Settings | `settings` | Per-browser theme, motion, autoplay, speed; admin panel switches. |
+
+## OpenClaw settings
+
+OpenClaw → Settings opens a form editor grouped into agents, models, channels,
+conversations, tools, gateway, and plugins. JSON is a secondary tab for advanced
+editing and backup copies. Values survive switching tabs; masked credentials
+are retained and every configuration save backs up the previous file.
+
+OpenClaw → Scheduled tasks lists every enabled and paused job across agents.
+Create, edit, pause, or delete tasks using forms for prompts, model overrides,
+once/interval/daily/weekly/cron schedules, time zones, execution options, and
+result delivery. New tasks start paused. UI and JSON tabs share one draft;
+activity shows the gateway's next/last run and delivery status.
+
+Task operations use the authenticated gateway scheduling API, with a persistent
+private device identity in dashboard state. Administrators and same-origin
+mutations are required. The scheduler validates writes; stale dashboard edits
+are rejected. See [the settings runbook](../docs/development/openclaw-settings.md).
 
 ## OIDC (Casdoor)
 

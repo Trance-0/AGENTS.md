@@ -20,6 +20,8 @@ import { avatarUrl, serveAvatar } from "./avatar.js";
 import { watchActivity } from "./openclaw-activity.js";
 import { OpenClawConfigStore } from "./openclaw-config.js";
 import { mountOpenClawConfig, CONFIG_ROUTE } from "./openclaw-config-routes.js";
+import { createGatewayClient } from "./openclaw-gateway.js";
+import { OpenClawTasks, mountOpenClawTasks, TASK_ROUTE } from "./openclaw-tasks.js";
 import { noteRelayActivity } from "./relay-status.js";
 import { MetricsStore } from "./metrics/store.js";
 import { SecretStore } from "./metrics/secrets.js";
@@ -96,7 +98,7 @@ app.set("trust proxy", "loopback");
 app.use((_req, res, next) => { res.set("Content-Security-Policy", contentSecurityPolicy(sceneStore.settings().imageAllowlist)); next(); });
 // Small JSON bodies everywhere except the config editor, which parses its own (larger) body.
 const smallJson = express.json({ limit: "16kb" });
-app.use((req, res, next) => (req.path === CONFIG_ROUTE ? next() : smallJson(req, res, next)));
+app.use((req, res, next) => ((req.path === CONFIG_ROUTE || req.path.startsWith(TASK_ROUTE)) ? next() : smallJson(req, res, next)));
 
 app.use(
   session({
@@ -175,6 +177,7 @@ const configStore = config.openclaw.configFile
   ? new OpenClawConfigStore({ file: config.openclaw.configFile, backupDir: path.join(config.dataDir, "openclaw-config-backups") })
   : null;
 mountOpenClawConfig(app, configStore, { requireAuth, requireAdmin, requireCsrf, isEnabled });
+mountOpenClawTasks(app, new OpenClawTasks(createGatewayClient({ ...config.openclaw, identityFile: path.join(config.dataDir, "openclaw-device.json") })), { requireAuth, requireAdmin, requireCsrf, isEnabled });
 mountScene(app, { scene, store: sceneStore, streamToken: config.openclaw.streamToken, requireCsrfOrToken, control });
 new MetricsBridge({ scene, broadcast, metrics, quota, secrets: metricsSecrets, isEnabled, emit, settings: () => sceneStore.settings() }).start();
 

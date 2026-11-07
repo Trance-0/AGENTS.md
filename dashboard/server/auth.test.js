@@ -110,7 +110,7 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
       await new Promise(resolve => setTimeout(resolve, 50));
     }
     assert.ok(ready, output);
-    for (const route of ["/api/panels", "/api/uptime", "/api/panels/openclaw/data", "/api/admin/recordings", "/api/admin/openclaw-config", "/api/admin/metrics/usage", "/api/admin/metrics/cpa", "/api/panels/usage-metrics/data"]) assert.equal((await request(route)).status, 401);
+    for (const route of ["/api/panels", "/api/uptime", "/api/panels/openclaw/data", "/api/admin/recordings", "/api/admin/openclaw-config", "/api/admin/openclaw-tasks", "/api/admin/metrics/usage", "/api/admin/metrics/cpa", "/api/panels/usage-metrics/data"]) assert.equal((await request(route)).status, 401);
     assert.equal((await request("/api/admin/openclaw-config", { method: "PUT", headers: { "x-dashboard-request": "1", "content-type": "application/json" }, body: "{}" })).status, 401);
     assert.equal((await request("/api/panels/openclaw/toggle", { method: "POST", headers: { authorization: "Bearer test-mutation-token" } })).status, 401);
     assert.equal((await request("/auth/callback?code=unsolicited&state=unsolicited")).status, 400);
@@ -139,7 +139,7 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     const viewerHeaders = { cookie: viewerCallback.headers.get("set-cookie").split(";")[0], authorization: "Bearer test-mutation-token" };
     assert.equal((await request("/api/panels/settings/toggle", { method: "POST", headers: viewerHeaders })).status, 403);
     assert.equal((await request("/api/admin/openclaw-config", { headers: viewerHeaders })).status, 403, "viewers cannot read the OpenClaw config");
-    for (const url of ["/api/admin/metrics/usage", "/api/admin/metrics/cpa", "/api/panels/usage-metrics/data", "/api/panels/cpa-quota/data"]) assert.equal((await request(url, { headers: viewerHeaders })).status, 403);
+    for (const url of ["/api/admin/openclaw-tasks", "/api/admin/metrics/usage", "/api/admin/metrics/cpa", "/api/panels/usage-metrics/data", "/api/panels/cpa-quota/data"]) assert.equal((await request(url, { headers: viewerHeaders })).status, 403);
     const viewerPanels = (await (await request("/api/panels", { headers: viewerHeaders })).json()).panels;
     assert.ok(!viewerPanels.some(panel => ["cpa-quota", "usage-metrics", "openclaw-config"].includes(panel.id)), "admin-only panels stay out of the viewer menu");
     assert.ok(["astrbot", "build-status", "openclaw", "settings"].every(id => viewerPanels.some(panel => panel.id === id)));
@@ -212,7 +212,7 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     const adminMenu = await (await request("/api/panels", { headers })).json();
     assert.deepEqual(adminMenu.groups.map(group => group.id), ["live", "openclaw", "usage", "adapters", "builds", "settings"]);
     assert.deepEqual(adminPanels.filter(panel => panel.group === "usage").flatMap(panel => panel.tabs.map(tab => tab.title)), ["Summary", "CPA quota", "Token metrics"]);
-    assert.deepEqual(adminPanels.filter(panel => panel.group === "openclaw").flatMap(panel => panel.tabs.map(tab => tab.title)), ["Status", "Backends", "Config"]);
+    assert.deepEqual(adminPanels.filter(panel => panel.group === "openclaw").flatMap(panel => panel.tabs.map(tab => tab.title)), ["Status", "Backends", "Settings", "Scheduled tasks"]);
     const summary = await (await request("/api/admin/metrics/summary", { headers })).json();
     assert.equal(summary.tokens.week, 3600);
     assert.deepEqual(summary.codex.fiveHour, { remainingPercent: null, resetAt: null, accounts: 0, total: 0 });
@@ -303,6 +303,10 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
       const canvasCheck = spawn(process.execPath, [path.join(root, "scripts/canvas-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie, DASHBOARD_VIEWER_COOKIE: viewerHeaders.cookie }, stdio: "inherit" });
       const [canvasCode] = await once(canvasCheck, "exit");
       assert.equal(canvasCode, 0);
+    }
+    if (process.env.DASHBOARD_SETTINGS_BROWSER_CHECK === "1") {
+      const check = spawn(process.execPath, [path.join(root, "scripts/settings-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie }, stdio: "inherit" });
+      const [code] = await once(check, "exit"); assert.equal(code, 0);
     }
     const toggle = "/api/panels/settings/toggle";
     // Browser path: admin session + same-origin header. Automation path: admin session + bearer.

@@ -545,12 +545,27 @@ export function canvasSettingsSection(api) {
       return { wrap, input };
     };
 
-    const images = section("Image allowlist", "One HTTPS prefix per line (at most 16). Image widgets may only use URLs that start with one of these; the page's Content-Security-Policy allows the same origins.");
-    const area = document.createElement("textarea");
-    Object.assign(area, { id: "canvas-allowlist", rows: 3, spellcheck: false, placeholder: "https://images.example.com/stream/", value: current.imageAllowlist.join("\n") });
-    const areaLabel = el("label", "visually-hidden", "Image URL prefixes");
-    areaLabel.htmlFor = area.id;
-    images.append(areaLabel, area);
+    const images = section("Image allowlist", "Add up to 16 HTTPS prefixes. Image widgets can use addresses that begin with an allowed prefix.");
+    const prefixes = [...current.imageAllowlist];
+    if (!prefixes.length) prefixes.push("");
+    const imageRows = el("div", "image-prefix-list");
+    const drawPrefixes = () => {
+      imageRows.replaceChildren();
+      prefixes.forEach((prefix, index) => {
+        const row = el("div", "image-prefix-row");
+        const value = document.createElement("input"); value.type = "url";
+        value.id = index === 0 ? "canvas-allowlist" : `canvas-allowlist-${index}`;
+        value.value = prefix; value.placeholder = "https://images.example.com/stream/";
+        value.setAttribute("aria-label", `Allowed image URL prefix ${index + 1}`);
+        value.oninput = () => { prefixes[index] = value.value; };
+        const remove = button("Remove", `canvas-prefix-remove-${index}`);
+        remove.onclick = () => { prefixes.splice(index, 1); drawPrefixes(); };
+        row.append(value, remove); imageRows.append(row);
+      });
+    };
+    const addPrefix = button("Add image prefix", "canvas-prefix-add");
+    addPrefix.onclick = () => { if (prefixes.length < 16) { prefixes.push(""); drawPrefixes(); } };
+    drawPrefixes(); images.append(imageRows, addPrefix);
 
     const embeds = section("Embed pages", "Pages this deployment serves (set by the operator). A disabled page cannot be used, and widgets that use it drop out of the layout.");
     const embedChecks = current.servedEmbeds.map(path => {
@@ -608,7 +623,7 @@ export function canvasSettingsSection(api) {
         const losing = [...new Set([...draft, ...view.layout.widgets].filter(widget => widget.type === "embed" && disabledEmbeds.includes(widget.props.src)).map(widget => widget.id))];
         if (losing.length && !(await confirm("Disable this embed page?", [`${losing.length} widget${losing.length === 1 ? " uses" : "s use"} it and will drop out of the layout: ${losing.join(", ")}.`, "Re-enabling the page before the next save brings them back.", "Recorded streams keep showing what viewers saw."], "Disable"))) { configStatus.textContent = "Configuration not saved."; return; }
         view.settings = await api("/api/scene/settings", { method: "PUT", body: JSON.stringify({
-          imageAllowlist: area.value.split(/\s+/).filter(Boolean),
+          imageAllowlist: prefixes.map(value => value.trim()).filter(Boolean),
           disabledEmbeds,
           defaults: { embed: { attach: attach.input.value, theme: theme.input.value, opacity: Number(opacity.value) }, metric: { source: source.input.value, color: colour.input.value }, avatar: { mirror: avatarMirror.input.checked }, cat: { mirror: catMirror.input.checked } },
           builtin: { avatar: avatarIn.input.checked, cat: catIn.input.checked, embed: embedIn.input.checked },

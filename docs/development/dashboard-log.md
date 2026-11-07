@@ -852,3 +852,21 @@ Owner request: the dashboard config joins its state in
   data, metrics, and key after start.
 - Host: the repo-tree `.env` was backed up privately and replaced by a symlink
   to `secrets/deploy.env`, so the development instance keeps working.
+
+## 2026-11-06 — OpenClaw settings and scheduled tasks (0.2.9)
+
+- Replaced the JSON-only config editor with grouped controls and synchronized
+  UI/JSON tabs; added scheduled-task CRUD through a signed gateway device.
+- Added prompt/model/schedule/time-zone/execution/delivery forms, paused jobs,
+  conflict checks, responsive light/dark styling, and canvas URL rows.
+- Verified 77 Node 22 tests and all Chromium suites, including new settings
+  coverage. Live temporary disabled-task CRUD and stale-edit rejection passed;
+  all nine original task configurations remained unchanged.
+- Built and deployed the local 0.2.9 image with the standard helper; local and
+  public health passed, unauthenticated task access returned 401. Existing
+  host-backed state and the 0.2.8 rollback container were preserved.
+- Fixed host backup-directory ownership after the prior root-created directory
+  blocked deployment. No new dependencies, environment variables, or ports.
+- Compose validation and diff whitespace checks passed. No secrets, generated
+  binaries, or unrelated work staged; README and deployment docs match runtime.
+- Local deployment only; no GitHub push or Jenkins build claimed.

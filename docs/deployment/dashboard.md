@@ -1042,3 +1042,17 @@ tokens at `low` and `high` (72 and 72), so CPA currently does not apply
 not an OpenClaw one. The bigger latency cost is unrelated to thinking: CPA does
 not list `claude-opus-5-5-high`, so every turn spends about 20 s on the failing
 primary before falling back.
+
+### Structured OpenClaw settings and scheduled tasks (0.2.9)
+
+The OpenClaw Settings and Scheduled tasks tabs are administrator-only and share
+the `openclaw-config` panel switch. The task manager uses the existing gateway
+endpoint and token; no extra port or environment variable is required. Preserve
+`openclaw-device.json` in the host-backed dashboard state directory: it is the
+private paired device identity for gateway scheduling calls. Local pairing uses
+the gateway's existing trusted-local policy; remote pairing uses normal device
+approval. Never expose this key through public routes or logs.
+
+Configuration backups, recordings, metrics, and the existing mounts remain
+unchanged. See [the settings runbook](../development/openclaw-settings.md) for
+the forms, JSON fallback, APIs, validation, and browser verification.

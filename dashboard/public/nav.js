@@ -6,6 +6,7 @@
 // per-panel soft toggle, admin-only gate, and data routes stay unchanged.
 import { $, api, el, esc } from "/api.js";
 import { renderUsage, renderQuota } from "/metrics.js";
+import { renderScheduledTasks } from "/scheduled-tasks.js";
 import { renderConfigEditor } from "/config-editor.js";
 import { renderSummary } from "/usage-summary.js";
 import { renderSettings } from "/settings-page.js";
@@ -25,7 +26,7 @@ export const ICONS = {
 };
 
 const GROUP_BLURBS = {
-  openclaw: "Gateway health, agents and model fallbacks, model backends, and the live config.",
+  openclaw: "Manage your assistants, model providers, settings, and scheduled tasks.",
   usage: "Codex quota and token usage. The summary pools accounts; the CPA tab keeps them separate.",
   adapters: "Chat-platform adapters that relay into OpenClaw.",
   builds: "Pipeline build status and last-known-good tag.",
@@ -177,7 +178,7 @@ export function createNavigator(ctx) {
     toggle.checked = panel.enabled;
     const shared = (panel.tabs || []).length > 1 ? ` (${panel.tabs.map(item => item.title).join(", ")})` : "";
     label.append(toggle, el("span", "switch-track"), el("span", "", ` Panel enabled${shared}`));
-    const status = el("span", "hint", panel.enabled ? "Visible to signed-in members." : "Hidden from members; data and actions are off.");
+    const status = el("span", "hint", panel.enabled ? (panel.adminOnly ? "Visible to administrators only." : "Visible to signed-in members.") : "Hidden from members; data and actions are off.");
     status.setAttribute("role", "status");
     if (panel.adminOnly) box.append(el("span", "badge", "Admins only"));
     toggle.onchange = async () => {
@@ -275,7 +276,8 @@ const TAB_RENDERERS = {
       box.append(table(["Provider", "Env var", "Note"], (data.providers || []).map(item => [[item.provider, "mono"], [item.env, "mono"], [item.note || ""]])));
     },
   },
-  "openclaw-config": { render: (pane, { state }) => renderConfigEditor(pane, !!state.user?.isAdmin) },
+  "openclaw-tasks": { cards: false, render: pane => renderScheduledTasks(pane) },
+  "openclaw-config": { cards: false, render: (pane, { state }) => renderConfigEditor(pane, !!state.user?.isAdmin) },
   "usage-summary": { cards: false, render: (pane, { api: apiFn }) => renderSummary(pane, apiFn) },
   "cpa-quota": { cards: false, render: (pane, { api: apiFn }) => renderQuota(pane, apiFn) },
   "usage-metrics": { cards: false, render: (pane, { api: apiFn }) => renderUsage(pane, apiFn) },

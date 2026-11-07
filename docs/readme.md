@@ -100,3 +100,7 @@ Announcement activity retains gateway run IDs and safe reply-generation status.
 The stream reports a parent reply pending after 90 seconds without a completed
 model event. Private conversation text is not inferred from lifecycle markers.
 See the development log for the local parent-announcement delivery repair.
+
+OpenClaw settings use grouped form controls with an optional JSON tab. The
+[scheduled-task editor](development/openclaw-settings.md) manages prompts, models, schedules, time zones,
+and delivery for enabled and paused jobs through the authenticated gateway.

@@ -92,3 +92,7 @@ EXISTING_TAGS="$(git tag --list 'opencode-*')" node scripts/plan-release.mjs pla
 The planner also validates the manifest: a plugin missing from
 `versions.json`, a declared plugin with no file, or a malformed version fails
 there rather than halfway through publishing.
+
+OpenClaw settings use grouped form controls with an optional JSON tab. The
+[scheduled-task editor](docs/development/openclaw-settings.md) manages prompts, models, schedules, time zones,
+and delivery for enabled and paused jobs through the authenticated gateway.

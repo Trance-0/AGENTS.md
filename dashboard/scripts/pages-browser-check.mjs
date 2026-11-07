@@ -84,7 +84,7 @@ try {
   assert.match(await page.locator(".summary-tokens").innerText(), /3\.6K/);
   await page.screenshot({ path: `${shots}/pages-usage-summary-dark.png`, fullPage: true });
   await page.locator('[data-view="openclaw"]').click();
-  assert.deepEqual((await tabs(page)).map(([title]) => title), ["Status", "Backends", "Config"]);
+  assert.deepEqual((await tabs(page)).map(([title]) => title), ["Status", "Backends", "Settings", "Scheduled tasks"]);
 
   // Settings: every control is real and takes effect immediately.
   await page.locator('[data-view="settings"]').click();
