@@ -64,6 +64,30 @@ try {
   assert.equal(await page.getByRole("switch", { name: "Enabled", exact: true }).isChecked(), false);
   await page.getByRole("button", { name: "Create task", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".task-count")?.textContent.includes("3 tasks"));
+  let access = { hash: "initial", ownerEnabled: true, groups: [] };
+  await page.route("**/api/admin/adapters", async route => {
+    if (route.request().method() === "PUT") { const value = route.request().postDataJSON(); access = { ...value, hash: "saved" }; }
+    await route.fulfill({ json: access });
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`${baseURL}/adapters`);
+  await page.getByRole("heading", { name: "AstrBot execution access" }).waitFor();
+  await page.getByText("No groups have execution access.", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Add group", exact: true }).click();
+  await page.getByLabel("Group ID", { exact: true }).fill("123456");
+  await page.getByLabel("Who can execute", { exact: true }).selectOption("selected");
+  await page.getByRole("button", { name: "Add member", exact: true }).click();
+  await page.getByLabel("Sender ID", { exact: true }).fill("654321");
+  await page.getByRole("button", { name: "Save access", exact: true }).click();
+  await page.getByText("Access settings saved.", { exact: true }).waitFor();
+  assert.deepEqual(access.groups, [{ platform: "qq", group_id: "123456", senders: ["654321"] }]);
+  await page.getByRole("button", { name: "Remove group", exact: true }).click();
+  await page.getByRole("button", { name: "Save access", exact: true }).click();
+  await page.getByText("No groups have execution access.", { exact: true }).waitFor();
+  await page.setViewportSize({ width: 390, height: 844 });
+  if (await page.locator("#sidebar").evaluate(node => node.classList.contains("open"))) await page.locator("#hamburger").click();
+  await page.screenshot({ path: `${shots}/adapter-access-mobile.png`, fullPage: true });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   assert.deepEqual(errors, []);
   console.info("Settings Chromium passed: forms/JSON round-trip, private secrets, complete task list, prompt/model/schedule saves, preserved delivery, new disabled tasks, mobile and both themes.");
 } finally { await browser.close(); }

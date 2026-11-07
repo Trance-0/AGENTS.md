@@ -33,6 +33,7 @@ import { MetricsBridge } from "./scene/bridge.js";
 import { mountScene, contentSecurityPolicy, embedSecurityPolicy, embedPaths } from "./scene/routes.js";
 import { embedStatic } from "./scene/embed-static.js";
 import { StreamControl } from "./stream-control.js";
+import { AdapterStore, mountAdapters } from './adapters.js';
 import { UsageLine } from "./usage-line.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -177,6 +178,9 @@ const configStore = config.openclaw.configFile
   ? new OpenClawConfigStore({ file: config.openclaw.configFile, backupDir: path.join(config.dataDir, "openclaw-config-backups") })
   : null;
 mountOpenClawConfig(app, configStore, { requireAuth, requireAdmin, requireCsrf, isEnabled });
+mountAdapters(app, process.env.PCP_ADAPTER_CONFIG_DIR && config.openclaw.configFile
+  ? new AdapterStore(path.join(process.env.PCP_ADAPTER_CONFIG_DIR, 'execution-policy.json'), config.openclaw.configFile) : null,
+  { requireAuth, requireAdmin, requireCsrf, isEnabled });
 mountOpenClawTasks(app, new OpenClawTasks(createGatewayClient({ ...config.openclaw, identityFile: path.join(config.dataDir, "openclaw-device.json") })), { requireAuth, requireAdmin, requireCsrf, isEnabled });
 mountScene(app, { scene, store: sceneStore, streamToken: config.openclaw.streamToken, requireCsrfOrToken, control });
 new MetricsBridge({ scene, broadcast, metrics, quota, secrets: metricsSecrets, isEnabled, emit, settings: () => sceneStore.settings() }).start();
@@ -244,6 +248,7 @@ app.use("/embed", (_req, res) => res.status(404).type("text/plain").send("Embed 
 // --- Static frontend ---
 // Scene assets carry content hashes in their names, so they never change in place.
 app.use("/scene/assets", express.static(path.join(PUBLIC_DIR, "scene", "assets"), { immutable: true, maxAge: "365d", fallthrough: false }));
+app.get("/adapters", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
 app.use(express.static(PUBLIC_DIR));
 
 app.listen(config.port, config.host, () => {

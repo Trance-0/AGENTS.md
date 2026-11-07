@@ -870,3 +870,17 @@ Owner request: the dashboard config joins its state in
 - Compose validation and diff whitespace checks passed. No secrets, generated
   binaries, or unrelated work staged; README and deployment docs match runtime.
 - Local deployment only; no GitHub push or Jenkins build claimed.
+
+## 2026-11-06 — Adapter execution access (0.3.0)
+
+- Added `/adapters` with an administrator list editor for AstrBot group/sender
+  execution access and an owner-DM toggle. The initial group list is empty.
+- A shared private policy directory persists outside the checkout; PCP reads
+  it read-only and reauthorizes execution per tool. Saves retain backups,
+  reject stale edits and require distinct isolated group executors.
+- All 79 server tests and the Chromium settings/adapter checks passed, including
+  administrator/CSRF gates, group/member editing and mobile layout.
+- Compose and the deployment helper carry the shared policy mount.
+- Earlier settings/scheduler and OpenCode bridge commits remain preserved.
+  GitHub publishing is blocked by unavailable credentials; no remote release
+  or webhook deployment is claimed. Local rollout verification follows.

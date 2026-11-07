@@ -114,3 +114,11 @@ See the development log for the local parent-announcement delivery repair.
 OpenClaw settings use grouped form controls with an optional JSON tab. The
 [scheduled-task editor](development/openclaw-settings.md) manages prompts, models, schedules, time zones,
 and delivery for enabled and paused jobs through the authenticated gateway.
+
+### AstrBot adapter access
+
+Administrator channel-access settings are available at `/adapters`. The list
+editor controls owner DM execution and selected groups/senders through a private
+policy directory shared read-only with PCP. Group access starts empty; each group
+requires its own sandboxed execution agent. PCP checks each tool call against
+the current policy and live grant.

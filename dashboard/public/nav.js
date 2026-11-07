@@ -1,3 +1,4 @@
+import { renderAdapters } from '/adapters.js';
 // Sidebar groups and tabbed group pages.
 //
 // The server registry describes every panel's `group`, `order`, and `tabs`
@@ -254,6 +255,7 @@ const panelData = (panel, apiFn) => apiFn(`/api/panels/${encodeURIComponent(pane
 // Tab-specific bodies, keyed by tab ID. Tabs without an entry show the owning
 // panel's status cards and read-only deployment rows only.
 const TAB_RENDERERS = {
+  "adapter-settings": { cards: false, render: pane => renderAdapters(pane) },
   "openclaw-status": {
     async render(pane, { api: apiFn, panel }) {
       const box = el("section", "settings-card");

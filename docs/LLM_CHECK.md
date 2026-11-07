@@ -545,3 +545,17 @@ bullets specific: filenames, command names, outcomes.
   checks passed; the prior container is retained. All nine schedules remain.
 - Diff whitespace, changed-source line/size checks, and secret-path audit
   passed. No public push was requested.
+
+## 2026-11-06 — Adapter execution access (0.3.0)
+
+- Added `/adapters` with an administrator list editor for AstrBot group/sender
+  execution access and an owner-DM toggle. The initial group list is empty.
+- A shared private policy directory persists outside the checkout; PCP reads
+  it read-only and reauthorizes execution per tool. Saves retain backups,
+  reject stale edits and require distinct isolated group executors.
+- All 79 server tests and the Chromium settings/adapter checks passed, including
+  administrator/CSRF gates, group/member editing and mobile layout.
+- Compose and the deployment helper carry the shared policy mount.
+- Earlier settings/scheduler and OpenCode bridge commits remain preserved.
+  GitHub publishing is blocked by unavailable credentials; no remote release
+  or webhook deployment is claimed. Local rollout verification follows.

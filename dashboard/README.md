@@ -204,3 +204,11 @@ See the [Jenkins runbook](../docs/deployment/dashboard.md#jenkins-webhook-deploy
 for job setup, private env paths, container-agent Git pushes, and verification.
 Watching counts browser sessions once across tabs and reconnects. Playback uses
 accessible Play/Pause icons; the public description displays the stream summary.
+
+### AstrBot adapter access
+
+Administrator channel-access settings are available at `/adapters`. The list
+editor controls owner DM execution and selected groups/senders through a private
+policy directory shared read-only with PCP. Group access starts empty; each group
+requires its own sandboxed execution agent. PCP checks each tool call against
+the current policy and live grant.

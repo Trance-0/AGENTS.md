@@ -1,7 +1,7 @@
 services:
   dashboard:
-    image: agent-dashboard:0.2.9
-    container_name: agent-dashboard-v0.2.9
+    image: agent-dashboard:0.3.0
+    container_name: agent-dashboard-v0.3.0
     build:
       context: .
     network_mode: host
@@ -10,6 +10,7 @@ services:
     # owner 1000:1000, mode 600, in a 700 directory. Never in the repo tree.
     env_file: ${DASHBOARD_ENV_FILE:-/home/motuariki/Documents/DockerVolumes/agent-dashboard/secrets/deploy.env}
     environment:
+      PCP_ADAPTER_CONFIG_DIR: /pcp-adapters
       HOST: 127.0.0.1
       PORT: "14143"
       OPENCLAW_ACTIVITY_DIR: /var/log/openclaw-activity
@@ -20,6 +21,11 @@ services:
       # directory becomes an empty mount point, which leaves the route off.
       CIRCTIME_EMBED_DIR: /embed-src/circtime
     volumes:
+      - type: bind
+        source: ${PCP_ADAPTER_CONFIG_HOST_DIR:-/home/motuariki/Documents/DockerVolumes/pcp/adapters}
+        target: /pcp-adapters
+        bind:
+          create_host_path: false
       # Dashboard state (recordings, scene layouts, panel state, config-editor
       # backups, activity cursors): a host directory owned 1000:1000, mode 700.
       # Until 0.2.6 this was the named volume dashboard_dashboard-state;

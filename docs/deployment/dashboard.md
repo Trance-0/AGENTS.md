@@ -1056,3 +1056,11 @@ approval. Never expose this key through public routes or logs.
 Configuration backups, recordings, metrics, and the existing mounts remain
 unchanged. See [the settings runbook](../development/openclaw-settings.md) for
 the forms, JSON fallback, APIs, validation, and browser verification.
+
+### Adapter settings (0.3.0)
+
+Mount `DockerVolumes/pcp/adapters` at `/pcp-adapters` and set
+`PCP_ADAPTER_CONFIG_DIR=/pcp-adapters`. The directory and policy file are owned
+by dashboard uid 1000, mode 700/600. PCP mounts the directory read-only.
+`/adapters` requires administrator access to read/change policy; writes require
+the existing CSRF header and current revision hash. Backups stay beside the policy.

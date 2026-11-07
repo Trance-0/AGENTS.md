@@ -29,7 +29,7 @@ async function init() {
     if (state.user) {
       await loadPanels().catch(error => report(error));
       startUptime();
-      openRoute(location.hash);
+      openRoute(location.hash || (location.pathname === "/adapters" ? "#adapters" : ""));
     }
     const { stream, viewers } = await api("/api/broadcast");
     $("#viewer-count").textContent = viewers;

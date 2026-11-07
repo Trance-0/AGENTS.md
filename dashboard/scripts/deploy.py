@@ -147,6 +147,10 @@ def main():
     config_dir = Path(os.environ.get("OPENCLAW_CONFIG_HOST_DIR", "/home/motuariki/Documents/DockerVolumes/openclaw/config"))
     if not (config_dir / "openclaw.json").is_file():
         raise RuntimeError("Deployment cannot start: dashboard/config mount — shared OpenClaw config directory has no openclaw.json.")
+    adapter_dir = Path(os.environ.get("PCP_ADAPTER_CONFIG_HOST_DIR", "/home/motuariki/Documents/DockerVolumes/pcp/adapters"))
+    adapter_args = []
+    if (adapter_dir / "execution-policy.json").is_file():
+        adapter_args = ["-e", "PCP_ADAPTER_CONFIG_DIR=/pcp-adapters", "--mount", f"type=bind,src={adapter_dir},dst=/pcp-adapters"]
     # Optional circtime uptime-radar build for the scene embed widget, mounted
     # read-only. Unset or missing: the dashboard serves no embeds (route 404).
     embed_dir = Path(os.environ.get("CIRCTIME_EMBED_HOST_DIR", "/home/motuariki/Documents/DockerVolumes/circtime/dist"))
@@ -212,7 +216,7 @@ def main():
             "--mount", f"type=bind,src={metrics_key},dst=/run/secrets/metrics-encryption.key,readonly",
             "--mount", f"type=bind,src={activity_dir},dst=/var/log/openclaw-activity,readonly",
             "--mount", f"type=bind,src={config_dir},dst=/openclaw-config",
-            "--mount", f"type=bind,src={state_dir},dst=/app/data", *embed_args, "--log-opt", "max-size=10m", "--log-opt", "max-file=3",
+            "--mount", f"type=bind,src={state_dir},dst=/app/data", *embed_args, *adapter_args, "--log-opt", "max-size=10m", "--log-opt", "max-file=3",
             "--label", "com.trance0.service=agent-dashboard", "--label", f"org.opencontainers.image.version={version}",
             "--health-cmd", "node -e \"fetch('http://127.0.0.1:14143/healthz',{signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
             "--health-interval", "30s", "--health-timeout", "5s", "--health-retries", "3", image], text=True).strip()
