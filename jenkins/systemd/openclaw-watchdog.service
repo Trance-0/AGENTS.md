@@ -1,0 +1,9 @@
+[Unit]
+Description=OpenClaw independent health and known-good recovery
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/Documents/DockerVolumes/openclaw/deploy/openclaw-release.py --root %h/Documents/DockerVolumes/openclaw/deploy watchdog
+TimeoutStartSec=300
+StandardOutput=append:%h/Documents/DockerVolumes/openclaw/deploy/watchdog.log
+StandardError=append:%h/Documents/DockerVolumes/openclaw/deploy/watchdog.log

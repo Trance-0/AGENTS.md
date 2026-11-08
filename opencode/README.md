@@ -1091,3 +1091,15 @@ Logs are the exception: they live under `~/.local/share/opencode/plugin-logs/`,
 beside the database rather than with the configuration. They are operational
 records, not settings, and must not travel when a config directory is copied to
 another machine — they carry timings, paths and hostnames.
+
+### Context sync and recovery integration
+
+The session manager now registers PCP projects/workspaces, writes versioned
+task context and merges redacted messages by stable identity. Legacy messages
+are mapped without changing their IDs or contents. The plugin is split into
+focused registration, tool and synchronization modules.
+
+The OpenClaw release helper deploys immutable images, verifies runtime identity
+and channel health, and promotes known-good releases after a soak. Its systemd
+watchdog recovers independently of Jenkins; the dashboard reads a restricted
+status record. Staging rollback, recovery and kill-switch checks passed.

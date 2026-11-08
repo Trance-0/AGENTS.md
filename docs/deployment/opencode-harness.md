@@ -123,3 +123,11 @@ webchat emits an empty final event and does not save the answer.
 Rollback: restore the backed-up gateway config and prior gateway image, then
 stop/disable the user service. Restore the desktop settings backup to revert
 its default connection. Keep all state directories and transcripts intact.
+
+## Runtime state relocation
+
+OpenClaw state now lives in `DockerVolumes/openclaw/state`, with the workspace
+under its `workspace/` directory. The ACP `pathMap` points to this host root.
+The former checkout path is a compatibility symlink; the original pre-migration
+tree is retained under `DockerVolumes/openclaw/rollback`. A stopped-write rsync
+checksum and metadata comparison verified the complete tree before recreation.

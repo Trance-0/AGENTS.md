@@ -35,6 +35,8 @@ export type ImportState = {
  * remote store, or both, and each keeps its own append cursor.
  */
 export type PushState = {
+  /** Version 2 uploads stable message IDs instead of relying on append cursors. */
+  identityVersion?: 2
   /** PCP session id this entry was pushed to. */
   sessionID: string
   /** Per-session access token minted by the manager API. */

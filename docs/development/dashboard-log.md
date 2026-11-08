@@ -891,3 +891,17 @@ Owner request: the dashboard config joins its state in
   A local signed owner request executed `python3 -c "print(7*8)"` and correctly
   identified the attached blue image after multiple provider failures. No
   outbound channel message was sent. The group execution allowlist remains empty.
+
+## 2026-11-08 — voice/action integration follow-up
+
+- Adapter group saves now create restricted PCP-tool agents; group commands run
+  in isolated per-chat containers and the live group list remains empty.
+- Replaced the LKG placeholder with the safe read-only watchdog status record.
+- 80 dashboard tests and Chromium adapter/settings checks passed.
+- Session-manager module split and project-aware ID sync passed strict TypeScript,
+  contract loading, stable-message replay and redaction checks.
+- Restored the missing live avatar/cat/Circtime widgets on the existing recording
+  through the authenticated controller API; public Chromium verified both canvases
+  and the sandboxed embed with no page errors.
+- Container recovery tests passed, and clean remote OpenClaw main was built,
+  deployed, soaked and promoted. All evidence stays under DockerVolumes.

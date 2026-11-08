@@ -1064,3 +1064,15 @@ Mount `DockerVolumes/pcp/adapters` at `/pcp-adapters` and set
 by dashboard uid 1000, mode 700/600. PCP mounts the directory read-only.
 `/adapters` requires administrator access to read/change policy; writes require
 the existing CSRF header and current revision hash. Backups stay beside the policy.
+
+### Isolated selected-group execution and known-good status (0.3.1)
+
+`/adapters` saves group/sender lists and provisions a minimal OpenClaw group
+agent automatically. It permits only PCP context/image tools and pcp_execute.
+The trusted PCP executor checks every grant and launches a separate networkless
+container; native filesystem/process/session tools and elevation are denied.
+The live group list remains empty.
+
+Mount `DockerVolumes/openclaw/deploy/status` read-only at `/platform-status` and
+set `PLATFORM_STATUS_DIR`. The Build & LKG panel shows the known-good source
+revision and watchdog freshness without exposing private runtime configuration.

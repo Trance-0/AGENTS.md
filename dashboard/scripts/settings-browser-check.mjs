@@ -86,6 +86,7 @@ try {
   await page.getByText("No groups have execution access.", { exact: true }).waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
   if (await page.locator("#sidebar").evaluate(node => node.classList.contains("open"))) await page.locator("#hamburger").click();
+  await page.waitForTimeout(350);
   await page.screenshot({ path: `${shots}/adapter-access-mobile.png`, fullPage: true });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   assert.deepEqual(errors, []);

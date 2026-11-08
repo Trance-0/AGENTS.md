@@ -1,0 +1,10 @@
+[Unit]
+Description=Check OpenClaw health every minute independently of Jenkins
+
+[Timer]
+OnBootSec=90
+OnUnitActiveSec=60
+Unit=openclaw-watchdog.service
+
+[Install]
+WantedBy=timers.target

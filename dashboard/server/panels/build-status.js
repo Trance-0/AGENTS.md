@@ -1,6 +1,7 @@
 // Jenkins build / LKG status panel. Read-only; uses the agent's read-only
 // Jenkins token (if any) and never exposes credentials.
 
+import { releaseStatus } from "../release-status.js";
 import { config } from "../config.js";
 import { emit } from "../log-bus.js";
 
@@ -20,16 +21,17 @@ export function createBuildStatusPanel(ctx) {
 
     status: async () => {
       const ok = await probe(ctx);
+      const release = releaseStatus();
       return [
         { label: "Jenkins", value: ok ? "up" : "down", tone: ok ? "ok" : "error" },
-        { label: "LKG", value: "n/a", tone: "neutral" },
+        { label: "OpenClaw known-good", value: release ? release.revision.slice(0, 12) : "Not configured", tone: release?.healthy && !release.stale ? "ok" : "neutral" },
+        { label: "Recovery", value: release ? (release.stale ? "Status is stale" : release.action) : "Not configured", tone: release?.stale ? "warn" : "neutral" },
       ];
     },
 
     data: () => ({
       endpoint: config.jenkins.endpoint,
-      // LKG tracking is wired when the platform deploy job is configured.
-      lkg: null,
+      lkg: releaseStatus(),
     }),
   };
 }
