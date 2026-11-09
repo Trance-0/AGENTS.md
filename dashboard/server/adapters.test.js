@@ -35,7 +35,7 @@ test('adapter routes require administrator, CSRF, and enabled panel', async () =
   const auth = (req, res, next) => req.get('x-user') ? next() : res.sendStatus(401);
   const admin = (req, res, next) => req.get('x-user') === 'admin' ? next() : res.sendStatus(403);
   const csrf = (req, res, next) => req.get('x-dashboard-request') === '1' ? next() : res.sendStatus(403);
-  mountAdapters(app, { read: () => ({ groups: [] }), save: () => ({ groups: [] }) }, { requireAuth: auth, requireAdmin: admin, requireCsrf: csrf, isEnabled: () => enabled });
+  mountAdapters(app, { read: () => ({ groups: [] }), save: () => ({ groups: [] }) }, { requireAuth: auth, requireAdmin: admin, requireCsrf: csrf, isEnabled: () => enabled, executionReady: async () => false });
   const server = app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r));
   const url = `http://127.0.0.1:${server.address().port}/api/admin/adapters`;
   try {
@@ -43,6 +43,7 @@ test('adapter routes require administrator, CSRF, and enabled panel', async () =
     assert.equal((await fetch(url, { headers: { 'x-user': 'viewer' } })).status, 403);
     assert.equal((await fetch(url, { method: 'PUT', headers: { 'x-user': 'admin' } })).status, 403);
     assert.equal((await fetch(url, { method: 'PUT', headers: { 'x-user': 'admin', 'x-dashboard-request': '1' } })).status, 200);
+    assert.equal((await fetch(url, { method: 'PUT', headers: { 'x-user': 'admin', 'x-dashboard-request': '1', 'content-type': 'application/json' }, body: JSON.stringify({ groups: [{ group_id: 'test' }] }) })).status, 409);
     enabled = false;
     assert.equal((await fetch(url, { headers: { 'x-user': 'admin' } })).status, 404);
   } finally { server.closeAllConnections(); await new Promise(r => server.close(r)); }

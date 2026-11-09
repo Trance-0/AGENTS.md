@@ -924,3 +924,14 @@ property selects red/yellow/green status colors over the last 48 hours.
   Canvas layouts, new pointer/avatar/quota features and scheduled-task settings).
   Production Node 22 Alpine image built successfully with normalized avatar
   imports. Circtime public embed checks confirmed black/white backgrounds.
+
+- Production rollout: GitHub-triggered Jenkins #28 succeeded on main revision
+  14c1f396a80ee86fc447dc0da8e6929988265b70. Public/local health and the
+  installed stream-plugin/source comparison passed. The original live recording
+  a6dc9887-8088-4989-ba23-89752fe15926 still contains avatar, cat and backdrop.
+- Live CPA refresh succeeded and produced a current timestamped snapshot.
+  Public browser checks found both visible canvases and the sandboxed Circtime
+  iframe, no page errors, black dark-theme and white light-theme backgrounds.
+- Added an adapter compatibility gate: selected group access cannot be enabled
+  before PCP >=0.4.1 and the isolated executor are healthy. The live group list
+  is unchanged. Focused adapter authorization/readiness tests passed.

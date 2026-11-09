@@ -54,7 +54,13 @@ export class AdapterStore {
   }
 }
 
-export function mountAdapters(app, store, { requireAuth, requireAdmin, requireCsrf, isEnabled }) {
+export function mountAdapters(app, store, { requireAuth, requireAdmin, requireCsrf, isEnabled, executionReady = async () => {
+  try {
+    const [pcp, runner] = await Promise.all([fetch("http://127.0.0.1:3000/api/v1/health", { signal: AbortSignal.timeout(3000) }), fetch("http://127.0.0.1:3103/healthz", { signal: AbortSignal.timeout(3000) })]);
+    const version = (await pcp.json()).version?.split(".").map(Number);
+    return pcp.ok && runner.ok && version && (version[0] > 0 || version[1] > 4 || (version[1] === 4 && version[2] >= 1));
+  } catch { return false; }
+} }) {
   const available = async (_req, res, next) => {
     if (!await isEnabled('adapter-settings')) return res.status(404).json({ error: 'Adapter settings unavailable: dashboard/panel lookup — panel is disabled.' });
     if (!store) return res.status(503).json({ error: 'Adapter settings unavailable: dashboard/adapter storage — shared policy directory is not configured.' });
@@ -62,5 +68,9 @@ export function mountAdapters(app, store, { requireAuth, requireAdmin, requireCs
   };
   const route = fn => (req, res, next) => { try { res.set('Cache-Control', 'no-store').json(fn(req)); } catch (e) { if (e.status) res.status(e.status).json({ error: e.message }); else next(e); } };
   app.get('/api/admin/adapters', requireAuth, requireAdmin, available, route(() => store.read()));
-  app.put('/api/admin/adapters', requireAuth, requireAdmin, requireCsrf, available, route(req => store.save(req.body)));
+  const ready = (req, res, next) => {
+    if (!req.body?.groups?.length) return next();
+    Promise.resolve(executionReady()).then(ok => ok ? next() : res.status(409).json({ error: "Group access not saved: dashboard/adapter readiness — the compatible PCP release and isolated executor must be running first. Existing access is unchanged." })).catch(next);
+  };
+  app.put('/api/admin/adapters', requireAuth, requireAdmin, requireCsrf, available, ready, route(req => store.save(req.body)));
 }
