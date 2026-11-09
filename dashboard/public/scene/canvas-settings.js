@@ -83,6 +83,7 @@ export function canvasSettingsSection(api) {
   // ---------- Preview ----------
   const previewWrap = el("figure", "canvas-preview-wrap");
   const preview = el("div", "canvas-preview");
+  preview.tabIndex = 0;
   preview.setAttribute("aria-label", "Canvas layout preview: drag widgets to move, drag corner handles to resize, or draw an empty rectangle to add a widget");
   const log = el("div", "stream-log canvas-preview-log");
   for (const [t, source, msg] of [["0:12:03", "openclaw", "Reading the deployment log for the dashboard service…"], ["0:12:09", "openclaw", "Tests passed: 61 of 61. Building the image."], ["0:12:20", "dashboard", "Scene metrics updated: 2 pooled public values refreshed."], ["0:12:31", "openclaw", "Deploy finished; the health check is green."]]) {
@@ -221,7 +222,7 @@ export function canvasSettingsSection(api) {
       section.append(items);
       list.append(section);
     }
-    if (focusKey) list.querySelector(`[data-key="${CSS.escape(focusKey)}"]`)?.focus();
+    if (focusKey) list.querySelector(`[data-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
 
   function ordered(group) {
@@ -244,7 +245,7 @@ export function canvasSettingsSection(api) {
     const name = el("span", "canvas-name");
     name.append(el("strong", "", widget.id), el("span", "canvas-desc", describe(widget)));
     pick.append(type, name);
-    pick.onclick = () => select(widget.id, { focus: true });
+    pick.onclick = () => select(widget.id);
     const where = groupOf(widget) === "log" ? "of the log box" : "of the stage";
     const geometry = el("span", "canvas-geometry", `${pct(widget.x)}, ${pct(widget.y)} · ${pct(widget.w)} × ${pct(widget.h)} ${where}`);
     const layer = el("span", "canvas-layer", `Layer ${widget.z}`);
@@ -392,7 +393,7 @@ export function canvasSettingsSection(api) {
   function select(id, { focus = false } = {}) {
     selected = id;
     renderAll();
-    if (focus) editor.querySelector("input, select")?.focus();
+    if (focus) editor.querySelector("input, select")?.focus({ preventScroll: true });
   }
 
   function topZ(group) {

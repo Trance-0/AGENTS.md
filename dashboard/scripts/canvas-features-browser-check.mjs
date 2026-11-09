@@ -16,6 +16,35 @@ page.on('pageerror', e => errors.push(e.message));
 try {
   await page.goto('/#canvas/canvas-layout', { waitUntil: 'domcontentloaded' });
   await page.locator('#canvas-settings .canvas-row').first().waitFor();
+  // Changing only monochrome must update the existing iframe immediately.
+  await page.locator('#canvas-widgets [data-widget-id="backdrop"] .canvas-row-main').click();
+  const backdrop = page.locator('.canvas-preview [data-widget-id="backdrop"] iframe');
+  await page.locator('#canvas-field-monochrome').check();
+  await page.waitForFunction(() => new URL(document.querySelector('.canvas-preview [data-widget-id="backdrop"] iframe').src).searchParams.get('monochrome') === '1');
+  await page.locator('#canvas-field-monochrome').uncheck();
+  await page.waitForFunction(() => !new URL(document.querySelector('.canvas-preview [data-widget-id="backdrop"] iframe').src).searchParams.has('monochrome'));
+  assert.equal(await backdrop.count(), 1, 'one iframe is reused across color toggles');
+  // Keep a list control focused, then select/drag on the preview at mobile size.
+  // Rebuilding the list must not refocus it below the canvas.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('#canvas-widgets [data-widget-id="cat"] .canvas-row-main').click();
+  await page.locator('.canvas-preview').scrollIntoViewIfNeeded();
+  await page.waitForTimeout(100);
+  const scrollState = () => page.evaluate(() => [window.scrollY, ...[...document.querySelectorAll('.content')].map(el => el.scrollTop)]);
+  const scrollBefore = await scrollState();
+  const avatar = page.locator('.canvas-preview [data-widget-id="avatar"]');
+  let rect = await avatar.boundingBox();
+  await page.mouse.click(rect.x + rect.width / 2, rect.y + rect.height / 2);
+  assert.deepEqual(await scrollState(), scrollBefore, 'preview selection does not scroll to properties');
+  assert.equal(await page.locator('#canvas-widgets [data-widget-id="avatar"] .canvas-row-main').getAttribute('aria-pressed'), 'true');
+  assert.match(await page.locator('#canvas-editor-title').textContent(), /avatar/i);
+  assert.equal(await page.evaluate(() => !!document.activeElement.closest('#canvas-editor, #canvas-widgets')), false, 'preview owns focus after selection');
+  rect = await avatar.boundingBox();
+  await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2); await page.mouse.down();
+  await page.mouse.move(rect.x + rect.width / 2 - 10, rect.y + rect.height / 2 + 6, { steps: 4 }); await page.mouse.up();
+  assert.deepEqual(await scrollState(), scrollBefore, 'preview dragging does not scroll to properties');
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.locator('.canvas-preview').scrollIntoViewIfNeeded();
   const widget = page.locator('.canvas-preview [data-widget-id="avatar"]');
   await widget.waitFor(); const before = await widget.boundingBox();
   await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
@@ -55,5 +84,5 @@ try {
   await page.getByRole('button', { name: 'Check now', exact: true }).click();
   await page.waitForTimeout(100); assert.equal(refreshes, 2);
   assert.deepEqual(errors, []);
-  console.info('Canvas feature Chromium passed: pointer move/resize/draw, blink settings, ZIP upload/download, automatic quota refresh and update time.');
+  console.info('Canvas feature Chromium passed: monochrome on/off without changing theme, selection/drag scroll stability, pointer move/resize/draw, blink settings, ZIP upload/download, automatic quota refresh and update time.');
 } finally { await browser.close(); }

@@ -12,6 +12,9 @@ export function enablePreviewEditing({ preview, renderer, getWidgets, isEditable
     const rect = layer.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
     event.preventDefault();
+    // Clear focus from the previous property/list control before rebuilding
+    // those views; keep the pointer interaction anchored to this preview.
+    preview.focus({ preventScroll: true });
     if (widget) select(widget.id);
     gesture = { id: widget?.id, original: widget ? structuredClone(widget) : null, rect,
       x: event.clientX, y: event.clientY, resize: event.target.classList.contains('preview-resize'), moved: false };

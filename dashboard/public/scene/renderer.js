@@ -207,7 +207,7 @@ export class SceneRenderer {
       } else if (widget.type === "embed") {
         // A fixed theme is part of the URL; "system" follows the dashboard
         // theme by postMessage without a reload.
-        const key = `${props.src}|${props.theme ?? "system"}`;
+        const key = `${props.src}|${props.theme ?? "system"}|${!!props.monochrome}`;
         if (node.srcKey !== key) {
           node.srcKey = key;
           const src = this.embedSrc(props.src, props.theme, props.monochrome);
