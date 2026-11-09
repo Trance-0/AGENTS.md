@@ -9,7 +9,7 @@ test("panels group into ordered sidebar pages with tab metadata", async () => {
   registerPanel({ id: "loose", title: "Loose" });
   assert.throws(() => registerPanel({ id: "bad", title: "Bad", group: "nowhere" }), /unknown group nowhere/);
   assert.throws(() => registerPanel({ id: "bad", title: "Bad", group: "usage", tabs: [{ id: "Bad Tab", title: "x" }] }), /valid ID/);
-  assert.deepEqual(GROUPS.map(group => group.id), ["live", "openclaw", "usage", "adapters", "builds", "settings"]);
+  assert.deepEqual(GROUPS.map(group => group.id), ["live", "openclaw", "usage", "adapters", "canvas", "builds", "settings"]);
   const member = await snapshot({ isAdmin: false });
   assert.deepEqual(member.map(panel => panel.id), ["alpha", "zeta", "loose"], "sorted by order, admin-only hidden");
   assert.deepEqual(member.find(panel => panel.id === "alpha").tabs, [{ id: "alpha-one", title: "One" }, { id: "alpha-two", title: "Two" }]);

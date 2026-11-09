@@ -13,16 +13,19 @@
 ## Required next, in order
 
 - [x] Publish and merge PCP execution/media integration to Nesbitt-bot main (PR 6).
-- [ ] Resolve deployment-fork write permission and verify the PCP Jenkins webhook and SHA.
-- [ ] Publish dashboard integration; merge ai-infra-v0 into main with coordinated Jenkins branch change.
-- [ ] Authenticate OpenClaw forge, publish source-only fixes and create a reproducible deployment pipeline including ACP plugin/service installation.
-- [ ] Move OpenClaw session/workspace runtime state out of the source checkout with stopped-write manifest verification and rollback.
-- [ ] Separate agent build authority from owner deployment/recovery controls; protect history and deployment tags.
-- [ ] Implement independent watchdog, immutable known-good image records, kill switch and staging rollback/restore tests; wire the dashboard LKG placeholder.
+- [x] Owner synchronized PCP to the Trance-0 deployment fork; real webhook build #7 succeeded on 8d4fddf.
+- [x] Merge dashboard integration to main (PR 1); Jenkins switched to main and real webhook build #27 succeeded on d559739.
+- [x] Publish and merge OpenClaw source-only fixes (private forge PR 12), excluding runtime-config backup changes.
+- [ ] Create a reproducible OpenClaw deployment pipeline including ACP plugin/service installation.
+- [x] Move OpenClaw state to DockerVolumes/openclaw/state; full stopped-write checksum/metadata comparison passed and original tree retained for rollback.
+- [ ] Container-only execution isolation and protected recovery configuration; separate Unix users and forge-admin setup were explicitly dropped by the owner.
+- [x] Independent watchdog, immutable known-good image records and kill switch installed; staging broken-image rollback and recovery passed.
+- [ ] Ship dashboard known-good release status panel.
 - [ ] Complete project/workspace registration and versioned context synchronization in OpenCode/openclaw-pcp; merge-task worker and post-backfill retention.
 - [ ] Finish PCP claim/identity/credential UI, session revocation and non-admin control visibility.
-- [ ] Provision isolated group executors before enabling groups through `/adapters`.
-- [ ] Documents/audio/video, media backfill, OCR/captions and retention/GC.
+- [x] Dashboard provisions restricted agents for selected groups; execution runs in per-chat isolated containers. Live allowlist stays empty.
+- [x] AstrBot voice attachments and local transcription implemented.
+- [ ] Documents/video, media backfill, OCR/captions and retention/GC.
 - [ ] Replace original placeholder checks and complete end-to-end recovery acceptance.
 
 Publishing uses the existing OpenClaw Nesbitt-bot credentials. That account has

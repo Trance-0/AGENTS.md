@@ -1,3 +1,4 @@
+import { renderAvatarLibrary } from "/scene/avatar-library.js";
 import { renderAdapters } from '/adapters.js';
 // Sidebar groups and tabbed group pages.
 //
@@ -255,6 +256,8 @@ const panelData = (panel, apiFn) => apiFn(`/api/panels/${encodeURIComponent(pane
 // Tab-specific bodies, keyed by tab ID. Tabs without an entry show the owning
 // panel's status cards and read-only deployment rows only.
 const TAB_RENDERERS = {
+  "avatar-library": { cards: false, render: pane => renderAvatarLibrary(pane) },
+  "canvas-layout": { cards: false, render: pane => pane.append(canvasSettingsSection(api)) },
   "adapter-settings": { cards: false, render: pane => renderAdapters(pane) },
   "openclaw-status": {
     async render(pane, { api: apiFn, panel }) {
@@ -283,5 +286,5 @@ const TAB_RENDERERS = {
   "usage-summary": { cards: false, render: (pane, { api: apiFn }) => renderSummary(pane, apiFn) },
   "cpa-quota": { cards: false, render: (pane, { api: apiFn }) => renderQuota(pane, apiFn) },
   "usage-metrics": { cards: false, render: (pane, { api: apiFn }) => renderUsage(pane, apiFn) },
-  settings: { cards: false, render: (pane, { state, ctx }) => renderSettings(pane, { state, setPanelEnabled: ctx.setPanelEnabled, onPanelsChanged: ctx.renderSidebar, extraAdminSections: [() => canvasSettingsSection(api)] }) },
+  settings: { cards: false, render: (pane, { state, ctx }) => renderSettings(pane, { state, setPanelEnabled: ctx.setPanelEnabled, onPanelsChanged: ctx.renderSidebar }) },
 };

@@ -166,3 +166,19 @@
   .canvas-toolbar select { flex: 1 1 auto; min-width: 0; }
   .canvas-geo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+.preview-editable { touch-action: none; }
+.preview-editable .scene-stage, .preview-editable .scene-log-back { pointer-events: auto; }
+.preview-editable .scene-widget { pointer-events: auto; cursor: move; touch-action: none; }
+.preview-resize { position: absolute; right: 0; bottom: 0; width: 14px; height: 14px; background: #007aff; border: 2px solid white; cursor: nwse-resize; z-index: 1000; touch-action: none; }
+.preview-draw-box { position: absolute; border: 2px dashed #007aff; background: #007aff22; z-index: 2000; pointer-events: none; }
+
+.avatar-library .settings-card { margin-block: 16px; }
+.avatar-library input, .avatar-library select { max-width: 100%; padding: 8px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; }
+.avatar-library .settings-card > input { margin: 8px; }
+.avatar-states { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 12px 0; }
+.avatar-state { display: grid; grid-template-columns: 64px 1fr; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; }
+.avatar-state img { grid-row: span 3; width: 64px; height: 88px; object-fit: contain; background: repeating-conic-gradient(#7772 0% 25%, transparent 0% 50%) 50% / 12px 12px; }
+
+.preview-editable .scene-back { pointer-events: auto; }
+.canvas-settings .action-btn { min-height: 36px; }

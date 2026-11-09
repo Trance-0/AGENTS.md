@@ -20,9 +20,13 @@ test('adapter access saves atomically, rejects stale edits, and keeps groups iso
     assert.deepEqual(next.groups, groups);
     assert.throws(() => store.save({ baseHash: initial.hash, ownerEnabled: false, groups: [] }), /settings changed/);
     assert.throws(() => store.save({ baseHash: next.hash, ownerEnabled: true, groups: [...groups, ...groups] }), /duplicate group/);
-    assert.throws(() => store.save({ baseHash: next.hash, ownerEnabled: true, groups: [{ ...groups[0], group_id: '999' }] }), /isolated execution agent/);
+    const configured = JSON.parse(fs.readFileSync(config)).agents.list.find(a => a.id === id);
+    assert.deepEqual(configured.tools.alsoAllow, ['pcp_context', 'pcp_search', 'pcp_attachment', 'pcp_execute']);
+    assert.equal(configured.tools.elevated.enabled, false);
+    assert.ok(configured.tools.deny.includes('group:runtime'));
+    assert.ok(configured.workspace.includes('group-agents/'));
     assert.equal(fs.statSync(file).mode & 0o777, 0o600);
-    assert.equal(fs.readdirSync(path.join(dir, 'backups')).length, 1);
+    assert.equal(fs.readdirSync(path.join(dir, 'backups')).filter(name => name.endsWith('.json')).length, 1);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

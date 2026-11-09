@@ -1064,3 +1064,40 @@ Mount `DockerVolumes/pcp/adapters` at `/pcp-adapters` and set
 by dashboard uid 1000, mode 700/600. PCP mounts the directory read-only.
 `/adapters` requires administrator access to read/change policy; writes require
 the existing CSRF header and current revision hash. Backups stay beside the policy.
+
+### Isolated selected-group execution and known-good status (0.3.1)
+
+`/adapters` saves group/sender lists and provisions a minimal OpenClaw group
+agent automatically. It permits only PCP context/image tools and pcp_execute.
+The trusted PCP executor checks every grant and launches a separate networkless
+container; native filesystem/process/session tools and elevation are denied.
+The live group list remains empty.
+
+Mount `DockerVolumes/openclaw/deploy/status` read-only at `/platform-status` and
+set `PLATFORM_STATUS_DIR`. The Build & LKG panel shows the known-good source
+revision and watchdog freshness without exposing private runtime configuration.
+
+### Avatar packs and Circtime controls (0.4.0)
+
+Avatar files persist under `/app/data/avatars` on the existing state bind.
+Imported images are re-encoded as PNG without metadata. ZIPs are limited to
+12 MiB compressed, 24 MiB expanded, 64 entries and 16 named states, with an
+idle state required. Frame types: PNG/JPEG/WebP/GIF (first frame for animations).
+Arbitrary SVG/HTML and private remote URL targets are refused. Content-addressed
+pack IDs and immutable image URLs preserve older recordings after edits.
+
+The optional manifest is `{"name":"My avatar","states":{"idle":"idle.png",
+"blink":"blink.png","talk":"talk.png","think":"think.png","sleepy":"sleepy.png"}}`.
+Without a manifest, image filenames become state names. Uploads, remote imports,
+state edits and downloads require an administrator. OpenClaw's `scene` action
+returns installed pack/state names; its avatar action validates installed names.
+
+Usage Summary and CPA views request fresh quota on load, sharing the existing
+30-second single-flight limit. Failures keep the previous timestamped snapshot.
+Live metric widgets refresh immediately when loaded/created and periodically
+according to Canvas settings.
+
+Circtime's monitor rebuilds the served public-safe files from its source checkout.
+`theme=dark` uses black, `theme=light` uses white, and `monochrome=1` selects
+status colors. The dashboard iframe stays sandboxed and read-only. The Circtime
+upstream contribution is https://github.com/Trance-0/circtime/pull/1.

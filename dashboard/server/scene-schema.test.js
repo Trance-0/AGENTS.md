@@ -90,7 +90,7 @@ test("embeds accept only dashboard-served allowlisted paths and default to a fai
   assert.deepEqual(embeds, ["/embed/circtime/"]);
   assert.deepEqual(embedPaths({ circtimeEmbedDir: "" }), [], "no directory, no embeds");
   const embed = props => ({ id: "e1", type: "embed", x: 0, y: 0, w: 1, h: 1, props });
-  assert.deepEqual(validateWidget(embed({ src: "/embed/circtime/" }), { embeds }).props, { src: "/embed/circtime/", attach: "log", opacity: 0.3, theme: "system" });
+  assert.deepEqual(validateWidget(embed({ src: "/embed/circtime/" }), { embeds }).props, { src: "/embed/circtime/", attach: "log", opacity: 0.3, theme: "system", monochrome: false });
   rejects(embed({ src: "/embed/circtime/", attach: "player" }), /attach' must be one of log, stage/, { embeds });
   rejects(embed({ src: "/embed/circtime/", theme: "neon" }), /theme' must be one of system, dark, light/, { embeds });
   for (const src of ["/embed/other/", "https://circtime.example/", "//evil.example/embed/circtime/", "/embed/circtime/../../api/scene/layout", "javascript:alert(1)", "/embed/circtime"]) rejects(embed({ src }), /dashboard-served embeds/, { embeds });
@@ -99,7 +99,7 @@ test("embeds accept only dashboard-served allowlisted paths and default to a fai
   rejects(embed({ src: "/embed/circtime/", opacity: 0 }), /opacity' must be a number from 0.05 to 1/, { embeds });
   rejects(embed({ src: "/embed/circtime/", sandbox: "allow-same-origin" }), /no field 'props.sandbox'/, { embeds });
   const [backdrop, ...rest] = builtinLayout({ embeds });
-  assert.deepEqual(backdrop, { id: "backdrop", type: "embed", x: 0, y: 0, w: 1, h: 1, z: 0, props: { src: "/embed/circtime/", attach: "log", opacity: 0.3, theme: "system" } });
+  assert.deepEqual(backdrop, { id: "backdrop", type: "embed", x: 0, y: 0, w: 1, h: 1, z: 0, props: { src: "/embed/circtime/", attach: "log", opacity: 0.3, theme: "system", monochrome: false } });
   assert.deepEqual(rest.map(widget => widget.type), ["avatar", "cat"]);
   assert.deepEqual(validateLayout({ widgets: builtinLayout({ embeds }) }, { embeds }).length, 3);
   assert.equal(builtinLayout().some(widget => widget.type === "embed"), false, "no embed without a served page");
@@ -144,10 +144,10 @@ test("widgets can be hidden without changing the shape of visible widgets", () =
 
 test("scene settings validate and merge; defaults fill new widgets", () => {
   const base = defaultSettings();
-  assert.deepEqual(base.defaults, { metric: { source: "cpa.codex.5h", color: "snow" }, avatar: { mirror: false }, cat: { mirror: false }, embed: { attach: "log", opacity: 0.3, theme: "system" } });
+  assert.deepEqual(base.defaults, { metric: { source: "cpa.codex.5h", color: "snow" }, avatar: { mirror: false, pack: "witch", state: "auto", blinkInterval: 4.2, blinkDuration: 0.16 }, cat: { mirror: false }, embed: { attach: "log", opacity: 0.3, theme: "system", monochrome: false } });
   assert.deepEqual(base.metricRefresh, { minutes: 5, cpa: true });
   const next = normalizeSettings({ defaults: { embed: { opacity: 0.5 }, metric: { source: "tokens.7d" } }, metricRefresh: { minutes: 10 } }, base);
-  assert.deepEqual([next.defaults.embed, next.defaults.metric.source, next.metricRefresh], [{ attach: "log", opacity: 0.5, theme: "system" }, "tokens.7d", { minutes: 10, cpa: true }]);
+  assert.deepEqual([next.defaults.embed, next.defaults.metric.source, next.metricRefresh], [{ attach: "log", opacity: 0.5, theme: "system", monochrome: false }, "tokens.7d", { minutes: 10, cpa: true }]);
   const kept = normalizeSettings({ imageAllowlist: ["https://img.example.com/a"] }, next);
   assert.deepEqual([kept.imageAllowlist, kept.defaults.embed.opacity, kept.metricRefresh.minutes], [["https://img.example.com/a/"], 0.5, 10], "missing keys keep their current values");
   for (const [input, pattern] of [
@@ -163,7 +163,7 @@ test("scene settings validate and merge; defaults fill new widgets", () => {
     [{ defaults: { __proto__: { x: 1 } } }, /./],
   ]) assert.throws(() => normalizeSettings(input, base), error => pattern.test(error.reason), JSON.stringify(input));
   const filled = withDefaults({ type: "embed", props: { src: "/embed/circtime/", theme: "dark" } }, next.defaults);
-  assert.deepEqual(filled.props, { src: "/embed/circtime/", theme: "dark", attach: "log", opacity: 0.5 }, "explicit props win over defaults");
+  assert.deepEqual(filled.props, { src: "/embed/circtime/", theme: "dark", attach: "log", opacity: 0.5, monochrome: false }, "explicit props win over defaults");
   assert.deepEqual(withDefaults({ type: "metric" }, next.defaults).props, { source: "tokens.7d", color: "snow" });
   assert.deepEqual(withDefaults({ type: "text", props: { text: "Hi" } }, next.defaults).props, { text: "Hi" });
   const builtin = builtinLayout({ embeds: ["/embed/circtime/"], settings: normalizeSettings({ builtin: { cat: false }, defaults: { avatar: { mirror: true }, embed: { theme: "light" } } }, base) });
@@ -175,7 +175,7 @@ test("Canvas settings turns the live scene into the draft with the fewest operat
   const a = { id: "a", type: "text", x: 0.1, y: 0.1, w: 0.2, h: 0.1, z: 100, props: { text: "A", size: 28, color: "snow", align: "left", card: true } };
   const b = { id: "b", type: "cat", x: 0.7, y: 0.6, w: 0.2, h: 0.2, z: 101, props: { mirror: false } };
   const legacy = { id: "backdrop", type: "embed", x: 0, y: 0, w: 1, h: 1, z: 0, props: { src: "/embed/circtime/", opacity: 0.3 } };
-  const migrated = { ...legacy, props: { src: "/embed/circtime/", attach: "log", opacity: 0.3, theme: "system" } };
+  const migrated = { ...legacy, props: { src: "/embed/circtime/", attach: "log", opacity: 0.3, theme: "system", monochrome: false } };
   assert.deepEqual(liveDiff([a, b], [a, b]), []);
   assert.deepEqual(liveDiff([a, { ...b, props: { mirror: false } }], [{ ...a, props: { card: true, align: "left", color: "snow", size: 28, text: "A" } }, b]), [], "key order does not matter");
   const ops = liveDiff([a, b, legacy], [{ ...a, hidden: true }, migrated, { ...a, id: "c" }]);

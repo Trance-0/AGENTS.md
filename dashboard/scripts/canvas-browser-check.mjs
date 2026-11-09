@@ -25,7 +25,7 @@ async function context(cookie, { width = 1440, height = 900, colorScheme = "dark
   await ctx.addInitScript(() => document.addEventListener("securitypolicyviolation", event => { (window.__csp ||= []).push(`${event.violatedDirective} ${event.blockedURI}`); }));
   return ctx;
 }
-async function open(ctx, path = "/#settings") {
+async function open(ctx, path = "/#canvas/canvas-layout") {
   const page = await ctx.newPage();
   page.on("pageerror", error => {
     const text = `${error.message} ${(error.stack || "").split("\n").slice(1, 3).join(" ").trim()}`;
@@ -79,7 +79,7 @@ const audit = page => page.evaluate(() => {
 try {
   // ---------- Guests and members never see it ----------
   const guest = await context(undefined);
-  const guestPage = await open(guest, "/#settings");
+  const guestPage = await open(guest, "/#canvas/canvas-layout");
   assert.equal(await guestPage.locator("#canvas-settings").count(), 0, "guests have no canvas settings");
   assert.equal((await json(guestPage, "/api/scene/layout")).status, 401);
   assert.equal((await json(guestPage, "/api/scene/settings", { method: "PUT", body: "{}" })).status, 401);
@@ -95,7 +95,7 @@ try {
 
   // ---------- Admin: a known starting point ----------
   const admin = await context(process.env.DASHBOARD_TEST_COOKIE);
-  const page = await open(admin, "/#settings");
+  const page = await open(admin, "/#canvas/canvas-layout");
   await page.waitForSelector("#canvas-settings .canvas-row");
   // The settings call must carry the same-origin header: without it the server refuses.
   assert.equal(await page.evaluate(() => fetch("/api/scene/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: "{}" }).then(r => r.status)), 403);
@@ -194,7 +194,7 @@ try {
   const savedTitle = saved.layout.widgets.find(widget => widget.id === added);
   assert.deepEqual([savedTitle.props.text, savedTitle.props.size, savedTitle.props.color, savedTitle.x], ["Canvas title", 40, "teal", 0.2], "x was clamped to 20% when the width grew to 80%");
   assert.equal(saved.layout.widgets.find(widget => widget.id === "cat").props.mirror, true);
-  assert.deepEqual(saved.layout.widgets.find(widget => widget.id === "backdrop").props, { src: "/embed/circtime/", attach: "log", opacity: 0.3, theme: "system" });
+  assert.deepEqual(saved.layout.widgets.find(widget => widget.id === "backdrop").props, { src: "/embed/circtime/", attach: "log", opacity: 0.3, theme: "system", monochrome: false });
   assert.match(await page.locator(".canvas-summary").textContent(), /Draft matches the saved layout/);
   assert.equal(saved.live, null);
   assert.equal(await page.locator("#canvas-apply").isDisabled(), true, "Apply needs a live stream");
@@ -270,7 +270,7 @@ try {
   assert.deepEqual(await audit(page), [], "light theme design audit");
   for (const theme of ["light", "dark"]) {
     const mobile = await context(process.env.DASHBOARD_TEST_COOKIE, { width: 390, height: 844, colorScheme: theme });
-    const phone = await open(mobile, "/#settings");
+    const phone = await open(mobile, "/#canvas/canvas-layout");
     await phone.evaluate(value => globalThis.dashboardTheme.set(value), theme);
     await phone.waitForSelector("#canvas-settings .canvas-row");
     await phone.waitForFunction(() => document.querySelector(".canvas-preview .scene-stage .scene-widget"));

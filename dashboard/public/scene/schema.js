@@ -56,7 +56,13 @@ export const WIDGET_TYPES = Object.freeze({
   },
   avatar: {
     label: "Avatar", rect: { x: 0.74, y: 0.1, w: 0.2, h: 0.3556 }, aspect: 1,
-    props: { mirror: { type: "boolean", label: "Mirror", default: false } },
+    props: {
+      mirror: { type: "boolean", label: "Mirror", default: false },
+      pack: { type: "string", label: "Avatar pack ID", min: 1, max: 24, default: "witch" },
+      state: { type: "string", label: "State (auto or installed state)", min: 1, max: 32, default: "auto" },
+      blinkInterval: { type: "number", label: "Blink interval (seconds)", min: 1, max: 60, step: 0.1, default: 4.2 },
+      blinkDuration: { type: "number", label: "Blink duration (seconds)", min: 0.05, max: 1, step: 0.05, default: 0.16 },
+    },
   },
   cat: {
     label: "Cat", rect: { x: 0.78, y: 0.66, w: 0.18, h: 0.24 },
@@ -80,6 +86,7 @@ export const WIDGET_TYPES = Object.freeze({
       src: { type: "embed", label: "Page", default: "" },
       attach: { type: "enum", label: "Attached to", options: ["log", "stage"], labels: { log: "Log component (backdrop behind the log)", stage: "Whole stage (16:9)" }, default: "log" },
       opacity: { type: "number", label: "Opacity", min: 0.05, max: 1, step: 0.05, default: 0.3 },
+      monochrome: { type: "boolean", label: "Monochrome status colors (red / yellow / green)", default: false },
       theme: { type: "enum", label: "Theme", options: ["system", "dark", "light"], labels: { system: "System (follows the dashboard theme)", dark: "Dark", light: "Light" }, default: "system" },
     },
   },
@@ -110,11 +117,12 @@ const UNSAFE_MULTILINE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\
 export const unsafeText = (text, { multiline = false } = {}) => (multiline ? UNSAFE_MULTILINE : UNSAFE_TEXT).test(text);
 
 // Validates a forced avatar expression: { expression, seconds } or { expression: "auto" }.
-export function validateAvatarState(input) {
+export function validateAvatarState(input, available = AVATAR_STATES) {
   if (!plain(input)) fail("the avatar state must be an object");
   for (const key of Object.keys(input)) if (!["expression", "seconds"].includes(key)) fail(`unknown avatar field '${key}'`);
   if (input.expression === "auto") return { expression: "auto" };
-  if (!AVATAR_STATES.includes(input.expression)) fail(`avatar expression must be one of ${AVATAR_STATES.join(", ")}, or auto`);
+  if (typeof input.expression !== "string" || !/^[a-z][a-z0-9_-]{0,31}$/.test(input.expression)) fail("avatar expression must be an installed lowercase state name, or auto");
+  if (!available.includes(input.expression)) fail(`avatar expression must be one of ${available.join(", ")}, or auto`);
   const seconds = input.seconds ?? AVATAR_SECONDS.default;
   if (!Number.isInteger(seconds) || seconds < AVATAR_SECONDS.min || seconds > AVATAR_SECONDS.max) fail(`avatar seconds must be a whole number from ${AVATAR_SECONDS.min} to ${AVATAR_SECONDS.max}`);
   return { expression: input.expression, seconds };
@@ -257,7 +265,7 @@ export function defaultRect(type) {
 // ---------- Scene settings (Settings → Canvas settings) ----------
 // Defaults for new widgets reuse the widget prop schemas above, so a default
 // can never hold a value the widget itself would reject.
-export const DEFAULT_PROPS = Object.freeze({ metric: ["source", "color"], avatar: ["mirror"], cat: ["mirror"], embed: ["attach", "opacity", "theme"] });
+export const DEFAULT_PROPS = Object.freeze({ metric: ["source", "color"], avatar: ["mirror", "pack", "state", "blinkInterval", "blinkDuration"], cat: ["mirror"], embed: ["attach", "opacity", "theme", "monochrome"] });
 export const REFRESH_MINUTES = Object.freeze([2, 5, 10, 15, 30, 60]);
 const EMBED_PATH = /^\/embed\/[a-z0-9-]+\/$/;
 

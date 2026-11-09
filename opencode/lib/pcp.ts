@@ -24,7 +24,7 @@ export const MAX_CONTENT_CHARS = 100_000
 export type Config = {
   /** Origin of the PCP deployment, without a trailing slash. */
   baseURL: string
-  /** Global scoped token with read_all, create_sessions and mint_tokens. */
+  /** Global scoped token with read_all, create_sessions, mint_tokens and manage_projects. */
   scopedToken: string
   /**
    * Where local `.tar.gz` exports are written; empty means the default.
@@ -77,7 +77,7 @@ export async function saveConfig(patch: Partial<Config>): Promise<Config> {
   const current = (await readJSON(STATE.pcpConfig)) ?? {}
   const next = { ...current, ...patch }
   await fsp.mkdir(path.dirname(STATE.pcpConfig), { recursive: true })
-  await fsp.writeFile(STATE.pcpConfig, JSON.stringify(next, null, 2) + "\n", "utf8")
+  await fsp.writeFile(STATE.pcpConfig, JSON.stringify(next, null, 2) + "\n", { encoding: "utf8", mode: 0o600 })
   return resolveConfig()
 }
 
@@ -85,6 +85,7 @@ export async function saveConfig(patch: Partial<Config>): Promise<Config> {
 async function call(url: string, token: string, method: string, body?: unknown) {
   const response = await fetch(url, {
     method,
+    signal: AbortSignal.timeout(30000),
     headers: {
       authorization: `Bearer ${token}`,
       accept: "application/json",
@@ -149,4 +150,16 @@ export async function appendMessages(config: Config, sessionID: string, accessTo
 /** Read the scoped folder/session tree, used as a connectivity check. */
 export async function probe(config: Config) {
   return manager<unknown>(config, "GET", "/manager/tree")
+}
+
+
+/** Idempotently resolve/register a project and the source device workspace. */
+export function ensureProject(config: Config, body: unknown) {
+  return manager<{ project: { id: string }; created: boolean }>(config, "POST", "/manager/projects", body)
+}
+export function syncContext(config: Config, externalKey: string, body: unknown) {
+  return manager<{ conflicts: string[] }>(config, "PATCH", `/manager/sessions/by-key/${encodeURIComponent(externalKey)}/context`, body)
+}
+export function mergeMessages(config: Config, externalKey: string, device: string, messages: Array<Message & { external_id: string }>) {
+  return manager<{ appended: number; duplicates: number }>(config, "POST", `/manager/sessions/by-key/${encodeURIComponent(externalKey)}/merge-messages`, { device_id: device, messages })
 }

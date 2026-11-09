@@ -21,9 +21,9 @@
     },
     {
       "id": "session-manager",
-      "version": "1.3.0",
-      "promotedFrom": "1.2.0",
-      "notes": "Manual, local-only, directory-only and auto modes; incremental project/session JSON folders with retained conflict history."
+      "version": "1.4.0",
+      "promotedFrom": "1.3.0",
+      "notes": "Project/workspace registration, versioned PCP task context, stable replay identities, secret redaction, and focused modules."
     },
     {
       "id": "task-queue",

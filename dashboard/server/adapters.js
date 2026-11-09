@@ -1,9 +1,10 @@
 import fs from 'node:fs';
+import { OpenClawConfigStore } from './openclaw-config.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
 const OWNER_TOOLS = ['exec', 'process', 'read', 'write', 'edit', 'apply_patch', 'sessions_spawn'];
-const GROUP_TOOLS = ['exec', 'process', 'read', 'write', 'edit', 'apply_patch'];
+const GROUP_TOOLS = ['pcp_execute'];
 const hash = text => crypto.createHash('sha256').update(text).digest('hex');
 const fail = (status, cause) => Object.assign(new Error(`Adapter change refused: dashboard/adapter settings — ${cause}`), { status });
 export class AdapterStore {
@@ -18,7 +19,11 @@ export class AdapterStore {
     if (input?.baseHash !== current.hash) throw fail(409, 'settings changed; refresh before saving');
     if (typeof input.ownerEnabled !== 'boolean' || !Array.isArray(input.groups) || input.groups.length > 100) throw fail(400, 'invalid owner or group settings');
     const seen = new Set();
-    const agents = JSON.parse(fs.readFileSync(this.openclawFile, 'utf8')).agents?.list || [];
+    const configStore = new OpenClawConfigStore({ file: this.openclawFile, backupDir: path.join(path.dirname(this.file), 'backups', 'openclaw') });
+    const currentConfig = configStore.read();
+    const config = currentConfig.config;
+    const agents = config.agents?.list || [];
+    const additions = [];
     const groups = input.groups.map(group => {
       if (!group || !/^[a-z][a-z0-9_-]{0,31}$/.test(group.platform) || !/^[A-Za-z0-9._@+=-]{1,128}$/.test(group.group_id)) throw fail(400, 'each group needs a platform and valid group ID');
       const key = `${group.platform}:${group.group_id}`;
@@ -27,11 +32,17 @@ export class AdapterStore {
       const senders = group.senders;
       if (!['owner', 'all'].includes(senders) && !(Array.isArray(senders) && senders.length > 0 && senders.length <= 100 && senders.every(id => typeof id === 'string' && /^[A-Za-z0-9._@+=-]{1,128}$/.test(id)))) throw fail(400, 'choose owner, all members, or a nonempty sender-ID list');
       const agent = `astrbot-exec-${hash(key).slice(0, 12)}`;
-      const configured = agents.find(a => a.id === agent);
-      if (!configured || configured.sandbox?.mode !== 'all' || configured.sandbox?.workspaceAccess !== 'none') throw fail(409, `group ${group.group_id} requires its isolated execution agent ${agent} before access can be enabled`);
+      additions.push({ id: agent, name: `AstrBot ${group.platform} group ${group.group_id}`,
+        workspace: `/home/node/.openclaw/group-agents/${agent}`, memorySearch: { enabled: false },
+        tools: { profile: 'minimal', alsoAllow: ['pcp_context', 'pcp_search', 'pcp_attachment', 'pcp_execute'],
+          deny: ['group:fs', 'group:runtime', 'group:ui', 'group:web', 'group:sessions', 'group:memory', 'group:automation', 'group:nodes', 'group:messaging'], elevated: { enabled: false } } });
       return { platform: group.platform, group_id: group.group_id, senders, agent, tools: GROUP_TOOLS };
     });
     if (input.ownerEnabled && !agents.some(a => a.id === 'astrbot-exec')) throw fail(409, 'owner execution agent is not installed');
+    if (additions.length) {
+      config.agents = { ...config.agents, list: [...agents.filter(a => !additions.some(g => g.id === a.id)), ...additions] };
+      configStore.save(JSON.stringify(config), currentConfig.hash);
+    }
     const policy = { ...(input.ownerEnabled ? { owner: { agent: 'astrbot-exec', tools: OWNER_TOOLS } } : {}), groups };
     const backup = path.join(path.dirname(this.file), 'backups');
     fs.mkdirSync(backup, { recursive: true, mode: 0o700 });

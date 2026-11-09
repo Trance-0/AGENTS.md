@@ -14,6 +14,7 @@
 //
 // Every request goes through api() (admin session + same-origin
 // X-Dashboard-Request: 1); the server re-validates everything.
+import { enablePreviewEditing } from "./preview-editor.js";
 import { el } from "/api.js";
 import { LIMITS, METRIC_SOURCES, PALETTE, REFRESH_MINUTES, WIDGET_TYPES, builtinLayout, defaultRect, migrateWidget, validateLayout, validateWidget, withDefaults } from "./schema.js";
 import { initialState } from "./reduce.js";
@@ -69,7 +70,10 @@ export function canvasSettingsSection(api) {
   const apply = button("Apply to live stream", "canvas-apply", "Record the draft's differences in the live stream");
   const save = button("Save layout", "canvas-save", "Save the draft as the default layout for future streams", "primary");
   const addGroup = el("div", "canvas-toolbar-group");
-  addGroup.append(addLabel, addType, add);
+  const draw = button("Draw widget", "canvas-draw", "Drag a rectangle on the preview to add the selected widget type");
+  draw.setAttribute("aria-pressed", "false");
+  draw.onclick = () => { const on = preview.dataset.drawMode !== "true"; preview.dataset.drawMode = String(on); draw.setAttribute("aria-pressed", String(on)); };
+  addGroup.append(addLabel, addType, add, draw);
   const draftGroup = el("div", "canvas-toolbar-group");
   draftGroup.append(loadLive, revert, reset);
   const commitGroup = el("div", "canvas-toolbar-group canvas-commit");
@@ -79,7 +83,7 @@ export function canvasSettingsSection(api) {
   // ---------- Preview ----------
   const previewWrap = el("figure", "canvas-preview-wrap");
   const preview = el("div", "canvas-preview");
-  preview.setAttribute("aria-hidden", "true");
+  preview.setAttribute("aria-label", "Canvas layout preview: drag widgets to move, drag corner handles to resize, or draw an empty rectangle to add a widget");
   const log = el("div", "stream-log canvas-preview-log");
   for (const [t, source, msg] of [["0:12:03", "openclaw", "Reading the deployment log for the dashboard service…"], ["0:12:09", "openclaw", "Tests passed: 61 of 61. Building the image."], ["0:12:20", "dashboard", "Scene metrics updated: 2 pooled public values refreshed."], ["0:12:31", "openclaw", "Deploy finished; the health check is green."]]) {
     const line = el("div", "log-line");
@@ -133,11 +137,18 @@ export function canvasSettingsSection(api) {
 
   box.append(summary, toolbar, status, workspace, configHeading, config, configStatus, dialog);
 
-  let view = null, draft = [], selected = null, busy = false;
+  let view = null, draft = [], selected = null, busy = false, avatars = [];
+  api("/api/avatars").then(data => { avatars = data.avatars; if (selected) renderEditor(); }).catch(() => {});
   const renderer = new SceneRenderer(preview, (() => { const t0 = Date.now(); return () => ({ t: (Date.now() - t0) / 1000, startedAt: t0 }); })());
+  renderer.keepBackdropLayer = true;
   const settings = () => view?.settings || { imageAllowlist: [], embeds: [], servedEmbeds: [], defaults: {} };
   const options = () => ({ allowlist: settings().imageAllowlist, embeds: settings().embeds });
   const say = (text, tone = "") => { status.textContent = text; status.dataset.tone = tone; };
+  const syncPreview = enablePreviewEditing({ preview, renderer, getWidgets: () => draft,
+    isEditable: () => !!view && !busy && !modes.live.checked, select,
+    change: (id, rect) => { replace({ ...draft.find(w => w.id === id), ...rect }); renderSummary(); renderList(); renderEditor(); drawPreview(); },
+    add: rect => { const type = addType.value || "text"; const widget = withDefaults({ id: newId(new Set(draft.map(w => w.id))), type, ...fitRect(rect, type), z: 100, props: {} }, settings().defaults); try { draft.push(validateWidget(widget, options())); } catch { draft.push(widget); } select(widget.id); preview.dataset.drawMode = "false"; draw.setAttribute("aria-pressed", "false"); },
+  });
 
   function problems() {
     const result = new Map();
@@ -309,7 +320,12 @@ export function canvasSettingsSection(api) {
     geometry.append(visible);
     const props = el("fieldset", "canvas-fieldset");
     props.append(el("legend", "", "Properties"));
-    const fields = Object.entries(WIDGET_TYPES[widget.type].props).map(([key, spec]) => [key, spec, field(key, spec, widget.props?.[key] ?? spec.default, { ...options(), prefix: "canvas-field" })]);
+    const fields = Object.entries(WIDGET_TYPES[widget.type].props).map(([key, original]) => {
+      let spec = original;
+      if (widget.type === "avatar" && key === "pack" && avatars.length) spec = { ...spec, type: "enum", options: avatars.map(p => p.id), labels: Object.fromEntries(avatars.map(p => [p.id, p.name])) };
+      if (widget.type === "avatar" && key === "state") spec = { ...spec, type: "enum", options: ["auto", ...Object.keys(avatars.find(p => p.id === (widget.props.pack || "witch"))?.states || { idle: 1, blink: 1, talk: 1, think: 1, sleepy: 1 })] };
+      return [key, spec, field(key, spec, widget.props?.[key] ?? spec.default, { ...options(), prefix: "canvas-field" })];
+    });
     for (const [, , item] of fields) props.append(item.row);
     if (!fields.length) props.append(el("p", "settings-note", "This widget has no properties."));
     const message = el("p", "canvas-problem");
@@ -338,7 +354,7 @@ export function canvasSettingsSection(api) {
       drawPreview();
     };
     form.addEventListener("input", () => update(false));
-    form.addEventListener("change", () => update(true));
+    form.addEventListener("change", event => { update(true); if (event.target.id === "canvas-field-pack") { const current = draft.find(w => w.id === widget.id); if (current) current.props.state = "auto"; renderEditor(); drawPreview(); } });
     try { validateWidget(widget, options()); } catch (error) { message.textContent = `Not valid yet: ${error.reason || error.message}.`; }
   }
   const round1 = value => Math.round(value * 10) / 10;
@@ -353,8 +369,10 @@ export function canvasSettingsSection(api) {
       "cpa.codex.week": { remainingPercent: 41, resetAt: now + 3 * 86400e3 + 5 * 3600e3, accounts: 3, total: 3, updatedAt: now },
       "tokens.today": { tokens: 1230000 }, "tokens.7d": { tokens: 12300000 },
     } });
+    renderer.setOverride(showLive ? null : Object.fromEntries(widgets.filter(w => !w.hidden).map(w => [w.id, w])), showLive ? null : selected);
+    syncPreview();
     const hidden = widgets.filter(widget => widget.hidden).length, shown = widgets.length - hidden;
-    caption.textContent = `${showLive ? "Live scene" : "Draft"} as viewers see it: ${shown} widget${shown === 1 ? "" : "s"}${hidden ? `, ${hidden} hidden not shown` : ""}. Metric widgets show sample values.`;
+    caption.textContent = `${showLive ? "Live scene" : "Draft"} as viewers see it: ${shown} widget${shown === 1 ? "" : "s"}${hidden ? `, ${hidden} hidden not shown` : ""}. Drag widgets to move; drag their lower-right corners to resize. Draw empty space to add the selected widget type. Metric widgets show sample values.`;
     preview.dataset.mode = showLive ? "live" : "draft";
   }
 

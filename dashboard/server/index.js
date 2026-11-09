@@ -34,6 +34,8 @@ import { mountScene, contentSecurityPolicy, embedSecurityPolicy, embedPaths } fr
 import { embedStatic } from "./scene/embed-static.js";
 import { StreamControl } from "./stream-control.js";
 import { AdapterStore, mountAdapters } from './adapters.js';
+import { AvatarStore } from "./scene/avatars.js";
+import { mountAvatars } from "./scene/avatar-routes.js";
 import { UsageLine } from "./usage-line.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -90,6 +92,7 @@ if (config.openclaw.activityDir) {
   });
 }
 const sceneStore = new SceneStore(path.join(config.dataDir, "scene"), { embeds: embedPaths(config), log: msg => emit({ source: "dashboard", level: "info", msg }) });
+const avatars = new AvatarStore(path.join(config.dataDir, "avatars"));
 const scene = new SceneService({ broadcast, store: sceneStore, emit });
 const MemoryStore = createMemoryStore(session);
 const app = express();
@@ -182,7 +185,8 @@ mountAdapters(app, process.env.PCP_ADAPTER_CONFIG_DIR && config.openclaw.configF
   ? new AdapterStore(path.join(process.env.PCP_ADAPTER_CONFIG_DIR, 'execution-policy.json'), config.openclaw.configFile) : null,
   { requireAuth, requireAdmin, requireCsrf, isEnabled });
 mountOpenClawTasks(app, new OpenClawTasks(createGatewayClient({ ...config.openclaw, identityFile: path.join(config.dataDir, "openclaw-device.json") })), { requireAuth, requireAdmin, requireCsrf, isEnabled });
-mountScene(app, { scene, store: sceneStore, streamToken: config.openclaw.streamToken, requireCsrfOrToken, control });
+mountAvatars(app, avatars, { requireAuth, requireAdmin, requireCsrf, isEnabled });
+mountScene(app, { avatars, scene, store: sceneStore, streamToken: config.openclaw.streamToken, requireCsrfOrToken, control });
 new MetricsBridge({ scene, broadcast, metrics, quota, secrets: metricsSecrets, isEnabled, emit, settings: () => sceneStore.settings() }).start();
 
 function requireToken(req, res, next) {

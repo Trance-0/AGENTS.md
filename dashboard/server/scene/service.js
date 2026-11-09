@@ -189,9 +189,9 @@ export class SceneService {
 
   // Forced avatar expression on the live scene (every avatar widget), recorded
   // as a `widget` event with op `avatar` so replay shows the same picture.
-  avatar(actor, input) {
+  avatar(actor, input, available) {
     this.take(actor);
-    const state = this.validate(() => validateAvatarState(input), "Avatar not changed");
+    const state = this.validate(() => validateAvatarState(input, available), "Avatar not changed");
     if (!this.liveState()) throw fail(409, "Avatar not changed", "no stream is live");
     this.publish(actor, "avatar", "avatar", state);
     this.notify("avatar");

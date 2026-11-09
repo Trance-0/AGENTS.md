@@ -2,13 +2,13 @@ import { api, el } from '/api.js';
 import { button } from '/settings-controls.js';
 
 export async function renderAdapters(body) {
-  const box = el('section', 'settings-card'); body.append(box);
+  const box = el('section', 'apple-settings settings-card preference-section'); body.append(box);
   box.append(el('h2', '', 'AstrBot execution access'), el('p', 'settings-note', 'Verified owner direct messages can run tasks in OpenClaw. Only groups listed below can request execution; other chats keep restricted access. Group history stays separate.'));
   const status = el('p', 'editor-status'); status.setAttribute('role', 'status');
   const form = el('div', 'settings-list'); box.append(status, form);
   let draft = await api('/api/admin/adapters');
   function field(label, value, change) {
-    const row = el('label', 'setting-row'); row.append(el('span', '', label));
+    const row = el('label', 'preference-field'); row.append(el('span', 'field-label', label));
     const input = document.createElement('input'); input.type = 'text'; input.value = value; input.oninput = () => change(input.value); row.append(input); return row;
   }
   function draw() {

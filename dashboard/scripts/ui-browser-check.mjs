@@ -9,7 +9,7 @@ const baseURL = process.env.DASHBOARD_TEST_URL;
 const shots = process.env.DASHBOARD_SCREENSHOT_DIR || "/tmp";
 const errors = [];
 const VIEWER_PANELS = ["Live", "OpenClaw", "Adapters", "Builds", "Settings"];
-const ADMIN_PANELS = ["Live", "OpenClaw", "Usage", "Adapters", "Builds", "Settings"];
+const ADMIN_PANELS = ["Live", "OpenClaw", "Usage", "Adapters", "Canvas", "Builds", "Settings"];
 
 async function context(cookie, { width = 1440, colorScheme = "dark" } = {}) {
   const ctx = await browser.newContext({ baseURL, colorScheme, viewport: { width, height: 900 }, extraHTTPHeaders: { "x-forwarded-proto": "https" } });

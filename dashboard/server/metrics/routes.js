@@ -14,11 +14,15 @@ export function mountMetrics(app, { store, secrets, fetcher, ...guards }) {
   })];
   const quota = createQuotaRefresher({ store, secrets, fetcher });
   app.get("/api/admin/metrics/usage", ...access("usage-metrics"), route((req, res) => res.json(store.report(req.query))));
-  app.get("/api/admin/metrics/summary", ...access("usage-summary"), route(async (_req, res) => {
+  app.get("/api/admin/metrics/summary", ...access("usage-summary"), route(async (req, res) => {
     const now = Date.now();
     const cpaEnabled = await isEnabled("cpa-quota");
+    let refreshError = null;
+    if (req.query.refresh !== "0" && cpaEnabled && secrets.read?.()) {
+      try { await quota.refresh(); } catch (error) { if (error.status !== 429) refreshError = error.message; }
+    }
     res.json({
-      now,
+      now, refreshError, checkedAt: Date.now(),
       tokens: tokenTotals(store, now),
       codex: cpaEnabled ? poolCodex(quota.snapshot(), now) : null,
       cpa: { enabled: cpaEnabled, configured: !!secrets.read?.() },
@@ -29,7 +33,13 @@ export function mountMetrics(app, { store, secrets, fetcher, ...guards }) {
     store.savePrice(req.body);
     res.json({ prices: store.prices() });
   }));
-  app.get("/api/admin/metrics/cpa", ...access("cpa-quota"), route((_req, res) => res.json({ ...secrets.view(), snapshot: quota.snapshot() })));
+  app.get("/api/admin/metrics/cpa", ...access("cpa-quota"), route(async (req, res) => {
+    let refreshError = null;
+    if (req.query.refresh !== "0" && secrets.read?.()) {
+      try { await quota.refresh(); } catch (error) { if (error.status !== 429) refreshError = error.message; }
+    }
+    res.json({ ...secrets.view(), snapshot: quota.snapshot(), refreshError });
+  }));
   app.put("/api/admin/metrics/cpa", ...access("cpa-quota"), requireCsrf, route((req, res) => {
     const endpoint = validateEndpoint(req.body?.endpoint);
     const current = secrets.read();

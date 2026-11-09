@@ -18,10 +18,11 @@ function jitter(n) {
   return ((x ^ (x >>> 16)) >>> 0) / 4294967296;
 }
 
-export function blinking(t) {
-  const cycle = Math.floor(t / BLINK_PERIOD);
-  const start = cycle * BLINK_PERIOD + 0.4 + jitter(cycle) * (BLINK_PERIOD - 0.8);
-  return t >= start && t < start + BLINK_LENGTH;
+export function blinking(t, period = BLINK_PERIOD, duration = BLINK_LENGTH) {
+  const cycle = Math.floor(t / period);
+  const margin = Math.min(0.4, period / 4);
+  const start = cycle * period + margin + jitter(cycle) * (period - 2 * margin);
+  return t >= start && t < start + duration;
 }
 
 // Sleepy while the host runs on the paid fallback: the latest host
@@ -32,15 +33,16 @@ export function onPaidFallback(state) {
   return ["cpa.codex.5h", "cpa.codex.week"].some(source => state.metrics[source]?.remainingPercent === 0);
 }
 
-export function avatarExpression(state, t) {
+export function avatarExpression(state, t, props = {}) {
   const activity = state.activity;
   // A forced expression (OpenClaw `avatar` action) wins until it times out.
-  if (state.avatar && t < state.avatar.until && EXPRESSIONS.includes(state.avatar.expression)) return state.avatar.expression;
+  if (state.avatar && t < state.avatar.until) return state.avatar.expression;
+  if (props.state && props.state !== "auto") return props.state;
   if (onPaidFallback(state)) return "sleepy";
   if (activity.talkUntil !== null && t < activity.talkUntil) return "talk";
   const recent = activity.lastT !== null && t - activity.lastT < THINK_TIMEOUT;
   if (recent && (activity.thinkingSince !== null || activity.tools > 0)) return "think";
-  return blinking(t) ? "blink" : "idle";
+  return blinking(t, props.blinkInterval ?? BLINK_PERIOD, props.blinkDuration ?? BLINK_LENGTH) ? "blink" : "idle";
 }
 
 // Mouth frame while talking: alternate open/closed every 0.18 s (static when

@@ -151,6 +151,9 @@ def main():
     adapter_args = []
     if (adapter_dir / "execution-policy.json").is_file():
         adapter_args = ["-e", "PCP_ADAPTER_CONFIG_DIR=/pcp-adapters", "--mount", f"type=bind,src={adapter_dir},dst=/pcp-adapters"]
+    platform_dir = Path(os.environ.get("PLATFORM_STATUS_HOST_DIR", "/home/motuariki/Documents/DockerVolumes/openclaw/deploy/status"))
+    if platform_dir.is_dir():
+        adapter_args += ["-e", "PLATFORM_STATUS_DIR=/platform-status", "--mount", f"type=bind,src={platform_dir},dst=/platform-status,readonly"]
     # Optional circtime uptime-radar build for the scene embed widget, mounted
     # read-only. Unset or missing: the dashboard serves no embeds (route 404).
     embed_dir = Path(os.environ.get("CIRCTIME_EMBED_HOST_DIR", "/home/motuariki/Documents/DockerVolumes/circtime/dist"))
