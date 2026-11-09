@@ -1101,3 +1101,10 @@ Circtime's monitor rebuilds the served public-safe files from its source checkou
 `theme=dark` uses black, `theme=light` uses white, and `monochrome=1` selects
 status colors. The dashboard iframe stays sandboxed and read-only. The Circtime
 upstream contribution is https://github.com/Trance-0/circtime/pull/1.
+
+### 0.4.1 canvas fixes
+
+Circtime merged main 0048de9 is applied locally. Switching the widget's
+monochrome property reloads its iframe with the new query setting; preview
+selection keeps focus on the canvas and updates the selected property panel
+without scrolling to it. Save layout and Apply to live stream remain explicit.

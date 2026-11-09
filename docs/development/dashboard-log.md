@@ -935,3 +935,21 @@ property selects red/yellow/green status colors over the last 48 hours.
 - Added an adapter compatibility gate: selected group access cannot be enabled
   before PCP >=0.4.1 and the isolated executor are healthy. The live group list
   is unchanged. Focused adapter authorization/readiness tests passed.
+
+## 2026-11-09 — Monochrome toggle and canvas focus (0.4.1)
+
+- Fast-forwarded the clean Circtime checkout to merged upstream main 0048de9.
+  Its running monitor still serves the same checked-out source and durable data.
+- Root cause of the nonresponsive monochrome toggle: renderer iframe cache keys
+  included path/theme but omitted monochrome. Include the mode so both enabling
+  and disabling it update the existing iframe immediately.
+- Preview pointer actions now take focus without scrolling before rebuilding
+  the selected property/list views. Widget-list selection activates properties
+  without focusing the first editor input; restored list focus prevents scroll.
+- Added browser regressions for changing monochrome without changing theme,
+  mobile selection/drag scroll stability, and active avatar properties. The old
+  renderer failed the new monochrome check; patched checks and all 84 server
+  tests passed. Existing layout data and live recording were left intact.
+
+- Existing Canvas regression suite also passed (save/apply, keyboard controls,
+  dark/light and 390 px). The Node 22 production image built successfully.
