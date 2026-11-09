@@ -580,3 +580,23 @@ bullets specific: filenames, command names, outcomes.
   and the sandboxed embed with no page errors.
 - Container recovery tests passed, and clean remote OpenClaw main was built,
   deployed, soaked and promoted. All evidence stays under DockerVolumes.
+
+## 2026-11-08 — Canvas, avatar library, quota and Circtime
+
+- Added separate Canvas panel, pointer move/resize/draw in the draft preview,
+  avatar pack/state/blink controls, ZIP upload/remote import/download and immutable
+  pack-state editing. Public agent scene discovery includes resource state names.
+- Usage/CPA load checks share the bounded quota refresher; snapshots retain
+  last-updated information on upstream failure. Metric widgets check immediately.
+- Circtime checkout was clean before work; fetched and checked remote main.
+  Fixed transparent embed backgrounds and added the 48-hour status palette.
+- Server tests and focused new-feature Chromium checks passed; complete existing
+  Canvas regression suite and final rollout verification are recorded below.
+- Data, credentials, current live recording and existing state bind preserved.
+  New packs live inside the backed-up state directory.
+
+- Final verification: all 84 server tests passed. All Chromium suites passed
+  (guest/admin playback, metrics, navigation, scene editing, live control,
+  Canvas layouts, new pointer/avatar/quota features and scheduled-task settings).
+  Production Node 22 Alpine image built successfully with normalized avatar
+  imports. Circtime public embed checks confirmed black/white backgrounds.

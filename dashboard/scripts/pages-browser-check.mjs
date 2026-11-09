@@ -106,13 +106,14 @@ try {
   assert.equal(await page.locator("#setting-speed").inputValue(), "1.5");
   await page.locator("#setting-speed").selectOption("1");
   const switches = await page.evaluate(() => [...document.querySelectorAll("#panel-switches [data-panel]")].map(row => row.dataset.panel));
-  assert.deepEqual([...switches].sort(), ["astrbot", "build-status", "cpa-quota", "live-stream", "openclaw", "openclaw-config", "settings", "usage-metrics", "usage-summary"]);
+  assert.deepEqual([...switches].sort(), ["adapter-settings", "astrbot", "build-status", "canvas-settings", "cpa-quota", "live-stream", "openclaw", "openclaw-config", "settings", "usage-metrics", "usage-summary"]);
   assert.equal(await page.locator("#panel-switch-live-stream").isDisabled(), true, "the player cannot be switched off");
   await page.screenshot({ path: `${shots}/pages-settings-admin-dark.png`, fullPage: true });
   const toggled = page.waitForResponse(response => response.url().endsWith("/api/panels/astrbot/toggle"));
   await page.locator('label:has(#panel-switch-astrbot)').click();
   assert.equal((await toggled).status(), 200);
-  await page.waitForFunction(() => document.querySelector('#sidebar .nav-item[data-view="adapters"] .dot')?.textContent === "off");
+  await page.waitForFunction(() => !document.querySelector("#panel-switch-astrbot").checked);
+  assert.equal(await page.locator('#sidebar .nav-item[data-view="adapters"] .dot').count(), 0, "the channel-access panel still keeps the Adapters group enabled");
   assert.equal(await page.locator("#panel-switch-astrbot").isChecked(), false);
   await page.locator('label:has(#panel-switch-astrbot)').click();
   await page.waitForFunction(() => !document.querySelector('#sidebar .nav-item[data-view="adapters"] .dot'));

@@ -905,3 +905,22 @@ Owner request: the dashboard config joins its state in
   and the sandboxed embed with no page errors.
 - Container recovery tests passed, and clean remote OpenClaw main was built,
   deployed, soaked and promoted. All evidence stays under DockerVolumes.
+
+## 2026-11-08 — Canvas and avatar resources (0.4.0)
+
+Canvas is a separate admin panel. Its preview supports pointer movement, corner
+resizing and drawing new widget rectangles. Existing numeric/keyboard controls,
+Save layout and Apply to live stream remain. The Avatars tab imports, previews,
+edits and exports immutable named-state packs; widget properties control blink
+timing and pack/state selection.
+
+Usage Summary checks quota automatically on load and on periodic refresh, with
+last-updated timestamps and an opt-out. Widget activation also starts a shared
+quota check. Circtime fixed-theme embeds now own their background, and a widget
+property selects red/yellow/green status colors over the last 48 hours.
+
+- Final verification: all 84 server tests passed. All Chromium suites passed
+  (guest/admin playback, metrics, navigation, scene editing, live control,
+  Canvas layouts, new pointer/avatar/quota features and scheduled-task settings).
+  Production Node 22 Alpine image built successfully with normalized avatar
+  imports. Circtime public embed checks confirmed black/white backgrounds.

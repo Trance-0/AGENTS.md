@@ -210,7 +210,7 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     assert.ok(adminPanels.some(panel => panel.id === "usage-metrics"));
     assert.ok(adminPanels.some(panel => panel.id === "cpa-quota"));
     const adminMenu = await (await request("/api/panels", { headers })).json();
-    assert.deepEqual(adminMenu.groups.map(group => group.id), ["live", "openclaw", "usage", "adapters", "builds", "settings"]);
+    assert.deepEqual(adminMenu.groups.map(group => group.id), ["live", "openclaw", "usage", "adapters", "canvas", "builds", "settings"]);
     assert.deepEqual(adminPanels.filter(panel => panel.group === "usage").flatMap(panel => panel.tabs.map(tab => tab.title)), ["Summary", "CPA quota", "Token metrics"]);
     assert.deepEqual(adminPanels.filter(panel => panel.group === "openclaw").flatMap(panel => panel.tabs.map(tab => tab.title)), ["Status", "Backends", "Settings", "Scheduled tasks"]);
     const summary = await (await request("/api/admin/metrics/summary", { headers })).json();
@@ -303,6 +303,14 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
       const canvasCheck = spawn(process.execPath, [path.join(root, "scripts/canvas-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie, DASHBOARD_VIEWER_COOKIE: viewerHeaders.cookie }, stdio: "inherit" });
       const [canvasCode] = await once(canvasCheck, "exit");
       assert.equal(canvasCode, 0);
+    }
+    if (process.env.DASHBOARD_CANVAS_ONLY_CHECK === "1") {
+      const check = spawn(process.execPath, [path.join(root, "scripts/canvas-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie, DASHBOARD_VIEWER_COOKIE: viewerHeaders.cookie }, stdio: "inherit" });
+      const [code] = await once(check, "exit"); assert.equal(code, 0);
+    }
+    if (process.env.DASHBOARD_CANVAS_FEATURES_CHECK === "1") {
+      const check = spawn(process.execPath, [path.join(root, "scripts/canvas-features-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie }, stdio: "inherit" });
+      const [code] = await once(check, "exit"); assert.equal(code, 0);
     }
     if (process.env.DASHBOARD_SETTINGS_BROWSER_CHECK === "1") {
       const check = spawn(process.execPath, [path.join(root, "scripts/settings-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie }, stdio: "inherit" });

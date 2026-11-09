@@ -20,6 +20,7 @@ export const GROUPS = Object.freeze([
   { id: "openclaw", title: "OpenClaw", icon: "claw", order: 10 },
   { id: "usage", title: "Usage", icon: "gauge", order: 20 },
   { id: "adapters", title: "Adapters", icon: "bot", order: 30 },
+  { id: "canvas", title: "Canvas", icon: "panel", order: 35 },
   { id: "builds", title: "Builds", icon: "build", order: 40 },
   { id: "settings", title: "Settings", icon: "settings", order: 90 },
 ]);

@@ -13,7 +13,7 @@ import { StreamControl, streamBearer } from "../stream-control.js";
 //   GET /api/openclaw/scene/layout, POST /api/openclaw/scene/widgets,
 //   PATCH/DELETE /api/openclaw/scene/widgets/:id (changes may set `hidden`),
 //   POST /api/openclaw/scene/avatar
-export function mountScene(app, { scene, store, streamToken, requireCsrfOrToken, control = new StreamControl({ broadcast: scene.broadcast }) }) {
+export function mountScene(app, { avatars, scene, store, streamToken, requireCsrfOrToken, control = new StreamControl({ broadcast: scene.broadcast }) }) {
   // Scene errors already carry the full "<consequence>: <module> — <cause>" text.
   const route = handler => (req, res, next) => Promise.resolve().then(() => handler(req, res)).catch(error => {
     if (error.status && /: dashboard\/(?:scene |stream control )/.test(error.message)) return res.status(error.status).json({ error: error.message });
@@ -59,7 +59,7 @@ export function mountScene(app, { scene, store, streamToken, requireCsrfOrToken,
   app.get("/api/openclaw/scene/layout", noStore, openclaw, route((req, res) => {
     allowed(req.query, "scene", "Scene not read");
     const live = scene.liveState();
-    res.json({ recordingId: live.recordingId, widgets: Object.values(live.state.widgets) });
+    res.json({ recordingId: live.recordingId, widgets: Object.values(live.state.widgets), avatars: avatars?.catalog() || [] });
   }));
   app.post("/api/openclaw/scene/widgets", noStore, openclaw, route((req, res) => {
     const who = allowed(body(req), "scene", "Widget not created");
@@ -82,7 +82,9 @@ export function mountScene(app, { scene, store, streamToken, requireCsrfOrToken,
   app.post("/api/openclaw/scene/avatar", noStore, openclaw, route((req, res) => {
     const { expression, seconds } = body(req);
     const who = allowed(body(req), "avatar", "Avatar not changed");
-    const result = scene.avatar("openclaw", { expression, ...(seconds === undefined ? {} : { seconds }) });
+    const names = new Set(["auto", "idle", "blink", "talk", "think", "sleepy", ...(avatars?.catalog() || []).flatMap(pack => Object.keys(pack.states))]);
+    if (!names.has(expression)) return res.status(400).json({ error: "Avatar not changed: dashboard/avatar state — requested state is not installed." });
+    const result = scene.avatar("openclaw", { expression, ...(seconds === undefined ? {} : { seconds }) }, [...names]);
     audit("avatar", who, result.avatar.expression);
     res.json(result);
   }));

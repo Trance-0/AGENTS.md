@@ -7,6 +7,12 @@ export const canonical = value => JSON.stringify(value, (_key, item) => (item &&
 
 // Ordered operations that turn the live scene into the draft: deletions
 // first (they free widget slots), then creations, then changes.
+function comparable(widget) {
+  const props = { ...widget.props };
+  if (widget.type === "embed" && props.monochrome === undefined) props.monochrome = false;
+  if (widget.type === "avatar") Object.assign(props, { pack: props.pack ?? "witch", state: props.state ?? "auto", blinkInterval: props.blinkInterval ?? 4.2, blinkDuration: props.blinkDuration ?? .16 });
+  return { ...widget, props, hidden: !!widget.hidden };
+}
 export function liveDiff(liveWidgets, draft) {
   const live = new Map(liveWidgets.map(widget => [widget.id, migrateWidget(widget)]));
   const next = new Map(draft.map(widget => [widget.id, widget]));
@@ -17,7 +23,7 @@ export function liveDiff(liveWidgets, draft) {
     const before = live.get(id);
     if (!before) continue;
     if (before.type !== widget.type) { ops.unshift({ op: "delete", id, widget: before }); ops.push({ op: "create", id, widget }); continue; }
-    if (canonical({ ...before, hidden: !!before.hidden }) !== canonical({ ...widget, hidden: !!widget.hidden })) ops.push({ op: "update", id, widget });
+    if (canonical(comparable(before)) !== canonical(comparable(widget))) ops.push({ op: "update", id, widget });
   }
   return ops;
 }

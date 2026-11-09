@@ -40,7 +40,7 @@ export class MetricsBridge {
     this.lastCycle = 0;
     this.published = { recordingId: null, values: {} };
     this.running = null;
-    scene.onChange(reason => { this.publish().catch(() => {}); if (reason === "open") this.cycle(); });
+    scene.onChange(reason => { this.publish().catch(() => {}); if (this.sourcesInUse().size) this.cycle(); });
   }
 
   sourcesInUse() {
@@ -92,7 +92,7 @@ export class MetricsBridge {
   due() { return this.now() - this.lastCycle >= this.refreshSettings().intervalMs; }
 
   start(tickMs = TICK_MS) {
-    this.lastCycle = this.now();
+    this.cycle().catch(() => {});
     const timer = setInterval(() => { if (this.due()) this.cycle().catch(() => {}); }, tickMs);
     timer.unref?.();
     return () => clearInterval(timer);

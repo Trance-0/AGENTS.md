@@ -1,7 +1,7 @@
 services:
   dashboard:
-    image: agent-dashboard:0.3.1
-    container_name: agent-dashboard-v0.3.1
+    image: agent-dashboard:0.4.0
+    container_name: agent-dashboard-v0.4.0
     build:
       context: .
     network_mode: host

@@ -17,7 +17,12 @@ export async function renderSummary(body, api) {
   quotaBox.append(el("h2", "", "Codex quota (all accounts pooled)"), quota);
   const tokenBox = el("section", "settings-card");
   tokenBox.append(el("h2", "", "Tokens"), tokens);
-  root.append(status, quotaBox, tokenBox);
+  const controls = el("div", "task-toolbar");
+  const label = el("label", "setting-row"); const automatic = document.createElement("input"); automatic.type = "checkbox";
+  automatic.checked = localStorage.getItem("dashboard.quotaAutoUpdate") !== "false";
+  label.append(automatic, el("span", "", "Automatically update quota"));
+  const refresh = el("button", "action-btn", "Check now"); refresh.type = "button";
+  controls.append(label, refresh); root.append(controls, status, quotaBox, tokenBox);
   body.append(root);
   let data;
   const draw = () => {
@@ -44,7 +49,7 @@ export async function renderSummary(body, api) {
         quota.append(card);
       }
       const age = data.codex.updatedAt ? formatAge(Date.now() - data.codex.updatedAt) : null;
-      quota.append(el("p", "settings-note summary-age", age ? `Snapshot taken ${age} ago. Refresh it from the CPA quota tab.` : "No quota snapshot yet. Save the CPA connection and refresh from the CPA quota tab."));
+      quota.append(el("p", "settings-note summary-age", age ? `Last updated ${new Date(data.codex.updatedAt).toLocaleString()} (${age} ago).` : "No quota snapshot yet. Save the CPA connection and refresh from the CPA quota tab."));
     }
     tokens.replaceChildren();
     for (const [label, value] of [["Today (UTC)", data.tokens.today], ["Last 7 days", data.tokens.week], ["Last 30 days", data.tokens.month]]) {
@@ -55,14 +60,19 @@ export async function renderSummary(body, api) {
       tokens.append(card);
     }
   };
-  const load = async () => {
+  let loading = false;
+  const load = async (force = false) => {
+    if (loading) return; loading = true; refresh.disabled = true;
     try {
-      data = await api("/api/admin/metrics/summary");
-      status.textContent = data.note;
+      data = await api(`/api/admin/metrics/summary?refresh=${force || automatic.checked ? "1" : "0"}`);
+      status.textContent = data.refreshError ? `${data.refreshError} Showing the last saved snapshot.` : data.note;
       status.classList.remove("tone-error");
       draw();
     } catch (error) { status.textContent = error.message; status.classList.add("tone-error"); }
+    finally { loading = false; refresh.disabled = false; }
   };
+  refresh.onclick = () => load(true);
+  automatic.onchange = () => { localStorage.setItem("dashboard.quotaAutoUpdate", String(automatic.checked)); if (automatic.checked) load(); };
   await load();
   // Countdowns tick every 30 s; data reloads every minute while visible.
   let ticks = 0;

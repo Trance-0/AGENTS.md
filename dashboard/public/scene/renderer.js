@@ -80,7 +80,7 @@ export class SceneRenderer {
     if (!WIDGET_TYPES[widget.type]?.back) return this.stage;
     if (widget.props.attach === "log") return this.logBack;
     // Stage embeds join the stage while editing so they can be selected.
-    return this.override ? this.stage : this.back;
+    return this.override && !this.keepBackdropLayer ? this.stage : this.back;
   }
 
   update(state) {
@@ -210,7 +210,7 @@ export class SceneRenderer {
         const key = `${props.src}|${props.theme ?? "system"}`;
         if (node.srcKey !== key) {
           node.srcKey = key;
-          const src = this.embedSrc(props.src, props.theme);
+          const src = this.embedSrc(props.src, props.theme, props.monochrome);
           if (src) node.frame.src = src;
         }
         node.el.style.opacity = String(props.opacity);
@@ -228,10 +228,11 @@ export class SceneRenderer {
   // the opaque-origin frame can verify where theme messages come from.
   // `theme`: the widget's theme prop; "system" (or absent) is the resolved
   // dashboard theme from the theme helper (public/theme.js).
-  embedSrc(path, theme = "system") {
+  embedSrc(path, theme = "system", monochrome = false) {
     if (typeof path !== "string" || !/^\/embed\/[a-z0-9-]+\/$/.test(path)) return null;
     const resolved = theme === "dark" || theme === "light" ? theme : document.documentElement.dataset.theme || "dark";
     const params = new URLSearchParams({ embed: "1", theme: resolved, parent_origin: location.origin });
+    if (monochrome) params.set("monochrome", "1");
     if (this.reduced()) params.set("motion", "reduce");
     return `${path}?${params}`;
   }
@@ -273,9 +274,15 @@ export class SceneRenderer {
     const reduced = this.reduced();
     const scene = state ?? { activity: { lastT: null, thinkingSince: null, tools: 0, talkUntil: null, provider: null, taps: [] }, metrics: {} };
     if (node.type === "avatar") {
-      const expression = avatarExpression(scene, t);
+      const props = node.widget.props;
+      const pack = props.pack || "witch";
+      if (node.avatarPack !== pack) {
+        node.avatarPack = pack; node.avatarRenderer = AVATAR_RENDERERS.witch(pack);
+        node.avatarRenderer.ready.then(() => this.draw(true));
+      }
+      const expression = avatarExpression(scene, t, props);
       node.el.dataset.expression = expression;
-      this.avatar.draw(ctx, width, height, { expression, frame: expression === "talk" ? talkFrame(t, reduced) : expression, t, reduced, mirror: node.widget.props.mirror });
+      node.avatarRenderer.draw(ctx, width, height, { expression, frame: expression === "talk" ? talkFrame(t, reduced) : expression, t, reduced, mirror: node.widget.props.mirror });
     } else {
       const pose = catPose(scene, t, reduced);
       node.el.dataset.pose = pose.pose;

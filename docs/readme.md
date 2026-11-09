@@ -134,3 +134,18 @@ The OpenClaw release helper deploys immutable images, verifies runtime identity
 and channel health, and promotes known-good releases after a soak. Its systemd
 watchdog recovers independently of Jenkins; the dashboard reads a restricted
 status record. Staging rollback, recovery and kill-switch checks passed.
+
+### Canvas and avatar editing (dashboard 0.4.0)
+
+Canvas is now a separate administrator panel with Layout and Avatars tabs.
+Drag preview widgets to move them, use corner handles to resize, or select
+Draw widget to create a rectangle. Save layout changes the default scene;
+Apply to live stream records the changes in the current stream.
+
+The avatar library imports ZIP collections from upload or a public HTTPS URL,
+previews named states, edits resource mappings as new immutable packs, and
+downloads packs. Avatar widget properties select the pack/state and blink
+interval/duration. The OpenClaw scene tool returns the available avatar catalog.
+Usage Summary checks quota on load by default, has Check now/auto-update controls,
+and shows the last snapshot time. Circtime backdrop properties include the
+red/yellow/green Monochrome toggle; fixed dark embeds now have black backgrounds.
