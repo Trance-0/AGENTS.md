@@ -30,7 +30,7 @@ def fetch(url):
 
 def digest_tree(root):
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
-            for p in root.rglob('*') if p.is_file() and not p.name.endswith('.test.js')}
+            for p in root.rglob('*') if p.is_file() and not p.name.endswith(('.test.js', '.test.ts'))}
 
 
 def replace_tree(source, target, backups):
@@ -40,7 +40,7 @@ def replace_tree(source, target, backups):
     if target.exists(): shutil.copytree(target, backups / f'{target.name}-{time.time_ns()}')
     staging = target.with_name(target.name + '.installing')
     if staging.exists(): shutil.rmtree(staging)
-    shutil.copytree(source, staging, ignore=shutil.ignore_patterns('*.test.js', '__pycache__'))
+    shutil.copytree(source, staging, ignore=shutil.ignore_patterns('*.test.js', '*.test.ts', '__pycache__'))
     if digest_tree(staging) != expected: raise RuntimeError('Installation refused: OpenCode/plugin verification - staged files do not match source')
     if target.exists(): shutil.rmtree(target)
     staging.rename(target)

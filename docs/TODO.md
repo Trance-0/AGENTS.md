@@ -42,3 +42,5 @@ through the desktop Trash.
 - [x] Merge PCP 0.4.3 into Nesbitt-bot main (PR 9); deploy locally.
 - [ ] Owner sync of PCP 0.4.3 to the Trance-0 fork for its Jenkins rebuild.
 - [x] Authorized QQ progress/final-status delivery test; start, running, and final messages verified through QQ history and get_msg readback.
+
+- [x] Shared host OpenCode desktop/server uses CPA Astra with local Qwen3.8 vLLM failover; forced provider failure passed Python-tool and final-response checks.

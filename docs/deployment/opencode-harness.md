@@ -32,9 +32,10 @@ environment injection or overriding approval policies; use the UI for approvals.
   `opencode-sessions/`. `pathMap` translates container workspace paths into
   the matching host paths; explicitly supplied host project paths also work.
 
-The six repository plugins are installed in the server's config directory:
+The six original repository plugins are installed in the server's config directory:
 `plugin-manager`, `bark-notify`, `cpa-usage`, `task-queue`, `session-manager`,
 and `session-rename`. Their `lib/` and `versions.json` ship with them.
+The additional `model-fallback` plugin provides local inference failover.
 Dependencies are `@opencode-ai/plugin@1.19.5` and `msgpackr`.
 No old task queue or personal session database was copied into the new server.
 Task summaries use the parser; session renaming uses the configured model.
@@ -42,16 +43,25 @@ Bark is installed with no subscribers; no notification test was sent.
 
 ## Model and loop behavior
 
-The verified default is `openai/gpt-6-astra` with `reasoningEffort: high`,
-using the existing OpenClaw OpenAI credential and the native `@ai-sdk/openai`
-provider. That provider uses Responses. GPT-6 Astra rejects reasoning plus
-function tools on Chat Completions; see the official
-[reasoning guide](https://developers.openai.com/api/docs/guides/reasoning).
+The primary and auxiliary models are `cpa/gpt-6-astra`. The native OpenAI
+provider remains available for explicit selection. The local fallback is
+`local-vllm/nvidia/Qwen3.8-27B-NVFP4`, served by the existing vLLM container.
+The desktop and ACP backend share this server-side configuration.
 
-CPA remains available for explicit selection. During installation, its Astra
-route reported cooldown, Sol reported quota exhaustion, and the configured
-Opus alias returned 404. These are upstream failures, not missing plugins.
-The native OpenClaw model priority was preserved.
+OpenCode 1.19.5 has no native fallback chain. The `model-fallback` plugin adds a
+fetch hook to the configured CPA provider when `local-vllm` is also configured.
+It retries Chat Completions requests locally on transport failures, a 45-second
+response-header timeout, HTTP 401/403/404/408/429, or server errors. Local requests
+retain messages and tool calls, replace the model ID, and omit CPA credentials
+and provider-specific reasoning options. Caller cancellation, malformed requests,
+and errors after a stream starts do not replay the request. Explicitly selected
+non-CPA providers are unaffected. A large context can still exceed local limits.
+
+The composer retains the selected CPA model name during fallback; actual routing
+is recorded in the `model-fallback` plugin log under the shared server data root.
+It does not silently change the user's persistent model selection. Both the
+primary provider and a forced CPA-503-to-local-Qwen Python tool and final response round
+were verified. Ten routing tests and the focused TypeScript check passed.
 
 There is no fixed small tool-iteration cap in the bridge. A turn has a six-hour
 default timeout, editable with `/acp timeout`. Polling emits progress at least
@@ -67,7 +77,7 @@ Ask OpenClaw to use OpenCode for a complex task, or start explicitly:
 ```text
 /acp doctor
 /acp spawn opencode --mode persistent --thread off
-/acp model openai/gpt-6-astra
+/acp model cpa/gpt-6-astra
 /acp set variant high
 /acp timeout 21600
 ```
