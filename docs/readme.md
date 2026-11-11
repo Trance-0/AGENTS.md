@@ -161,3 +161,10 @@ The shared OpenCode bridge reports sanitized provider billing/auth blockers and
 permission waits clearly and supplies the host/container path mapping in coding
 requests. PCP's delegated-work monitor carries progress and terminal results
 back to the original AstrBot conversation after the initial HTTP turn ends.
+
+
+OpenCode desktop and OpenClaw ACP share the authenticated coding server. Its
+primary and auxiliary defaults use CPA Astra, with the model-fallback plugin
+routing eligible pre-stream provider failures to local Qwen3.8 vLLM. See
+[the coding harness runbook](deployment/opencode-harness.md) for setup,
+verification, and fallback limits.

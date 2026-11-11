@@ -10,6 +10,7 @@ lives in `lib/`.
 | `bark-notify` | dsh `dsh-bark-notify` | `bark_send`, `bark_state`, `bark_set_mode`, `bark_set_type`, `bark_profile`, `bark_preview`, `bark_device`, `bark_flush` — plus an `event` hook |
 | `cpa-usage` | dsh `cliproxy-quota` | `cpa_quota`, `cpa_models`, `cpa_config` |
 | `task-queue` | dsh `task-runner` | `task_create`, `task_list`, `task_update`, `task_run`, `task_retry`, `task_resume`, `task_sync` — plus `session.created` / `session.idle` / `session.error` hooks |
+| `model-fallback` | — | CPA Chat Completions failover to configured loopback `local-vllm`; transport/status routing only, no tools |
 | `session-rename` | — | `session_rename`, `session_rename_preview`, `session_rename_state` — plus a `session.idle` hook |
 | `plugin-manager` | codex `persistent-plugin-manager` | `plugins_status`, `plugins_dashboard`, `plugins_set`, `plugins_toggle`, `plugins_action`, `plugins_versions` |
 
