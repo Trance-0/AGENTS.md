@@ -312,6 +312,10 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
       const check = spawn(process.execPath, [path.join(root, "scripts/canvas-features-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie }, stdio: "inherit" });
       const [code] = await once(check, "exit"); assert.equal(code, 0);
     }
+    if (process.env.DASHBOARD_TASK_SAVE_CHECK === "1") {
+      const check = spawn(process.execPath, [path.join(root, "scripts/task-save-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie }, stdio: "inherit" });
+      const [code] = await once(check, "exit"); assert.equal(code, 0);
+    }
     if (process.env.DASHBOARD_SETTINGS_BROWSER_CHECK === "1") {
       const check = spawn(process.execPath, [path.join(root, "scripts/settings-browser-check.mjs")], { env: { ...process.env, DASHBOARD_TEST_URL: base, DASHBOARD_TEST_COOKIE: headers.cookie }, stdio: "inherit" });
       const [code] = await once(check, "exit"); assert.equal(code, 0);

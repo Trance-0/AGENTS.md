@@ -60,3 +60,12 @@ advanced fields and delivery, new paused jobs, and mobile/light/dark layouts.
 `DASHBOARD_BROWSER_CHECK=1` additionally runs the existing browser regressions.
 The task browser fixture simulates gateway jobs; live operator verification
 uses only a temporary paused job and leaves existing schedules untouched.
+
+## Toggle-save RCA and Undo (0.4.2)
+
+Six stored jobs contained a legacy `failureAlert.delivery` field absent from
+the current cron.update write schema. Sending the entire unchanged object made
+an Enabled-only save fail. The dashboard now diffs editable fields server-side
+and forwards only changed values; untouched failure alerts stay in the gateway.
+The five-second top toast appears only after a confirmed save, with revision-
+checked Undo. Validation and transport failures use a visible error alert.

@@ -48,3 +48,19 @@ test("tasks are admin-only and every mutation requires CSRF; disabled settings b
     enabled = false; assert.equal((await fetch(url, { headers: { "x-user": "admin" } })).status, 404);
   } finally { server.closeAllConnections(); await new Promise(r => server.close(r)); }
 });
+
+test("toggle-only update excludes untouched legacy failure alert fields", async () => {
+  const original = { ...job("legacy"), enabled: true, failureAlert: { after: 1, delivery: { mode: "announce" }, channel: "telegram" } };
+  let patch;
+  const tasks = new OpenClawTasks(async (method, args) => {
+    if (method === "cron.list") return { jobs: [original] };
+    patch = args.patch;
+    assert.deepEqual(patch, { enabled: false });
+    return { ...original, ...patch };
+  });
+  const saved = await tasks.mutate("update", original.id, { baseHash: taskHash(original), task: { ...original, id: undefined, state: undefined } }).catch(() => null);
+  assert.equal(saved, null, "read-only fields remain rejected");
+  const { id, state, ...editable } = original;
+  const result = await tasks.mutate("update", id, { baseHash: taskHash(original), task: { ...editable, enabled: false } });
+  assert.equal(result.enabled, false); assert.equal(result.failureAlert, original.failureAlert);
+});

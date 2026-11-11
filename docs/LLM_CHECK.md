@@ -629,3 +629,16 @@ bullets specific: filenames, command names, outcomes.
 
 - Existing Canvas regression suite also passed (save/apply, keyboard controls,
   dark/light and 390 px). The Node 22 production image built successfully.
+
+## 2026-11-11 — Scheduled task saves and coding RCA
+
+- Reproduced rejection of full stored task snapshots with the real gateway
+  validator: legacy failureAlert.delivery is rejected. Toggle-only diff patches
+  avoid resending it. Added top saved/Undo toast with five-second fade/removal.
+- Task mutation tests, browser save/undo/expiry checks, existing settings
+  browser checks and the OpenCode runtime tests passed.
+- Bilibili child failed on exhausted OpenAI credits; parent sessions_yield was
+  refused, and progress/error events lacked durable AstrBot delivery. Verified
+  CPA Astra with a real OpenCode tool call and selected it for the coding server.
+  Permission waits now return an explicit blocker; host path mapping is included
+  in delegated prompts. PCP carries durable progress independently of HTTP turns.

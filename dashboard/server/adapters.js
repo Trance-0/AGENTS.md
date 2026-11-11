@@ -3,7 +3,7 @@ import { OpenClawConfigStore } from './openclaw-config.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-const OWNER_TOOLS = ['exec', 'process', 'read', 'write', 'edit', 'apply_patch', 'sessions_spawn'];
+const OWNER_TOOLS = ['exec', 'process', 'read', 'write', 'edit', 'apply_patch', 'sessions_spawn', 'sessions_yield'];
 const GROUP_TOOLS = ['pcp_execute'];
 const hash = text => crypto.createHash('sha256').update(text).digest('hex');
 const fail = (status, cause) => Object.assign(new Error(`Adapter change refused: dashboard/adapter settings — ${cause}`), { status });
