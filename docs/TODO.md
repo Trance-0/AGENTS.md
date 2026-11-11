@@ -41,4 +41,4 @@ through the desktop Trash.
 - [x] Install durable PCP work monitoring and AstrBot polling; verify real delegated Python completion after the parent closes through an isolated local ingress.
 - [x] Merge PCP 0.4.3 into Nesbitt-bot main (PR 9); deploy locally.
 - [ ] Owner sync of PCP 0.4.3 to the Trance-0 fork for its Jenkins rebuild.
-- [ ] Authorized QQ progress/final-status delivery test; local signed polling passed.
+- [x] Authorized QQ progress/final-status delivery test; start, running, and final messages verified through QQ history and get_msg readback.

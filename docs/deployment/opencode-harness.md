@@ -158,9 +158,11 @@ six-hour monitoring deadline and is reported as blocked, never as success.
 Live verification used a separate, expiring ingress credential with no platform
 adapter. A delegated Python tool ran after `sessions_yield`; the parent closed,
 then PCP recorded and returned `LOCAL_DELEGATION_VERIFIED 12345` through signed
-polling. No QQ message was sent. This verifies the deployed gateway, coding
-server, monitor, storage, and poll route; actual QQ progress delivery still needs
-an authorized platform test.
+polling. A subsequent explicitly authorized QQ private-chat test delivered
+started, running, and completed messages after the parent yielded. All three
+were found in QQ history and verified through `get_msg`; the final message
+contained `QQ_STATUS_DELIVERY_VERIFIED 12345`. The temporary read-only observer
+was removed and private verification evidence retained.
 
 Dashboard 0.4.2 was deployed by successful GitHub-webhook Jenkins build 31.
 Its task editor sends only changed fields, avoiding legacy stored
