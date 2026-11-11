@@ -131,3 +131,40 @@ under its `workspace/` directory. The ACP `pathMap` points to this host root.
 The former checkout path is a compatibility symlink; the original pre-migration
 tree is retained under `DockerVolumes/openclaw/rollback`. A stopped-write rsync
 checksum and metadata comparison verified the complete tree before recreation.
+
+
+## AstrBot delegation incident and verification (2026-11-11)
+
+The Bilibili coding request reached OpenCode. Its parent could not call
+`sessions_yield` because the PCP execution-policy vocabulary omitted that tool.
+The child then failed on exhausted provider credit, but its final error was
+routed only to the transient HTTP parent. The original QQ conversation never
+received that blocker. A separate earlier coding run waited on an external-path
+permission after using gateway container paths in the host coding server.
+
+The ACP bridge now reports sanitized provider/permission blockers and includes
+host/container path mappings. The deployed coding default uses the existing CPA
+provider; text and real Python tool execution passed. `sessions_yield` is
+available to the owner execution agent. Group allowlists remain empty.
+
+PCP 0.4.3 observes accepted ACP streams with a persistent per-run cursor and
+routes started/progress/completed/blocked updates through signed ingress polls.
+Initial registration binds the original turn, child, run, and channel credential;
+updates continue after the parent grant closes. The terminal summary is appended
+to PCP history. Retries can duplicate a platform message if a crash occurs after
+sending but before saving the cursor. A missing terminal result reaches the
+six-hour monitoring deadline and is reported as blocked, never as success.
+
+Live verification used a separate, expiring ingress credential with no platform
+adapter. A delegated Python tool ran after `sessions_yield`; the parent closed,
+then PCP recorded and returned `LOCAL_DELEGATION_VERIFIED 12345` through signed
+polling. No QQ message was sent. This verifies the deployed gateway, coding
+server, monitor, storage, and poll route; actual QQ progress delivery still needs
+an authorized platform test.
+
+Dashboard 0.4.2 was deployed by successful GitHub-webhook Jenkins build 31.
+Its task editor sends only changed fields, avoiding legacy stored
+`failureAlert.delivery` fields rejected by current gateway write validation.
+A temporary future task passed enable, disable, and Undo against the live
+gateway and was removed; the seven original task configurations were unchanged.
+Browser checks cover the top save notification, Undo, and five-second expiry.
