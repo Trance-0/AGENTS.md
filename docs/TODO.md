@@ -32,3 +32,13 @@ Publishing uses the existing OpenClaw Nesbitt-bot credentials. That account has
 no write access to the Trance-0 PCP deployment fork. Database, adapter policy, media, service secrets, logs and
 release evidence live under DockerVolumes. Recycled directories are recoverable
 through the desktop Trash.
+
+
+## Task reliability repair (2026-11-11)
+
+- [x] Dashboard task-save minimal patches, top notification, and five-second Undo; deployed by Jenkins build 31.
+- [x] Identify Bilibili failure: denied yield, exhausted provider credit, and missing durable QQ completion route.
+- [x] Install durable PCP work monitoring and AstrBot polling; verify real delegated Python completion after the parent closes through an isolated local ingress.
+- [x] Merge PCP 0.4.3 into Nesbitt-bot main (PR 9); deploy locally.
+- [ ] Owner sync of PCP 0.4.3 to the Trance-0 fork for its Jenkins rebuild.
+- [ ] Authorized QQ progress/final-status delivery test; local signed polling passed.
