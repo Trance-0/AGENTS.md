@@ -25,9 +25,11 @@ export class OpenClawTasks {
   }
   mutate(action, id, body) {
     const operation = this.pending.then(async () => {
+      let current;
       if (action !== "add") {
         const job = (await this.list()).find(item => item.id === id);
         if (!job) throw fail(404, "task no longer exists; reload the list");
+        current = job;
         if (body.baseHash !== job.hash) throw fail(409, "task changed after it was loaded; reload before saving");
       }
       if (action === "remove") return this.call("cron.remove", { id });
@@ -35,7 +37,12 @@ export class OpenClawTasks {
       if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw fail(400, "task configuration must be an object");
       if (Object.keys(patch).some(key => !EDITABLE.includes(key))) throw fail(400, "configuration contains read-only or unsupported fields");
       if (patch.name !== undefined && (typeof patch.name !== "string" || !patch.name.trim())) throw fail(400, "task name is required");
-      return this.call(action === "add" ? "cron.add" : "cron.update", action === "add" ? patch : { id, patch });
+      // Stored jobs can contain legacy fields rejected by current write schemas.
+      // Do not resend those untouched fields for a toggle-only edit.
+      const changed = action === "add" ? patch : Object.fromEntries(Object.entries(patch).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(current[key])));
+      if (action !== "add" && !Object.keys(changed).length) return current;
+      const saved = await this.call(action === "add" ? "cron.add" : "cron.update", action === "add" ? changed : { id, patch: changed });
+      return { ...saved, hash: taskHash(saved) };
     });
     this.pending = operation.catch(() => {});
     return operation;

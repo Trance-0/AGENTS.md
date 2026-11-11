@@ -135,3 +135,15 @@ interval/duration. The OpenClaw scene tool returns the available avatar catalog.
 Usage Summary checks quota on load by default, has Check now/auto-update controls,
 and shows the last snapshot time. Circtime backdrop properties include the
 red/yellow/green Monochrome toggle; fixed dark embeds now have black backgrounds.
+
+### Reliable task saves and delegated coding status
+
+Task updates send only changed fields, preserving older stored configuration
+that the current gateway write schema does not accept. Successful saves show a
+top notification with Undo for five seconds; failures also show a visible alert.
+Undo checks the saved revision before reverting.
+
+The shared OpenCode bridge reports sanitized provider billing/auth blockers and
+permission waits clearly and supplies the host/container path mapping in coding
+requests. PCP's delegated-work monitor carries progress and terminal results
+back to the original AstrBot conversation after the initial HTTP turn ends.

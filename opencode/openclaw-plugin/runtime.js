@@ -3,6 +3,16 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
+export function providerFailure(error) {
+  const status = error?.data?.statusCode;
+  let code;
+  try { const body = JSON.parse(error?.data?.responseBody || '{}'); code = body.error?.code || body.error?.type; } catch {}
+  const message = String(error?.data?.message || '');
+  if (/credit|quota|billing/i.test(String(code)) || /no credits|insufficient.quota/i.test(message)) return 'provider billing/quota exhausted; add credit or select an available provider';
+  if (status === 401 || status === 403) return 'provider authentication rejected; update its credentials';
+  if (status === 429) return 'provider rate limited the request; retry after the provider cooldown';
+  return `${error?.name || 'provider error'}${Number.isInteger(status) ? ` (HTTP ${status})` : ''}; inspect the retained OpenCode session`;
+}
 const fail = cause => new Error(`Coding task cannot continue: opencode-server/runtime — ${cause}.`);
 const sessionID = value => {
   if (!/^ses_[a-zA-Z0-9]+$/.test(value || "")) throw fail("server returned an invalid session ID");
@@ -122,7 +132,9 @@ export class OpenCodeRuntime {
       if (record.active?.requestId !== input.requestId) {
         record.active = { requestId: input.requestId, messageId: `msg_${Date.now().toString(16)}${crypto.randomBytes(12).toString("hex")}`, startedAt: Date.now() };
         await this.save(key, record);
-        const parts = [{ type: "text", text: input.text }, ...(input.attachments || []).map(item => ({ type: "file", mime: item.mediaType, url: `data:${item.mediaType};base64,${item.data}` }))];
+        const mapped = Object.entries(this.config.pathMap || {}).map(([from, to]) => `${from} -> ${to}`).join("; ");
+        const context = `OpenCode tools run on the host in ${record.cwd}. Container paths mentioned in the task must be translated for host file tools: ${mapped || 'no path mappings configured'}. Keep container paths only inside docker exec commands. Report permission or provider blockers explicitly.\n\n`;
+        const parts = [{ type: "text", text: context + input.text }, ...(input.attachments || []).map(item => ({ type: "file", mime: item.mediaType, url: `data:${item.mediaType};base64,${item.data}` }))];
         await this.request(`/session/${record.id}/prompt_async`, { method: "POST", cwd: record.cwd, signal: input.signal, body: { messageID: record.active.messageId, agent: record.agent, ...(record.model ? { model: record.model } : {}), ...(record.variant ? { variant: record.variant } : {}), parts } });
       }
       submitted = true;
@@ -134,7 +146,7 @@ export class OpenCodeRuntime {
         let complete = false;
         for (const message of messages) {
           if (message.info?.role !== "assistant" || message.info.parentID !== record.active.messageId) continue;
-          if (message.info.error) throw fail(`model response failed (${message.info.error.name || "provider error"}); inspect the session in OpenCode`);
+          if (message.info.error) throw fail(`model response failed: ${providerFailure(message.info.error)}`);
           for (const part of message.parts || []) {
             if (part.type === "text" || part.type === "reasoning") {
               const previous = seen.get(part.id) || "", text = part.text || "";
@@ -158,6 +170,7 @@ export class OpenCodeRuntime {
         if (Date.now() - lastHeartbeat >= 20000) {
           const permissions = await this.request("/permission", { cwd: record.cwd, signal: input.signal });
           const awaiting = permissions.some(item => item.sessionID === record.id);
+          if (awaiting) throw fail("permission approval required in the OpenCode UI; task is blocked and the transcript is retained");
           const retrying = statuses[record.id]?.type === "retry";
           yield { type: "status", text: awaiting ? "Coding task is waiting: opencode-server/permission — approve or reject the pending request in the OpenCode UI." : retrying ? `Coding task is waiting: opencode-server/provider retry — provider request failed; OpenCode is waiting before attempt ${statuses[record.id].attempt}. Inspect the session for the provider response.` : `Coding task is running: opencode-server/turn — session ${record.id} remains active; elapsed ${Math.round((Date.now() - record.active.startedAt) / 1000)} seconds.` };
           lastHeartbeat = Date.now();

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { OpenCodeRuntime } from "./runtime.js";
+import { OpenCodeRuntime, providerFailure } from "./runtime.js";
 
 async function fixture(t, handler = () => undefined) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-bridge-"));
@@ -145,4 +145,10 @@ test("an expired recovered turn is aborted without losing its history", async t 
   await f.runtime.save("test", { ...(await f.runtime.read("test")), timeout: 1, active: { requestId: "expired", messageId: "msg_saved", startedAt: Date.now() - 2000 } });
   await assert.rejects(Array.fromAsync(f.runtime.runTurn({ handle, text: "Check", requestId: "expired" })), /history is retained/);
   assert.ok(f.calls.some(c => c.route.endsWith("/abort")));
+});
+
+test("provider blockers explain quota/auth causes without exposing headers or credentials", () => {
+  assert.match(providerFailure({ name: 'APIError', data: { statusCode: 429, responseBody: '{"error":{"code":"credit_balance_exhausted"}}', responseHeaders: { authorization: 'private' } } }), /billing\/quota exhausted/);
+  assert.match(providerFailure({ data: { statusCode: 401 } }), /authentication/);
+  assert.doesNotMatch(providerFailure({ name: 'APIError', data: { statusCode: 429, message: 'private detail' } }), /private/);
 });

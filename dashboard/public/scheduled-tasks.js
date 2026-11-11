@@ -1,3 +1,4 @@
+import { showToast } from "/toast.js";
 import { api, el } from "/api.js";
 import { button, section, editorTabs } from "/settings-controls.js";
 import { scheduleDescription } from "/task-schedule.js";
@@ -59,13 +60,22 @@ export async function renderScheduledTasks(body) {
     async function save() {
       if (busy) return;
       try {
-        if (tabs.isRaw()) parse(); else if (!form.reportValidity()) return;
+        if (tabs.isRaw()) parse(); else if (!form.reportValidity()) {
+          const invalid = [...form.elements].find(input => input.validity && !input.validity.valid);
+          throw new Error(`${invalid?.getAttribute('aria-label') || 'A form field'}: ${invalid?.validationMessage || 'invalid value'}`);
+        }
         if (!draft.name?.trim() || !(draft.payload?.message || draft.payload?.text)?.trim()) throw new Error("a task name and prompt are required");
         if (current?.payload?.model && draft.payload?.kind === "agentTurn" && !draft.payload.model?.trim()) throw new Error("select a model; this gateway cannot clear an existing model override");
         busy = true; saveButton.disabled = true;
+        const previous = current ? editable(current) : null;
         const saved = await api(`/api/admin/openclaw-tasks${current ? `/${encodeURIComponent(current.id)}` : ""}`, { method: current ? "PUT" : "POST", body: JSON.stringify({ task: draft, baseHash: current?.hash }) });
         dirty = false; const id = saved.id || current?.id; await load(false, id); status.textContent = "Task saved · schedule updated in OpenClaw";
-      } catch (error) { status.textContent = `Task not saved: dashboard/task editor — ${error.message}`; }
+        const version = saved.hash || jobs.find(job => job.id === id)?.hash;
+        showToast("Task changes saved", { undo: async () => {
+          await api(`/api/admin/openclaw-tasks/${encodeURIComponent(id)}`, { method: previous ? "PUT" : "DELETE", body: JSON.stringify({ ...(previous ? { task: previous } : {}), baseHash: version }) });
+          dirty = false; await load(false, previous ? id : null); status.textContent = "Task changes undone";
+        } });
+      } catch (error) { status.textContent = `Task not saved: dashboard/task editor — ${error.message}`; showToast(status.textContent, { error: true }); }
       finally { busy = false; saveButton.disabled = false; }
     }
   }
