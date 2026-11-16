@@ -977,3 +977,15 @@ property selects red/yellow/green status colors over the last 48 hours.
   tries Opus, Astra, DeepSeek, then Qwen; effort is configurable per model.
   Empty DeepSeek credentials leave it unavailable until the owner supplies a key.
 - Chat agents are configured for local Qwen only; complex work uses ACP OpenCode.
+
+## 2026-11-16 — Visible chat effort and Qwen xhigh
+
+- Added the primary chat model's effort control at the top of Agents & defaults,
+  with model/default precedence and session/task override explanations.
+- Set live Qwen chat effort to xhigh. Gateway fc32175d preserves it through the
+  model capability check and SDK request serialization; vLLM rejects high.
+- Verified browser save/reload and JSON round trips, all 86 server tests,
+  104 focused gateway tests, gateway types/build, and a real xhigh Qwen reply.
+- Deployed both services with backups and health checks; retained runtime mounts.
+  Full gateway check stops on 64 pre-existing formatting violations; scoped lint
+  and formatting pass. Commits remain local.

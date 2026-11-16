@@ -22,6 +22,7 @@ server runs as a user systemd service with private state under DockerVolumes.
 Chat uses local Qwen; complex coding work uses a separate OpenCode model policy.
 The dashboard provides Chat agent settings and Coding agent settings, including
 drag ordering, reasoning effort, and a masked DeepSeek credential field.
+Chat effort is visible at the top of Agents & defaults; local Qwen uses xhigh.
 See the [deployment and usage guide](deployment/opencode-harness.md) for setup,
 session resume, model controls, persistent logs, and rollback.
 

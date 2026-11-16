@@ -663,3 +663,24 @@ bullets specific: filenames, command names, outcomes.
   Source changes were not pushed; the remote Jenkins pipeline remains unchanged.
 - Split live-control documentation out of the deployment runbook to keep that
   modified file below the repository's 1,000-line cap, retaining its links.
+
+## 2026-11-16 — Qwen chat reasoning effort
+
+- Chat effort now appears above Agents & defaults and writes the primary model's
+  `params.thinking`. Rendering does not change the draft. Generic model effort
+  fields use selectors; Qwen choices are low, medium, and xhigh.
+- Browser regression covers changing primary model, xhigh selection, JSON path,
+  save/reload, and existing fallback ordering/coding/task settings. All 86 server
+  tests and settings Chromium passed. Screenshot reviewed.
+- Gateway's xhigh allowlist and SDK high-clamp both required fixes. All 104
+  focused runtime tests, `pnpm tsgo`, `pnpm build`, and changed-file lint passed.
+  `pnpm check` stops at pre-existing formatting errors in 64 unrelated files;
+  no unrelated formatting changes were included.
+- Both Docker deployments passed health/rollback gates. Gateway release
+  fc32175d uses the existing runtime base plus rebuilt dist, preserving its
+  dependencies, extensions, UI assets, environment, and host-backed mounts.
+- Live config validated; backed-up Qwen per-model effort is xhigh. The real
+  gateway chat returned QWEN_XHIGH_VERIFIED, and its transcript recorded xhigh
+  on the local Qwen model. SDK regression checks the actual serialized effort.
+- README, guide, deployment help, and change log updated. No ports, credentials,
+  coding policy, or unrelated work changed; no runtime files staged or push made.

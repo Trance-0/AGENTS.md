@@ -6,8 +6,8 @@ import { orderedModels } from "/model-order.js";
 
 const SECRET = "__dashboard_redacted__";
 const SECRET_KEY = /(token|secret|password|passwd|apikey|api_key|cookie|credential|privatekey|private_key)$/i;
-const NAMES = { dmScope: "Direct-message sessions", groupPolicy: "Group access", dmPolicy: "Direct-message access", primary: "Primary model", fallbacks: "Fallback models", baseUrl: "Service URL", maxConcurrent: "Concurrent runs", contextTokens: "Context window", apiKey: "API key", botToken: "Bot token", default: "Default agent", workspace: "Workspace", enabled: "Enabled", auth: "Authentication", allowFrom: "Allowed senders" };
-const ENUMS = { dmScope: ["main", "per-peer", "per-channel-peer", "per-account-channel-peer"], groupPolicy: ["open", "allowlist", "disabled"], dmPolicy: ["pairing", "allowlist", "open", "disabled"], thinkingDefault: ["off", "minimal", "low", "medium", "high", "xhigh"], reloadMode: ["off", "restart", "hot", "hybrid"] };
+const NAMES = { dmScope: "Direct-message sessions", groupPolicy: "Group access", dmPolicy: "Direct-message access", primary: "Primary model", fallbacks: "Fallback models", baseUrl: "Service URL", maxConcurrent: "Concurrent runs", contextTokens: "Context window", apiKey: "API key", botToken: "Bot token", default: "Default agent", workspace: "Workspace", enabled: "Enabled", auth: "Authentication", allowFrom: "Allowed senders", thinking: "Reasoning effort", thinkingDefault: "Default reasoning effort" };
+const ENUMS = { dmScope: ["main", "per-peer", "per-channel-peer", "per-account-channel-peer"], groupPolicy: ["open", "allowlist", "disabled"], dmPolicy: ["pairing", "allowlist", "open", "disabled"], thinking: ["off", "minimal", "low", "medium", "high", "xhigh"], thinkingDefault: ["off", "minimal", "low", "medium", "high", "xhigh"], reloadMode: ["off", "restart", "hot", "hybrid"] };
 export const labelFor = key => NAMES[key] || String(key).replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]/g, " ").replace(/^./, s => s.toUpperCase());
 const hasSecret = value => JSON.stringify(value).includes(SECRET);
 
@@ -63,6 +63,7 @@ function valueControl(key, value, set, changed, path, models) {
       keyInput.setCustomValidity(""); value[name] = { string: "", number: 0, boolean: false, object: {}, list: [] }[type]; set(value); renderObject(fields, value, changed, { path, models }); keyInput.value = ""; name = "";
     })); details.append(add); return details;
   }
+  if (key === "thinking" && path === "agents.defaults.models.vllm/nvidia/Qwen3.8-27B-NVFP4.params.thinking") return field(label, select(value, ["low", "medium", "xhigh"], set), help);
   if (ENUMS[key]) return field(label, select(value, ENUMS[key], set), help);
   const control = input(value ?? "", set, typeof value === "number" ? "number" : "text");
   if (typeof value === "number") control.step = "any";

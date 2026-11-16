@@ -90,6 +90,12 @@ Usage after reply: dashboard/usage — Codex pool 5h 62% left, resets in 2h 14m;
 
 ### Thinking effort
 
+Current chat routing uses local Qwen only, with per-model `params.thinking`
+set to `xhigh`. Change it in Chat agent settings → Agents & defaults → Chat
+reasoning effort. Qwen accepts low, medium, and xhigh. Coding tasks use the
+separate OpenCode policy. The measurements below describe the earlier 0.2.5
+CPA/OpenAI setup, not the current chat path.
+
 `agents.defaults.thinkingDefault` was `low`, so every run (and the runtime
 line the agent reads back) said low. OpenClaw has no per-agent thinking key,
 and a run keeps the level chosen for its **primary** model on every fallback.

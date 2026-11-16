@@ -1,5 +1,5 @@
 import { api, el } from "/api.js";
-import { button, section, editorTabs } from "/settings-controls.js";
+import { button, field, section, editorTabs, select } from "/settings-controls.js";
 import { renderObject, labelFor } from "/config-fields.js";
 
 import { SECTIONS } from "/config-help.js";
@@ -8,6 +8,26 @@ export function modelOptions(config) {
   const models = new Set(Object.keys(config?.agents?.defaults?.models || {}));
   for (const [provider, data] of Object.entries(config?.models?.providers || {})) for (const model of data.models || []) if (model.id) models.add(`${provider}/${model.id}`);
   return [...models].sort();
+}
+function chatEffortCard(draft, changed) {
+  const defaults = draft?.agents?.defaults;
+  const primary = typeof defaults?.model === "string" ? defaults.model : defaults?.model?.primary;
+  if (!primary) return null;
+  const qwen = primary.toLowerCase() === "vllm/nvidia/qwen3.8-27b-nvfp4";
+  const levels = qwen ? ["low", "medium", "xhigh"] : ["off", "minimal", "low", "medium", "high", "xhigh", "adaptive"];
+  const options = { "": `Use default (${defaults.thinkingDefault || "automatic"})`, ...Object.fromEntries(levels.map(level => [level, level === "xhigh" ? "xhigh · Extra high" : level])) };
+  const control = select(defaults.models?.[primary]?.params?.thinking ?? "", options, value => {
+    if (value) {
+      defaults.models ??= {};
+      defaults.models[primary] ??= {};
+      defaults.models[primary].params ??= {};
+      defaults.models[primary].params.thinking = value;
+    } else if (defaults.models?.[primary]?.params) delete defaults.models[primary].params.thinking;
+    changed();
+  });
+  const card = section("Chat model reasoning effort", `How much time ${primary} spends reasoning before answering. Higher effort can improve difficult answers, but takes longer.`);
+  card.append(field("Chat reasoning effort", control, `${qwen ? "Qwen supports low, medium, and xhigh (extra high)." : "Available effort levels depend on your model and provider."} This model setting overrides the default below. A session's /think command or a scheduled task can override it for that conversation or run. Coding agent settings are separate.`));
+  return card;
 }
 export async function renderConfigEditor(body, isAdmin) {
   if (!isAdmin) return body.append(el("p", "", "Settings unavailable: dashboard/admin authorization — administrator access is required."));
@@ -18,8 +38,10 @@ export async function renderConfigEditor(body, isAdmin) {
   raw.append(el("p", "settings-note", "Advanced backup editor. Masked credentials are preserved when saved."), text);
   let activeSection = "agents";
   let draft = {}, baseHash, dirty = false, loaded = false, busy = false;
-  const mark = () => { dirty = true; status.textContent = "Unsaved changes"; };
+  let refreshEffort = () => {};
+  const mark = () => { dirty = true; status.textContent = "Unsaved changes"; refreshEffort(); };
   const draw = () => {
+    refreshEffort = () => {};
     form.replaceChildren();
     const options = el("datalist"); options.id = "openclaw-model-options"; for (const name of modelOptions(draft)) options.append(new Option(name, name)); form.append(options);
     const keys = [...Object.keys(SECTIONS).filter(k => Object.hasOwn(draft, k)), ...Object.keys(draft).filter(k => !Object.hasOwn(SECTIONS, k))];
@@ -34,6 +56,15 @@ export async function renderConfigEditor(body, isAdmin) {
     if (activeSection) {
       const key = activeSection, [title, note] = SECTIONS[key] || [labelFor(key), `Configuration values for ${labelFor(key)}. Select a field below to edit how this part of OpenClaw behaves.`];
       const card = section(title, note); const fields = el("div", "config-fields");
+      if (key === "agents") {
+        const effortHost = el("div", "chat-effort-settings");
+        refreshEffort = () => {
+          effortHost.replaceChildren();
+          const effort = chatEffortCard(draft, () => { mark(); draw(); });
+          if (effort) effortHost.append(effort);
+        };
+        refreshEffort(); content.append(effortHost);
+      }
       if (draft[key] && typeof draft[key] === "object" && !Array.isArray(draft[key])) renderObject(fields, draft[key], mark, { path: key });
       else { const wrapper = { [key]: draft[key] }; renderObject(fields, wrapper, () => { draft[key] = wrapper[key]; mark(); }); }
       card.append(fields); content.append(card);

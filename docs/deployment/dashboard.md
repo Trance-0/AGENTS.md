@@ -941,6 +941,14 @@ visible rather than using nested disclosure menus; metadata and configuration
 values include plain-language help. Chat fallback lists support dragging and
 keyboard/touch arrow controls. The old Backends tab is removed.
 
+Agents & defaults starts with a Chat reasoning effort control for the primary
+model. It writes `agents.defaults.models[primary].params.thinking`, which takes
+priority over `thinkingDefault`. Selecting Use default removes the model
+setting. Qwen offers low, medium, and xhigh; the live chat model uses xhigh.
+Session `/think` and scheduled-task effort can still override this setting.
+The gateway must preserve xhigh through both its model check and the SDK payload;
+otherwise the SDK downgrades it to high, which this vLLM Qwen model rejects.
+
 Coding agent settings lists OpenCode, Codex, and Claude Code, including whether
 OpenClaw allows each agent. The deployed ACP backend is OpenCode; the other
 entries do not claim that a host CLI installation is connected automatically.
