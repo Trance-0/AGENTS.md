@@ -18,6 +18,7 @@ import { mountOpenClaw } from "./openclaw-routes.js";
 import { mountBroadcast } from "./broadcast-routes.js";
 import { avatarUrl, serveAvatar } from "./avatar.js";
 import { watchActivity } from "./openclaw-activity.js";
+import { CodingConfigStore } from "./coding-config.js";
 import { OpenClawConfigStore } from "./openclaw-config.js";
 import { mountOpenClawConfig, CONFIG_ROUTE } from "./openclaw-config-routes.js";
 import { createGatewayClient } from "./openclaw-gateway.js";
@@ -102,7 +103,7 @@ app.set("trust proxy", "loopback");
 app.use((_req, res, next) => { res.set("Content-Security-Policy", contentSecurityPolicy(sceneStore.settings().imageAllowlist)); next(); });
 // Small JSON bodies everywhere except the config editor, which parses its own (larger) body.
 const smallJson = express.json({ limit: "16kb" });
-app.use((req, res, next) => ((req.path === CONFIG_ROUTE || req.path.startsWith(TASK_ROUTE)) ? next() : smallJson(req, res, next)));
+app.use((req, res, next) => ((req.path === CONFIG_ROUTE || req.path === "/api/admin/opencode-config" || req.path === "/api/admin/opencode-providers" || req.path.startsWith(TASK_ROUTE)) ? next() : smallJson(req, res, next)));
 
 app.use(
   session({
@@ -180,11 +181,20 @@ mountOpenClaw(app, broadcast, { control, usageLine });
 const configStore = config.openclaw.configFile
   ? new OpenClawConfigStore({ file: config.openclaw.configFile, backupDir: path.join(config.dataDir, "openclaw-config-backups") })
   : null;
+const opencodeConfigStore = process.env.OPENCLAW_OPENCODE_CONFIG_FILE
+  ? new CodingConfigStore({ file: process.env.OPENCLAW_OPENCODE_CONFIG_FILE, backupDir: path.join(config.dataDir, "opencode-config-backups") })
+  : null;
 mountOpenClawConfig(app, configStore, { requireAuth, requireAdmin, requireCsrf, isEnabled });
+mountOpenClawConfig(app, opencodeConfigStore, { requireAuth, requireAdmin, requireCsrf, isEnabled, routePath: "/api/admin/opencode-config" });
+const opencodeProviderStore = process.env.OPENCLAW_OPENCODE_CONFIG_FILE
+  ? new OpenClawConfigStore({ file: path.join(path.dirname(process.env.OPENCLAW_OPENCODE_CONFIG_FILE), "opencode.json"), backupDir: path.join(config.dataDir, "opencode-provider-backups") })
+  : null;
+mountOpenClawConfig(app, opencodeProviderStore, { requireAuth, requireAdmin, requireCsrf, isEnabled, routePath: "/api/admin/opencode-providers" });
 mountAdapters(app, process.env.PCP_ADAPTER_CONFIG_DIR && config.openclaw.configFile
   ? new AdapterStore(path.join(process.env.PCP_ADAPTER_CONFIG_DIR, 'execution-policy.json'), config.openclaw.configFile) : null,
   { requireAuth, requireAdmin, requireCsrf, isEnabled });
-mountOpenClawTasks(app, new OpenClawTasks(createGatewayClient({ ...config.openclaw, identityFile: path.join(config.dataDir, "openclaw-device.json") })), { requireAuth, requireAdmin, requireCsrf, isEnabled });
+const gatewayClient = createGatewayClient({ ...config.openclaw, identityFile: path.join(config.dataDir, "openclaw-device.json") });
+mountOpenClawTasks(app, new OpenClawTasks(gatewayClient), { requireAuth, requireAdmin, requireCsrf, isEnabled });
 mountAvatars(app, avatars, { requireAuth, requireAdmin, requireCsrf, isEnabled });
 mountScene(app, { avatars, scene, store: sceneStore, streamToken: config.openclaw.streamToken, requireCsrfOrToken, control });
 new MetricsBridge({ scene, broadcast, metrics, quota, secrets: metricsSecrets, isEnabled, emit, settings: () => sceneStore.settings() }).start();

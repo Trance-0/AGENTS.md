@@ -19,7 +19,9 @@ transfer workflow, format scope, and isolated verification commands.
 the persistent OpenCode HTTP server. All six repository plugins run there;
 the local desktop and terminal UI connect to the same session store. The
 server runs as a user systemd service with private state under DockerVolumes.
-It uses the existing OpenAI credential through Responses with high reasoning.
+Chat uses local Qwen; complex coding work uses a separate OpenCode model policy.
+The dashboard provides Chat agent settings and Coding agent settings, including
+drag ordering, reasoning effort, and a masked DeepSeek credential field.
 See the [deployment and usage guide](deployment/opencode-harness.md) for setup,
 session resume, model controls, persistent logs, and rollback.
 

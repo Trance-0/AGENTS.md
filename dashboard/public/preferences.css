@@ -118,3 +118,26 @@
 .dashboard-toast.pending { animation: none; }
 @keyframes toast-lifetime { 0% { opacity: 0; } 4%, 88% { opacity: 1; } 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .dashboard-toast { animation: none; } }
+
+/* Visible settings groups keep related values together without disclosure menus. */
+.apple-settings section.config-group { margin: 18px 0; border: 0; border-radius: 14px; background: var(--surface-2); padding: 18px; }
+.apple-settings .config-group h3 { margin: 0 0 7px; font-size: 14px; font-weight: 600; }
+.apple-settings .config-group .config-group { background: var(--surface); border: 1px solid var(--preference-line); }
+.apple-settings .config-toggle-row { padding: 12px 0; border-bottom: 1px solid var(--preference-line); }
+.apple-settings .config-toggle-row .field-help { display: block; margin-top: 6px; }
+.model-order { display: grid; gap: 10px; min-width: 0; }
+.model-order-row { display: flex; gap: 8px; align-items: center; padding: 12px; border: 1px solid var(--preference-line); border-radius: 12px; background: var(--surface); min-width: 0; }
+.model-order-fields { flex: 1; min-width: 0; display: grid; gap: 8px; }
+.model-order-fields input, .model-order-fields select { width: 100%; min-width: 0; }
+.model-order-row .preference-field { margin: 0; }
+.model-position { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.model-order-row .model-drag { cursor: grab; font-size: 20px; padding: 4px; touch-action: none; }
+.model-order-row.drag-over { outline: 2px solid var(--accent); }
+.tool-availability { display: block; font-size: 11px; font-weight: 400; margin-top: 5px; color: var(--text-dim); }
+.coding-editor .config-section-content { display: grid; gap: 16px; }
+.model-unavailable { color: var(--error); }
+@media (max-width: 720px) {
+  .model-order-row { flex-wrap: wrap; }
+  .model-order-fields { flex-basis: calc(100% - 65px); }
+  .apple-settings .config-group .config-group { padding: 10px; }
+}

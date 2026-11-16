@@ -642,3 +642,24 @@ bullets specific: filenames, command names, outcomes.
   CPA Astra with a real OpenCode tool call and selected it for the coding server.
   Permission waits now return an explicit blocker; host path mapping is included
   in delegated prompts. PCP carries durable progress independently of HTTP turns.
+
+## 2026-11-16 chat and coding settings
+
+- Added Chat agent settings and Coding agent settings; removed Backends.
+  OpenCode, Codex, and Claude Code share a settings sidebar with connection state.
+- Chat uses local Qwen only, with low effort. Coding uses Opus → Astra →
+  DeepSeek Flash → Qwen, with editable effort and masked DeepSeek credentials.
+- Checks: 86 dashboard server tests, 25 coding routing/runtime tests, focused
+  TypeScript checks, settings Chromium checks (including drag and save/reload),
+  and the existing full browser suite passed. Python deploy script compiled.
+- Live: gateway config validated; Qwen chat returned the verification marker.
+  OpenCode attempted Opus and used Astra when CPA rejected Opus. Forced CPA
+  failure reached real local Qwen; empty DeepSeek credentials were skipped.
+- Dashboard deployed locally with its existing backup/rollback script; public
+  assets matched source, health passed, and all prior mounts were retained.
+  The new OpenCode configuration mount uses host-backed storage.
+- Existing credentials, recordings, session stores, and unrelated configuration
+  were preserved. No secrets or runtime files were staged. No ports were added.
+  Source changes were not pushed; the remote Jenkins pipeline remains unchanged.
+- Split live-control documentation out of the deployment runbook to keep that
+  modified file below the repository's 1,000-line cap, retaining its links.

@@ -13,7 +13,10 @@ export function createOpenclawConfigPanel() {
     icon: "config",
     group: "openclaw",
     order: 20,
-    tabs: [{ id: "openclaw-config", title: "Settings" }, { id: "openclaw-tasks", title: "Scheduled tasks" }],
+    tabs: [
+      { id: "openclaw-config", title: "Chat agent settings" },
+      { id: "openclaw-tasks", title: "Scheduled tasks" },
+    ],
 
     settings: () => [
       { key: "file", label: "Config file", type: "string", value: config.openclaw.configFile || "(not mounted)" },

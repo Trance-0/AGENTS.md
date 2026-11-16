@@ -16,6 +16,7 @@ services:
       PORT: "14143"
       OPENCLAW_ACTIVITY_DIR: /var/log/openclaw-activity
       OPENCLAW_CONFIG_FILE: /openclaw-config/openclaw.json
+      OPENCLAW_OPENCODE_CONFIG_FILE: /opencode-config/coding-model-policy.json
       METRICS_ENCRYPTION_KEY_FILE: /run/secrets/metrics-encryption.key
       METRICS_DATA_DIR: /app/metrics
       # Scene embed (circtime uptime radar build, read-only). A missing host
@@ -57,6 +58,7 @@ services:
       - ${CIRCTIME_EMBED_HOST_DIR:-/home/motuariki/Documents/DockerVolumes/circtime/dist}:/embed-src/circtime:ro
       # Live OpenClaw config: read-write here (admin editor), read-only in OpenClaw.
       - ${OPENCLAW_CONFIG_HOST_DIR:-/home/motuariki/Documents/DockerVolumes/openclaw/config}:/openclaw-config:rw
+      - ${OPENCLAW_OPENCODE_CONFIG_HOST_DIR:-/home/motuariki/Documents/DockerVolumes/openclaw-opencode/config/opencode}:/opencode-config:rw
     logging:
       driver: json-file
       options:

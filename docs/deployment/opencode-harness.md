@@ -43,25 +43,30 @@ Bark is installed with no subscribers; no notification test was sent.
 
 ## Model and loop behavior
 
-The primary and auxiliary models are `cpa/gpt-6-astra`. The native OpenAI
-provider remains available for explicit selection. The local fallback is
-`local-vllm/nvidia/Qwen3.8-27B-NVFP4`, served by the existing vLLM container.
-The desktop and ACP backend share this server-side configuration.
+Chat agents use only `vllm/nvidia/Qwen3.8-27B-NVFP4`. Complex coding tasks
+are delegated to OpenCode. Its coding policy tries these models in order:
 
-OpenCode 1.19.5 has no native fallback chain. The `model-fallback` plugin adds a
-fetch hook to the configured CPA provider when `local-vllm` is also configured.
-It retries Chat Completions requests locally on transport failures, a 45-second
-response-header timeout, HTTP 401/403/404/408/429, or server errors. Local requests
-retain messages and tool calls, replace the model ID, and omit CPA credentials
-and provider-specific reasoning options. Caller cancellation, malformed requests,
-and errors after a stream starts do not replay the request. Explicitly selected
-non-CPA providers are unaffected. A large context can still exceed local limits.
+1. `cpa/claude-opus-5-5-high` (high effort)
+2. `cpa/gpt-6-astra` (high effort)
+3. `deepseek/deepseek-v4-flash` (medium effort)
+4. `vllm/nvidia/Qwen3.8-27B-NVFP4` (provider-default effort)
 
-The composer retains the selected CPA model name during fallback; actual routing
-is recorded in the `model-fallback` plugin log under the shared server data root.
-It does not silently change the user's persistent model selection. Both the
-primary provider and a forced CPA-503-to-local-Qwen Python tool and final response round
-were verified. Ten routing tests and the focused TypeScript check passed.
+OpenCode's `model-fallback` plugin reads `coding-model-policy.json` next to its
+`opencode.json` on each Chat Completions request. The dashboard's Coding agent
+settings edits this shared policy with optimistic concurrency and backups.
+Model order and credentials apply on the next request, including tool loops.
+The plugin reads the current provider configuration separately, never forwards
+one provider's credentials to another, and skips missing models or hosted
+providers with empty credentials. The DeepSeek key starts empty; add it using
+the dashboard's masked field. The DeepSeek model is not verified until a valid
+provider credential is supplied.
+
+Transport failures, header timeouts, HTTP 401/402/403/404/408/429, and server
+errors advance to the next configured model. Caller cancellation, malformed
+requests, and failures after a response stream starts do not replay the request.
+Routing logs identify the actual provider/model used. A missing policy preserves
+the previous CPA-to-local fallback behavior. Responses API requests retain their
+provider's native path; the shared server default uses Chat Completions.
 
 There is no fixed small tool-iteration cap in the bridge. A turn has a six-hour
 default timeout, editable with `/acp timeout`. Polling emits progress at least

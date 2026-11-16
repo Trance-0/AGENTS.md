@@ -10,6 +10,7 @@ import { $, api, el, esc } from "/api.js";
 import { renderUsage, renderQuota } from "/metrics.js";
 import { renderScheduledTasks } from "/scheduled-tasks.js";
 import { renderConfigEditor } from "/config-editor.js";
+import { renderCodingEditor } from "/coding-editor.js";
 import { renderSummary } from "/usage-summary.js";
 import { renderSettings } from "/settings-page.js";
 import { canvasSettingsSection } from "/scene/canvas-settings.js";
@@ -271,16 +272,7 @@ const TAB_RENDERERS = {
       if (data.defaults) box.append(el("p", "settings-note", `Default for agents without their own model: ${chain(data.defaults)}.`));
     },
   },
-  "openclaw-backends": {
-    async render(pane, { api: apiFn, panel }) {
-      const box = el("section", "settings-card");
-      box.append(el("h2", "", "Model backends"));
-      box.append(el("p", "settings-note", "Provider names and the environment variable each reads. Key values never leave the private environment."));
-      pane.append(box);
-      const data = await panelData(panel, apiFn);
-      box.append(table(["Provider", "Env var", "Note"], (data.providers || []).map(item => [[item.provider, "mono"], [item.env, "mono"], [item.note || ""]])));
-    },
-  },
+  "openclaw-coding": { cards: false, render: (pane, { state }) => renderCodingEditor(pane, !!state.user?.isAdmin) },
   "openclaw-tasks": { cards: false, render: pane => renderScheduledTasks(pane) },
   "openclaw-config": { cards: false, render: (pane, { state }) => renderConfigEditor(pane, !!state.user?.isAdmin) },
   "usage-summary": { cards: false, render: (pane, { api: apiFn }) => renderSummary(pane, apiFn) },

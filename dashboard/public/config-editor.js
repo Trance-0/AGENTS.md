@@ -2,7 +2,8 @@ import { api, el } from "/api.js";
 import { button, section, editorTabs } from "/settings-controls.js";
 import { renderObject, labelFor } from "/config-fields.js";
 
-const SECTIONS = { agents: ["Agents & defaults", "Models, workspaces, and behavior for your assistants."], models: ["Models & providers", "Available models and the services that provide them."], channels: ["Connected channels", "Messaging accounts and who can reach your assistants."], session: ["Conversations", "Session boundaries and linked identities."], tools: ["Tools & permissions", "Capabilities available to your agents."], gateway: ["Gateway", "Connection, authentication, and reload settings."], plugins: ["Plugins", "Installed integrations and their configuration."], cron: ["Scheduling defaults", "Gateway-wide scheduling options. Manage individual jobs in Scheduled tasks."] };
+import { SECTIONS } from "/config-help.js";
+
 export function modelOptions(config) {
   const models = new Set(Object.keys(config?.agents?.defaults?.models || {}));
   for (const [provider, data] of Object.entries(config?.models?.providers || {})) for (const model of data.models || []) if (model.id) models.add(`${provider}/${model.id}`);
@@ -31,7 +32,7 @@ export async function renderConfigEditor(body, isAdmin) {
       if (key === activeSection) link.setAttribute("aria-current", "true"); nav.append(link);
     }
     if (activeSection) {
-      const key = activeSection, [title, note] = SECTIONS[key] || [labelFor(key), "Additional OpenClaw settings."];
+      const key = activeSection, [title, note] = SECTIONS[key] || [labelFor(key), `Configuration values for ${labelFor(key)}. Select a field below to edit how this part of OpenClaw behaves.`];
       const card = section(title, note); const fields = el("div", "config-fields");
       if (draft[key] && typeof draft[key] === "object" && !Array.isArray(draft[key])) renderObject(fields, draft[key], mark, { path: key });
       else { const wrapper = { [key]: draft[key] }; renderObject(fields, wrapper, () => { draft[key] = wrapper[key]; mark(); }); }
@@ -54,11 +55,39 @@ export async function renderConfigEditor(body, isAdmin) {
     } catch (error) { status.textContent = `Settings not saved: dashboard/config editor — ${error.message}`; }
     finally { busy = false; save.disabled = !loaded; }
   }, true); save.classList.add("config-save"); save.disabled = true;
-  actions.append(reload, save); box.append(tabs.bar, el("p", "settings-note", "Changes apply to OpenClaw. Stored credentials stay private, and each save keeps a backup."), form, raw, actions, status);
+  actions.append(reload, save);
+  const history = el("details", "config-group config-history");
+  history.append(el("summary", "", "Restore history"));
+  const historyList = el("div", "backup-list");
+  history.append(historyList);
+  async function loadHistory() {
+    try {
+      const { backups } = await api("/api/admin/openclaw-config/backups");
+      historyList.replaceChildren();
+      if (!backups.length) { historyList.append(el("p", "settings-note", "No backups yet. Each save keeps a snapshot here.")); return; }
+      for (const backup of backups) {
+        const row = el("div", "array-item");
+        const label = el("span", "backup-label", `${new Date(backup.modifiedAt).toLocaleString()} · ${(backup.size / 1024).toFixed(1)} KiB`);
+        const restoreBtn = button("Restore", async () => {
+          if (!confirm(`Restore the configuration saved ${new Date(backup.modifiedAt).toLocaleString()}? The current configuration is backed up first.`)) return;
+          restoreBtn.disabled = true;
+          try {
+            await api("/api/admin/openclaw-config/restore", { method: "POST", body: JSON.stringify({ name: backup.name }) });
+            await load();
+            await loadHistory();
+          } catch (error) { status.textContent = `Settings not restored: dashboard/config editor — ${error.message}`; restoreBtn.disabled = false; }
+        }, true);
+        row.append(label, restoreBtn);
+        historyList.append(row);
+      }
+    } catch (error) { historyList.replaceChildren(el("p", "settings-note", error.message)); }
+  }
+  box.append(tabs.bar, el("p", "settings-note", "Changes apply to OpenClaw. Stored credentials stay private, and each save keeps a backup."), form, raw, actions, history, status);
   async function load() {
     status.textContent = "Loading settings…";
     try { const view = await api("/api/admin/openclaw-config"); draft = view.config; baseHash = view.hash; loaded = true; dirty = false; draw(); text.value = JSON.stringify(draft, null, 2); status.textContent = "Settings are up to date"; save.disabled = false; }
     catch (error) { status.textContent = error.message; }
+    loadHistory();
   }
   await load();
 }

@@ -47,7 +47,7 @@ try {
   await viewerPage.waitForSelector("#panel-nav .nav-item");
   assert.equal(await viewerPage.locator('[data-view="usage"]').count(), 0);
   await viewerPage.locator('[data-view="openclaw"]').click();
-  assert.deepEqual(await tabs(viewerPage), [["Status", "true"], ["Backends", "false"]]);
+  assert.deepEqual(await tabs(viewerPage), []);
   const highlighted = await viewerPage.evaluate(() => [...document.querySelectorAll("#sidebar .nav-item")].map(item => [item.dataset.view, item.className, item.getAttribute("aria-current"), getComputedStyle(item).backgroundColor]));
   assert.deepEqual(highlighted.filter(([, className]) => className.includes("active")).map(([view]) => view), ["openclaw"], JSON.stringify(highlighted));
   assert.deepEqual(highlighted.filter(([, , current]) => current === "page").map(([view]) => view), ["openclaw"]);
@@ -55,14 +55,7 @@ try {
   assert.match(await viewerPage.locator(".tab-body").innerText(), /dashboard-host[\s\S]*cpa\/gpt-6-astra/);
   assert.match(await viewerPage.locator(".tab-body").innerText(), /cpa\/claude-opus-5-5-high → cpa\/gpt-6-astra → openai\/gpt-6-astra/, "fallback chain is shown in order");
   await viewerPage.screenshot({ path: `${shots}/pages-openclaw-status.png`, fullPage: true });
-  // Keyboard: arrow keys move between tabs and update the URL.
-  await viewerPage.locator('[data-tab="openclaw-status"]').focus();
-  await viewerPage.keyboard.press("ArrowRight");
-  await viewerPage.waitForSelector('[data-tab="openclaw-backends"][aria-selected="true"]');
-  assert.equal(await viewerPage.evaluate(() => document.activeElement.dataset.tab), "openclaw-backends");
-  assert.equal(new URL(viewerPage.url()).hash, "#openclaw/openclaw-backends");
-  await viewerPage.waitForFunction(() => document.querySelector(".tab-body")?.textContent.includes("OPENAI_API_KEY"));
-  assert.equal(await viewerPage.locator("#panel-enabled").count(), 0, "members get no admin switch");
+  assert.equal(await viewerPage.locator("#panel-enabled").count(), 0);
   // Settings as a member: no admin section.
   await viewerPage.locator('[data-view="settings"]').click();
   assert.equal(await viewerPage.locator("#panel-switches").count(), 0);
@@ -84,7 +77,7 @@ try {
   assert.match(await page.locator(".summary-tokens").innerText(), /3\.6K/);
   await page.screenshot({ path: `${shots}/pages-usage-summary-dark.png`, fullPage: true });
   await page.locator('[data-view="openclaw"]').click();
-  assert.deepEqual((await tabs(page)).map(([title]) => title), ["Status", "Backends", "Settings", "Scheduled tasks"]);
+  assert.deepEqual((await tabs(page)).map(([title]) => title), ["Status", "Chat agent settings", "Scheduled tasks", "Coding agent settings"]);
 
   // Settings: every control is real and takes effect immediately.
   await page.locator('[data-view="settings"]').click();
@@ -106,7 +99,7 @@ try {
   assert.equal(await page.locator("#setting-speed").inputValue(), "1.5");
   await page.locator("#setting-speed").selectOption("1");
   const switches = await page.evaluate(() => [...document.querySelectorAll("#panel-switches [data-panel]")].map(row => row.dataset.panel));
-  assert.deepEqual([...switches].sort(), ["adapter-settings", "astrbot", "build-status", "canvas-settings", "cpa-quota", "live-stream", "openclaw", "openclaw-config", "settings", "usage-metrics", "usage-summary"]);
+  assert.deepEqual([...switches].sort(), ["adapter-settings", "astrbot", "build-status", "canvas-settings", "cpa-quota", "live-stream", "openclaw", "openclaw-coding", "openclaw-config", "settings", "usage-metrics", "usage-summary"]);
   assert.equal(await page.locator("#panel-switch-live-stream").isDisabled(), true, "the player cannot be switched off");
   await page.screenshot({ path: `${shots}/pages-settings-admin-dark.png`, fullPage: true });
   const toggled = page.waitForResponse(response => response.url().endsWith("/api/panels/astrbot/toggle"));

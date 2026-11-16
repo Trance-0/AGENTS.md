@@ -76,8 +76,9 @@ reach the browser.
 | Group · tab | Panel | Purpose |
 |---|---|---|
 | Live | `live-stream` | The streaming window (uptime + logs + timeline). |
-| OpenClaw · Status, Backends | `openclaw` | Gateway health, agents with model fallback chain; provider and env var names only. |
-| OpenClaw · Settings, Scheduled tasks | `openclaw-config` | Grouped configuration forms with optional JSON editing; prompt, model, schedule, and delivery management (admin). |
+| OpenClaw · Status | `openclaw` | Gateway health and the chat agents' active model chains. |
+| OpenClaw · Chat agent settings, Scheduled tasks | `openclaw-config` | Plain-language chat configuration sections, with masked credentials and backup-aware JSON editing (admin). |
+| OpenClaw · Coding agent settings | `openclaw-coding` | OpenCode tool list, ordered coding model fallback chain, reasoning effort, and provider credentials (admin). |
 | Usage · Summary | `usage-summary` | Pooled Codex quota and token totals (admin). |
 | Usage · CPA quota | `cpa-quota` | Per-account quota (admin). |
 | Usage · Token metrics | `usage-metrics` | Tokens and estimated cost (admin). |
@@ -87,7 +88,7 @@ reach the browser.
 
 ## OpenClaw settings
 
-OpenClaw → Settings opens a form editor grouped into agents, models, channels,
+OpenClaw → Chat agent settings opens a form editor grouped into agents, models, channels,
 conversations, tools, gateway, and plugins. JSON is a secondary tab for advanced
 editing and backup copies. Values survive switching tabs; masked credentials
 are retained and every configuration save backs up the previous file.

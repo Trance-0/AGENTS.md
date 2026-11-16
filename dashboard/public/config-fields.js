@@ -1,6 +1,9 @@
 import { el } from "/api.js";
 import { button, field, input, select, toggle } from "/settings-controls.js";
 
+import { helpFor } from "/config-help.js";
+import { orderedModels } from "/model-order.js";
+
 const SECRET = "__dashboard_redacted__";
 const SECRET_KEY = /(token|secret|password|passwd|apikey|api_key|cookie|credential|privatekey|private_key)$/i;
 const NAMES = { dmScope: "Direct-message sessions", groupPolicy: "Group access", dmPolicy: "Direct-message access", primary: "Primary model", fallbacks: "Fallback models", baseUrl: "Service URL", maxConcurrent: "Concurrent runs", contextTokens: "Context window", apiKey: "API key", botToken: "Bot token", default: "Default agent", workspace: "Workspace", enabled: "Enabled", auth: "Authentication", allowFrom: "Allowed senders" };
@@ -18,15 +21,23 @@ export function renderObject(host, object, changed, { path = "", models = [] } =
   }
 }
 function valueControl(key, value, set, changed, path, models) {
-  const label = labelFor(key);
-  if (typeof value === "boolean") return toggle(label, value, set);
+  const label = labelFor(key), help = helpFor(key, path, value);
+  if (typeof value === "boolean") { const row = el("div", "config-toggle-row"); row.append(toggle(label, value, set), el("small", "field-help", help)); return row; }
   if (value === SECRET || (typeof value === "string" && SECRET_KEY.test(key))) {
     const control = input(value === SECRET ? "" : value, next => set(next || SECRET), "password"); control.placeholder = "Stored securely · leave blank to keep"; control.autocomplete = "new-password";
-    return field(label, control);
+    return field(label, control, help);
   }
   if (Array.isArray(value)) {
-    const wrap = el("details", "config-group"); wrap.open = value.length <= 4;
-    wrap.append(el("summary", "", `${label} · ${value.length}`)); const list = el("div", "array-items"); wrap.append(list);
+    const wrap = el("section", "config-group");
+    wrap.append(el("h3", "", `${label} · ${value.length}`), el("p", "settings-note", help));
+    if (key === "fallbacks" && value.every(item => typeof item === "string")) {
+      wrap.append(orderedModels(value, (row, item, index) => {
+        const control = input(item, next => { value[index] = next; set(value); }); control.setAttribute("list", "openclaw-model-options");
+        row.append(field(`Fallback ${index + 1}`, control));
+      }, () => set(value)));
+      return wrap;
+    }
+    const list = el("div", "array-items"); wrap.append(list);
     const draw = () => {
       list.replaceChildren();
       value.forEach((item, index) => {
@@ -42,8 +53,8 @@ function valueControl(key, value, set, changed, path, models) {
     return wrap;
   }
   if (value && typeof value === "object") {
-    const details = el("details", "config-group"); details.open = path.split(".").length <= 3;
-    details.append(el("summary", "", label)); const fields = el("div", "config-children"); renderObject(fields, value, changed, { path, models }); details.append(fields);
+    const details = el("section", "config-group");
+    details.append(el("h3", "", label), el("p", "settings-note", help)); const fields = el("div", "config-children"); renderObject(fields, value, changed, { path, models }); details.append(fields);
     const add = el("div", "add-setting"); let name = "", type = "string";
     const keyInput = input("", v => { name = v; }); keyInput.placeholder = "New setting name"; keyInput.setAttribute("aria-label", `${label}: new setting name`);
     const typeInput = select(type, ["string", "number", "boolean", "object", "list"], v => { type = v; }); typeInput.setAttribute("aria-label", `${label}: new setting type`);
@@ -52,9 +63,9 @@ function valueControl(key, value, set, changed, path, models) {
       keyInput.setCustomValidity(""); value[name] = { string: "", number: 0, boolean: false, object: {}, list: [] }[type]; set(value); renderObject(fields, value, changed, { path, models }); keyInput.value = ""; name = "";
     })); details.append(add); return details;
   }
-  if (ENUMS[key]) return field(label, select(value, ENUMS[key], set));
+  if (ENUMS[key]) return field(label, select(value, ENUMS[key], set), help);
   const control = input(value ?? "", set, typeof value === "number" ? "number" : "text");
   if (typeof value === "number") control.step = "any";
   if (key === "model" || key === "primary" || /fallbacks\.\d+$/.test(path)) control.setAttribute("list", "openclaw-model-options");
-  return field(label, control, value === null ? "Currently unset. JSON view supports explicit null values." : "");
+  return field(label, control, value === null ? "Currently unset. JSON view supports explicit null values." : help);
 }

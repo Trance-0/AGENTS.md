@@ -77,15 +77,26 @@ export class OpenClawConfigStore {
     const output = `${JSON.stringify(merged, null, 2)}\n`;
     if (output === current.text) return { ...this.view(), changed: false };
 
-    fs.mkdirSync(this.backupDir, { recursive: true, mode: 0o700 });
-    const stamp = new Date().toISOString().replace(/[-:.]/g, "");
-    fs.writeFileSync(path.join(this.backupDir, `openclaw-${stamp}-${current.hash.slice(0, 12)}.json`), current.text, { mode: 0o600 });
-    const backups = fs.readdirSync(this.backupDir).filter(name => /^openclaw-.*\.json$/.test(name)).sort();
-    for (const name of backups.slice(0, Math.max(0, backups.length - this.keep))) fs.rmSync(path.join(this.backupDir, name));
+    this._backup(current.text, current.hash.slice(0, 12));
 
     // Same-directory temp file + rename: OpenClaw sees either the old or the new
     // file, never a partial write. The directory (not the file) is bind-mounted,
     // so the renamed inode is visible inside the OpenClaw container.
+    this._writeAtomic(output);
+    return { ...this.view(), changed: true };
+  }
+
+  // Snapshot `text` into the backup directory and prune to the retention cap.
+  _backup(text, tag) {
+    fs.mkdirSync(this.backupDir, { recursive: true, mode: 0o700 });
+    const stamp = new Date().toISOString().replace(/[-:.]/g, "");
+    fs.writeFileSync(path.join(this.backupDir, `openclaw-${stamp}-${tag}.json`), text, { mode: 0o600 });
+    const backups = fs.readdirSync(this.backupDir).filter(name => /^openclaw-.*\.json$/.test(name)).sort();
+    for (const name of backups.slice(0, Math.max(0, backups.length - this.keep))) fs.rmSync(path.join(this.backupDir, name));
+  }
+
+  // Same-directory temp file + rename so OpenClaw never observes a partial write.
+  _writeAtomic(output) {
     const temp = path.join(path.dirname(this.file), `.openclaw.json.${process.pid}.${crypto.randomBytes(4).toString("hex")}.tmp`);
     try {
       fs.writeFileSync(temp, output, { mode: 0o600 });
@@ -94,6 +105,40 @@ export class OpenClawConfigStore {
       fs.rmSync(temp, { force: true });
       throw fail(503, `Config cannot be saved: dashboard/openclaw config — shared config file is not writable (${error.code || "unknown"}).`);
     }
-    return { ...this.view(), changed: true };
+  }
+
+  // Backups, newest first (the timestamp prefix sorts lexicographically).
+  listBackups() {
+    let names;
+    try { names = fs.readdirSync(this.backupDir).filter(name => /^openclaw-.*\.json$/.test(name)); }
+    catch { return { backups: [] }; }
+    const backups = names
+      .map(name => {
+        const stat = fs.statSync(path.join(this.backupDir, name));
+        return { name, modifiedAt: stat.mtime.toISOString(), size: stat.size };
+      })
+      .sort((a, b) => b.name.localeCompare(a.name));
+    return { backups };
+  }
+
+  // Restore a previous version. The current file is snapshotted first, so a
+  // restore is itself reversible from the same history list.
+  restore(name) {
+    if (typeof name !== "string" || !/^openclaw-.*\.json$/.test(name) || name.includes("/") || name.includes("..")) {
+      throw fail(400, "Config cannot be restored: dashboard/openclaw config — invalid backup name.");
+    }
+    let backupText;
+    try { backupText = fs.readFileSync(path.join(this.backupDir, name), "utf8"); }
+    catch { throw fail(404, "Config cannot be restored: dashboard/openclaw config — backup not found."); }
+    let parsed;
+    try { parsed = JSON.parse(backupText); }
+    catch { throw fail(500, "Config cannot be restored: dashboard/openclaw config — backup is not valid JSON."); }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw fail(400, "Config cannot be restored: dashboard/openclaw config — backup top level must be a JSON object.");
+    }
+    const current = this.read();
+    this._backup(current.text, `pre-restore-${current.hash.slice(0, 12)}`);
+    this._writeAtomic(`${JSON.stringify(parsed, null, 2)}\n`);
+    return { ...this.view(), restored: name };
   }
 }

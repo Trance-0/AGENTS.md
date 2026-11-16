@@ -149,8 +149,11 @@ def main():
         raise RuntimeError("Deployment cannot start: dashboard/config mount — shared OpenClaw config directory has no openclaw.json.")
     adapter_dir = Path(os.environ.get("PCP_ADAPTER_CONFIG_HOST_DIR", "/home/motuariki/Documents/DockerVolumes/pcp/adapters"))
     adapter_args = []
+    coding_dir = Path(os.environ.get("OPENCLAW_OPENCODE_CONFIG_HOST_DIR", "/home/motuariki/Documents/DockerVolumes/openclaw-opencode/config/opencode"))
+    if (coding_dir / "coding-model-policy.json").is_file():
+        adapter_args += ["-e", "OPENCLAW_OPENCODE_CONFIG_FILE=/opencode-config/coding-model-policy.json", "--mount", f"type=bind,src={coding_dir},dst=/opencode-config"]
     if (adapter_dir / "execution-policy.json").is_file():
-        adapter_args = ["-e", "PCP_ADAPTER_CONFIG_DIR=/pcp-adapters", "--mount", f"type=bind,src={adapter_dir},dst=/pcp-adapters"]
+        adapter_args += ["-e", "PCP_ADAPTER_CONFIG_DIR=/pcp-adapters", "--mount", f"type=bind,src={adapter_dir},dst=/pcp-adapters"]
     platform_dir = Path(os.environ.get("PLATFORM_STATUS_HOST_DIR", "/home/motuariki/Documents/DockerVolumes/openclaw/deploy/status"))
     if platform_dir.is_dir():
         adapter_args += ["-e", "PLATFORM_STATUS_DIR=/platform-status", "--mount", f"type=bind,src={platform_dir},dst=/platform-status,readonly"]

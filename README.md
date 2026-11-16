@@ -29,8 +29,10 @@ host. Administrators start/end streams and curate recordings; the owner can
 also ask OpenClaw to start a broadcast, record activity, and set its summary.
 OpenClaw writes file-read progress to a shared directory that the dashboard
 mounts read-only; live recordings show file paths and start/completion events.
-The stream host uses CPA Opus 5.5, then CPA GPT-6 Astra, then official OpenAI
-GPT-6 Astra. CPA Gemini models are disabled. The Jenkins `agent-dashboard` job
+Chat agents use local Qwen. Complex coding tasks use OpenCode's separate ordered
+model policy: CPA Opus, CPA Astra, DeepSeek Flash, then local Qwen. Administrators
+can reorder models, change reasoning effort, and add the DeepSeek API key from
+Coding agent settings. CPA Gemini models are disabled. The Jenkins `agent-dashboard` job
 deploys GitHub pushes to `ai-infra-v0`. See the
 [deployment runbook](docs/deployment/dashboard.md) for setup and verification.
 

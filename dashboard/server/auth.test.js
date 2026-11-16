@@ -68,7 +68,10 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     await symlink(path.join(root, "node_modules"), path.join(dir, "node_modules"));
     const configFile = path.join(dir, "openclaw-config", "openclaw.json");
     await mkdir(path.dirname(configFile));
-    await writeFile(configFile, JSON.stringify({ gateway: { bind: "loopback" }, agents: { defaults: { model: { primary: "cpa/claude-opus-5-5-high", fallbacks: ["cpa/gpt-6-astra", "openai/gpt-6-astra"] } }, list: [{ id: "main" }, { id: "dashboard-host", name: "Dashboard Host", model: "cpa/gpt-6-astra", workspace: "/private/workspace" }] }, channels: { telegram: { botToken: "literal-telegram-secret", groupPolicy: "allowlist" } } }, null, 2) + "\n");
+    await writeFile(configFile, JSON.stringify({ meta: { lastTouchedVersion: "2026.test", lastTouchedAt: "2026-01-01T00:00:00Z" }, gateway: { bind: "loopback" }, agents: { defaults: { model: { primary: "cpa/claude-opus-5-5-high", fallbacks: ["cpa/gpt-6-astra", "openai/gpt-6-astra"] } }, list: [{ id: "main" }, { id: "dashboard-host", name: "Dashboard Host", model: "cpa/gpt-6-astra", workspace: "/private/workspace" }] }, channels: { telegram: { botToken: "literal-telegram-secret", groupPolicy: "allowlist" } } }, null, 2) + "\n");
+    const codingDir = path.join(dir, "opencode-config");
+    await mkdir(codingDir);
+    await writeFile(path.join(codingDir, "opencode.json"), JSON.stringify({ provider: { cpa: { options: { baseURL: "https://cpa.example/v1", apiKey: "private-coding-key" }, models: { "claude-opus-5-5-high": {}, "gpt-6-astra": {} } }, deepseek: { options: { baseURL: "https://api.deepseek.com", apiKey: "" }, models: { "deepseek-v4-flash": {} } }, vllm: { options: { baseURL: "http://127.0.0.1:8100/v1" }, models: { "nvidia/Qwen3.8-27B-NVFP4": {} } } } }));
     // The circtime embed: the real build when DASHBOARD_CIRCTIME_DIR names one
     // (host browser gate), otherwise a stand-in with the same contract — a
     // crossorigin module script and relative JSON fetches from an opaque-origin
@@ -99,7 +102,7 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     await writeFile(metricsKeyFile, randomBytes(32), { mode: 0o400 });
     const usageDir = path.join(dir, "usage-logs");
     for (const [provider, model] of [["cpa", "claude-test"], ["openai", "gpt-test"]]) writeUsage(usageDir, { runId: provider, provider, model, usage: { input: 1000, output: 500, cacheRead: 200, cacheWrite: 100 }, lastAssistant: { timestamp: Date.now() } }, { agentId: "main" });
-    child = spawn(process.execPath, ["server/index.js"], { cwd: dir, env: { ...process.env, NODE_ENV: "test", HOST: "127.0.0.1", PORT: String(port), OIDC_ISSUER: issuer, OIDC_CLIENT_ID: "test-dashboard", OIDC_CLIENT_SECRET: "test-client-secret", OIDC_REDIRECT_URI: "https://live.example.test/auth/callback", OIDC_REQUIRED_GROUP: "trance-0/app-agent", SESSION_SECRET: "test-session-secret", DASHBOARD_TOKEN: "test-mutation-token", OPENCLAW_ENDPOINT: issuer, OPENCLAW_TOKEN: "test-gateway-token", OPENCLAW_STREAM_TOKEN: "test-stream-token", CIRCTIME_EMBED_DIR: embedDir, ASTRBOT_ENDPOINT: issuer, JENKINS_ENDPOINT: issuer, OPENCLAW_CONFIG_FILE: configFile, METRICS_ENCRYPTION_KEY_FILE: metricsKeyFile, OPENCLAW_ACTIVITY_DIR: usageDir } });
+    child = spawn(process.execPath, ["server/index.js"], { cwd: dir, env: { ...process.env, NODE_ENV: "test", HOST: "127.0.0.1", PORT: String(port), OIDC_ISSUER: issuer, OIDC_CLIENT_ID: "test-dashboard", OIDC_CLIENT_SECRET: "test-client-secret", OIDC_REDIRECT_URI: "https://live.example.test/auth/callback", OIDC_REQUIRED_GROUP: "trance-0/app-agent", SESSION_SECRET: "test-session-secret", DASHBOARD_TOKEN: "test-mutation-token", OPENCLAW_ENDPOINT: issuer, OPENCLAW_TOKEN: "test-gateway-token", OPENCLAW_STREAM_TOKEN: "test-stream-token", CIRCTIME_EMBED_DIR: embedDir, ASTRBOT_ENDPOINT: issuer, JENKINS_ENDPOINT: issuer, OPENCLAW_CONFIG_FILE: configFile, OPENCLAW_OPENCODE_CONFIG_FILE: path.join(codingDir, "coding-model-policy.json"), METRICS_ENCRYPTION_KEY_FILE: metricsKeyFile, OPENCLAW_ACTIVITY_DIR: usageDir } });
     child.stdout.on("data", chunk => { output += chunk; });
     child.stderr.on("data", chunk => { output += chunk; });
     const base = `http://127.0.0.1:${port}`;
@@ -110,7 +113,7 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
       await new Promise(resolve => setTimeout(resolve, 50));
     }
     assert.ok(ready, output);
-    for (const route of ["/api/panels", "/api/uptime", "/api/panels/openclaw/data", "/api/admin/recordings", "/api/admin/openclaw-config", "/api/admin/openclaw-tasks", "/api/admin/metrics/usage", "/api/admin/metrics/cpa", "/api/panels/usage-metrics/data"]) assert.equal((await request(route)).status, 401);
+    for (const route of ["/api/panels", "/api/uptime", "/api/panels/openclaw/data", "/api/admin/recordings", "/api/admin/openclaw-config", "/api/admin/opencode-config", "/api/admin/opencode-providers", "/api/admin/openclaw-tasks", "/api/admin/metrics/usage", "/api/admin/metrics/cpa", "/api/panels/usage-metrics/data"]) assert.equal((await request(route)).status, 401);
     assert.equal((await request("/api/admin/openclaw-config", { method: "PUT", headers: { "x-dashboard-request": "1", "content-type": "application/json" }, body: "{}" })).status, 401);
     assert.equal((await request("/api/panels/openclaw/toggle", { method: "POST", headers: { authorization: "Bearer test-mutation-token" } })).status, 401);
     assert.equal((await request("/auth/callback?code=unsolicited&state=unsolicited")).status, 400);
@@ -139,9 +142,9 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     const viewerHeaders = { cookie: viewerCallback.headers.get("set-cookie").split(";")[0], authorization: "Bearer test-mutation-token" };
     assert.equal((await request("/api/panels/settings/toggle", { method: "POST", headers: viewerHeaders })).status, 403);
     assert.equal((await request("/api/admin/openclaw-config", { headers: viewerHeaders })).status, 403, "viewers cannot read the OpenClaw config");
-    for (const url of ["/api/admin/openclaw-tasks", "/api/admin/metrics/usage", "/api/admin/metrics/cpa", "/api/panels/usage-metrics/data", "/api/panels/cpa-quota/data"]) assert.equal((await request(url, { headers: viewerHeaders })).status, 403);
+    for (const url of ["/api/admin/opencode-config", "/api/admin/opencode-providers", "/api/admin/openclaw-tasks", "/api/admin/metrics/usage", "/api/admin/metrics/cpa", "/api/panels/usage-metrics/data", "/api/panels/cpa-quota/data"]) assert.equal((await request(url, { headers: viewerHeaders })).status, 403);
     const viewerPanels = (await (await request("/api/panels", { headers: viewerHeaders })).json()).panels;
-    assert.ok(!viewerPanels.some(panel => ["cpa-quota", "usage-metrics", "openclaw-config"].includes(panel.id)), "admin-only panels stay out of the viewer menu");
+    assert.ok(!viewerPanels.some(panel => ["cpa-quota", "usage-metrics", "openclaw-config", "openclaw-coding"].includes(panel.id)), "admin-only panels stay out of the viewer menu");
     assert.ok(["astrbot", "build-status", "openclaw", "settings"].every(id => viewerPanels.some(panel => panel.id === id)));
     assert.equal((await request("/api/panels/openclaw-config/data", { headers: viewerHeaders })).status, 403);
     const openclawData = await (await request("/api/panels/openclaw/data", { headers: viewerHeaders })).json();
@@ -150,7 +153,7 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     assert.deepEqual(viewerPanels.find(panel => panel.id === "settings").settings.map(setting => [setting.key, setting.scope]), [["theme", "browser"], ["motion", "browser"], ["autoplay", "browser"], ["playbackRate", "browser"]]);
     const viewerMenu = await (await request("/api/panels", { headers: viewerHeaders })).json();
     assert.deepEqual(viewerMenu.groups.map(group => group.id), ["live", "openclaw", "adapters", "builds", "settings"], "members see only groups with a visible panel");
-    assert.deepEqual(viewerPanels.find(panel => panel.id === "openclaw").tabs.map(tab => tab.id), ["openclaw-status", "openclaw-backends"]);
+    assert.deepEqual(viewerPanels.find(panel => panel.id === "openclaw").tabs.map(tab => tab.id), ["openclaw-status"]);
     assert.ok(!viewerPanels.some(panel => panel.id === "usage-summary"));
     assert.equal((await request("/api/admin/metrics/summary", { headers: viewerHeaders })).status, 403);
     assert.equal((await request("/api/admin/metrics/summary")).status, 401);
@@ -212,7 +215,12 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     const adminMenu = await (await request("/api/panels", { headers })).json();
     assert.deepEqual(adminMenu.groups.map(group => group.id), ["live", "openclaw", "usage", "adapters", "canvas", "builds", "settings"]);
     assert.deepEqual(adminPanels.filter(panel => panel.group === "usage").flatMap(panel => panel.tabs.map(tab => tab.title)), ["Summary", "CPA quota", "Token metrics"]);
-    assert.deepEqual(adminPanels.filter(panel => panel.group === "openclaw").flatMap(panel => panel.tabs.map(tab => tab.title)), ["Status", "Backends", "Settings", "Scheduled tasks"]);
+    assert.deepEqual(adminPanels.filter(panel => panel.group === "openclaw").flatMap(panel => panel.tabs.map(tab => tab.title)), ["Status", "Chat agent settings", "Scheduled tasks", "Coding agent settings"]);
+    const codingView = await (await request("/api/admin/opencode-config", { headers })).json();
+    assert.equal(codingView.config.chain[0].model, "cpa/claude-opus-5-5-high");
+    assert.equal(JSON.stringify(codingView).includes("private-coding-key"), false);
+    const providersView = await (await request("/api/admin/opencode-providers", { headers })).json();
+    assert.equal(providersView.config.provider.cpa.options.apiKey, "__dashboard_redacted__");
     const summary = await (await request("/api/admin/metrics/summary", { headers })).json();
     assert.equal(summary.tokens.week, 3600);
     assert.deepEqual(summary.codex.fiveHour, { remainingPercent: null, resetAt: null, accounts: 0, total: 0 });

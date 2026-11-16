@@ -966,3 +966,14 @@ property selects red/yellow/green status colors over the last 48 hours.
   CPA Astra with a real OpenCode tool call and selected it for the coding server.
   Permission waits now return an explicit blocker; host path mapping is included
   in delegated prompts. PCP carries durable progress independently of HTTP turns.
+
+## 2026-11-16 — Separate chat and coding settings
+
+- Removed Backends, renamed Settings to Chat agent settings, and added Coding
+  agent settings with OpenCode, Codex, and Claude Code navigation.
+- Added visible configuration sections, descriptive metadata/field help, and
+  draggable model lists with keyboard/touch arrow controls.
+- Added persistent OpenCode policy and masked provider editing. The routing hook
+  tries Opus, Astra, DeepSeek, then Qwen; effort is configurable per model.
+  Empty DeepSeek credentials leave it unavailable until the owner supplies a key.
+- Chat agents are configured for local Qwen only; complex work uses ACP OpenCode.
