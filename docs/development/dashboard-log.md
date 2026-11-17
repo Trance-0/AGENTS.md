@@ -989,3 +989,10 @@ property selects red/yellow/green status colors over the last 48 hours.
 - Deployed both services with backups and health checks; retained runtime mounts.
   Full gateway check stops on 64 pre-existing formatting violations; scoped lint
   and formatting pass. Commits remain local.
+
+## 2026-11-17 — Chat fallback order
+
+- Chat now tries Qwen (xhigh), DeepSeek Flash (max), then CPA Astra (high).
+  OpenCode coding policy is unchanged. DeepSeek still awaits an API key.
+- Gateway 78c42232 preserves per-model native effort on fallbacks. Configuration,
+  84 focused tests, types/build, health, Qwen chat and Astra high probes passed.

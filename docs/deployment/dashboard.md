@@ -949,6 +949,16 @@ Session `/think` and scheduled-task effort can still override this setting.
 The gateway must preserve xhigh through both its model check and the SDK payload;
 otherwise the SDK downgrades it to high, which this vLLM Qwen model rejects.
 
+The chat chain is Qwen (xhigh), DeepSeek Flash (max), then CPA Astra (high),
+including the dashboard-host agent's explicit fallback list. DeepSeek and Astra
+use per-model `params.reasoningEffort` to send their native values even when the
+fallback run inherits Qwen's thinking level. These explicit provider values take
+priority over run/session effort. DeepSeek's `max` differs from `xhigh`, which its
+API maps to high. Add its currently empty API key under Chat agent settings →
+Models → Providers → DeepSeek; the coding provider credential is separate.
+The legacy `deepseek-v4-flash` API name is still accepted and now serves Flash 4.1.
+See [DeepSeek effort documentation](https://api-docs.deepseek.com/guides/thinking_mode).
+
 Coding agent settings lists OpenCode, Codex, and Claude Code, including whether
 OpenClaw allows each agent. The deployed ACP backend is OpenCode; the other
 entries do not claim that a host CLI installation is connected automatically.

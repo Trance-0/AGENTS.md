@@ -90,8 +90,8 @@ Usage after reply: dashboard/usage — Codex pool 5h 62% left, resets in 2h 14m;
 
 ### Thinking effort
 
-Current chat routing uses local Qwen only, with per-model `params.thinking`
-set to `xhigh`. Change it in Chat agent settings → Agents & defaults → Chat
+Current chat routing tries local Qwen (xhigh), DeepSeek Flash (max), then
+CPA Astra (high). Qwen uses per-model `params.thinking: "xhigh"`. Change it in Chat agent settings → Agents & defaults → Chat
 reasoning effort. Qwen accepts low, medium, and xhigh. Coding tasks use the
 separate OpenCode policy. The measurements below describe the earlier 0.2.5
 CPA/OpenAI setup, not the current chat path.

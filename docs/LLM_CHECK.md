@@ -684,3 +684,25 @@ bullets specific: filenames, command names, outcomes.
   on the local Qwen model. SDK regression checks the actual serialized effort.
 - README, guide, deployment help, and change log updated. No ports, credentials,
   coding policy, or unrelated work changed; no runtime files staged or push made.
+
+## 2026-11-17 — OpenClaw fallback efforts
+
+- Updated live default and dashboard-host model chains to Qwen → DeepSeek Flash
+  → CPA Astra. Qwen uses xhigh; DeepSeek uses native max; Astra uses high.
+- Added provider-native `params.reasoningEffort` serialization so fallback
+  attempts do not inherit the primary model's effort. DeepSeek xhigh maps to
+  high per its current API docs; max must be transmitted explicitly.
+- DeepSeek provider remains configured with an empty API key, as requested.
+  Its old Flash model name is accepted by the current API. Coding policy is
+  unchanged; chat and coding credentials remain separate dashboard fields.
+- Passed 84 focused tests, full TypeScript checks, build, changed-file lint,
+  config validation and gateway health. Full `pnpm check` stops at the same
+  64 unrelated pre-existing formatting violations; no unrelated files changed.
+- Real Qwen gateway and Astra high requests returned verification markers.
+  An isolated local-agent run with an unreachable vLLM URL logged vLLM timeout,
+  DeepSeek missing-key failure, and successful Astra fallback in that order.
+  Its private log is under activity/verification/2026-11-17-fallback-effort.log;
+  test state was removed. Production vLLM and session data were not disrupted.
+- Runtime deployed with the existing release helper, preserving environment and
+  mounts. Live config was backed up atomically. Relevant guides were updated;
+  no new ports, credentials, dependencies, or remote pushes.

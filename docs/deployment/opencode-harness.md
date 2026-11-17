@@ -43,8 +43,10 @@ Bark is installed with no subscribers; no notification test was sent.
 
 ## Model and loop behavior
 
-Chat agents use only `vllm/nvidia/Qwen3.8-27B-NVFP4`. Complex coding tasks
-are delegated to OpenCode. Its coding policy tries these models in order:
+Chat agents try `vllm/nvidia/Qwen3.8-27B-NVFP4` (xhigh),
+`deepseek/deepseek-v4-flash` (max), then `cpa/gpt-6-astra` (high).
+DeepSeek is unavailable until its OpenClaw provider API key is supplied.
+Complex coding tasks are delegated to OpenCode. Its coding policy tries these models in order:
 
 1. `cpa/claude-opus-5-5-high` (high effort)
 2. `cpa/gpt-6-astra` (high effort)

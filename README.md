@@ -29,8 +29,8 @@ host. Administrators start/end streams and curate recordings; the owner can
 also ask OpenClaw to start a broadcast, record activity, and set its summary.
 OpenClaw writes file-read progress to a shared directory that the dashboard
 mounts read-only; live recordings show file paths and start/completion events.
-Chat agents use local Qwen with xhigh reasoning effort, configurable at the top
-of Chat agent settings. Complex coding tasks use OpenCode's separate ordered
+Chat agents try local Qwen (xhigh), DeepSeek Flash (max), then CPA Astra (high).
+Chat agent settings configures this chain; DeepSeek needs an API key before use. Complex coding tasks use OpenCode's separate ordered
 model policy: CPA Opus, CPA Astra, DeepSeek Flash, then local Qwen. Administrators
 can reorder models, change reasoning effort, and add the DeepSeek API key from
 Coding agent settings. CPA Gemini models are disabled. The Jenkins `agent-dashboard` job
