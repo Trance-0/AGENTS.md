@@ -1,9 +1,9 @@
 # Dashboard usage metrics
 
-The **Usage** group has three administrator-only tabs: **Summary**, **CPA
-quota**, and **Token metrics** (panels `usage-summary`, `cpa-quota`,
-`usage-metrics`). Both the panel registry and every metrics API check the
-Casdoor administrator role.
+The **Usage** group has four administrator-only tabs: **Summary**, **CPA
+quota**, **Subscriptions**, and **Token metrics** (panels `usage-summary`,
+`cpa-quota`, `subscription`, `usage-metrics`). Both the panel registry and
+every metrics API check the Casdoor administrator role.
 
 **Public feed policy (changed in 0.2.0).** Raw metrics, per-account quota,
 prices, and costs never enter the public stream feed. The only metric values
@@ -139,6 +139,38 @@ share one request. A failed refresh preserves the previous timestamped
 snapshot. Changing/removing credentials invalidates the snapshot and any
 in-flight result. HTTPS is required and redirects are rejected. Credentials
 are never sent to a changed endpoint unless entered again.
+
+## Subscriptions (Bark push alarms)
+
+The **Subscriptions** tab (`subscription` panel, admin-only) stores Bark device
+keys, per-alarm message templates, and a reset-field mapping. The whole
+document is encrypted at rest with the same master key as the CPA management
+credential; the browser receives device ids and labels, never a key back. A
+background monitor (`server/metrics/subscription-monitor.js`) runs every five
+minutes: it refreshes the CPA snapshot once through the shared single-flight
+refresher, diffs each Codex account against the previous tick, and pushes Bark
+notifications (silent `level=passive` by default) for the alarms the
+administrator subscribed to.
+
+| Alarm | Fires | Template keys |
+|---|---|---|
+| `depleted` | an account goes from serving to out of credits | `account`, `reset` (earliest next credits), `pool5h` |
+| `newCredits` | an account goes from out of credits to serving again | `account`, `pool5h` |
+| `pool5h` | the pooled 5-hour percentage changes | `pool5h`, `week`, `accounts` |
+| `resetArrived` | a new reset arrival appears on an account | `account`, `expire` |
+| `resetRequested` | an account shows a reset requested without its tick | `account`, `pool5h` |
+
+The 5-hour pool is the **sum** of each Codex account's effective 5-hour
+remaining percentage, where each account contributes the smaller of its 5-hour
+and weekly remaining percentages (a 5-hour request also draws down the weekly
+window). Four fully-available accounts read 400%, not 100%.
+
+Reset state comes from per-account fields on `/v0/management/auth-files`. The
+exact field names are not pinned across CPA versions, so the monitor detects
+them (`server/metrics/reset-fields.js`) and the panel shows the detected
+mapping, letting the administrator override a field name without a redeploy.
+No field is fabricated: an undetected concept reads as unknown and its alarm
+stays silent.
 
 ## Verification
 

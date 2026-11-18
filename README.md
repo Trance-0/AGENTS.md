@@ -21,7 +21,10 @@ only.
 
 [`dashboard/`](dashboard/README.md) is the agent dashboard behind Casdoor OIDC.
 Administrator-only plugins show CPA quota with encrypted management-key storage
-and OpenClaw token/cost usage by route and model.
+and OpenClaw token/cost usage by route and model. A **Subscriptions** tab stores
+Bark device keys and per-alarm templates (encrypted at rest) and pushes live
+Codex depletion, new-credit, 5-hour-pool, and CliProxy reset alarms every five
+minutes.
 The local Docker deployment is available at <https://live.trance-0.com>, through
 the existing frpc container on a private FRP remote port. Guests can watch live streams
 and replay visible recordings; signed-in viewers can chat with the OpenClaw

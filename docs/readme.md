@@ -60,10 +60,13 @@ recording; cursors persist separately in dashboard storage. A first attachment
 starts at the current end of the logs. Later restarts resume the saved cursor.
 
 The administrator-only Usage group provides a pooled summary, per-account CPA
-quota, and OpenClaw token metrics.
+quota, Bark push **Subscriptions**, and OpenClaw token metrics.
 The usage exporter records tokens by route/model in separate shared files; a
 SQLite database stores replay-safe events, pricing, and aggregation cursors.
 The CPA management key is encrypted with a separately mounted master key.
+Subscriptions store Bark device keys and per-alarm templates encrypted at rest
+and push Codex depletion, new-credit, 5-hour-pool, and CliProxy reset alarms
+every five minutes.
 See [metrics architecture and CC Switch references](development/dashboard-metrics.md).
 
 ### Jenkins, Docker, and FRP deployment

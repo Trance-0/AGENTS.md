@@ -706,3 +706,31 @@ bullets specific: filenames, command names, outcomes.
 - Runtime deployed with the existing release helper, preserving environment and
   mounts. Live config was backed up atomically. Relevant guides were updated;
   no new ports, credentials, dependencies, or remote pushes.
+
+## 2026-11-18 — Subscriptions: Bark push alarms for CPA quota and resets
+
+- Added an administrator-only **Subscriptions** tab to the Usage group
+  (`subscription` panel, beside CPA quota). It stores Bark device keys, per-alarm
+  title/message templates, and a reset-field mapping; the document is encrypted
+  at rest with the same master key as the CPA management credential, and the
+  browser receives device ids and labels, never a key back.
+- Five alarm types, each opt-in via a checkbox: `depleted` (earliest next
+  credits), `newCredits`, `pool5h`, `resetArrived` (expire date + account), and
+  `resetRequested` (requested but tick missing). Templates use `<account>`,
+  `<provider>`, `<reset>`, `<expire>`, `<pool5h>`, `<week>`, `<accounts>`, `<time>`.
+- The 5-hour pool is the sum of each Codex account's effective 5-hour remaining,
+  capped at its weekly remaining (min(5h, weekly)); four full accounts read 400%.
+- A monitor (`server/metrics/subscription-monitor.js`) refreshes the CPA snapshot
+  through the shared single-flight refresher and diffs accounts every five
+  minutes, pushing silent (`level=passive`) Bark notifications on transitions.
+- Reset state is read defensively from per-account `/v0/management/auth-files`
+  fields (`server/metrics/reset-fields.js`); the panel shows the detected mapping
+  and accepts an override, so no field name is guessed.
+- `server/subscription.test.js` (9 tests) covers encryption/masking, blank-key
+  keep-by-id, template rendering, reset-field detection, effective-5h/pool
+  math, and the newCredits transition. `pool.test.js` still passes. The full
+  `npm test` cannot run locally: this host's Node is 18.19.1, which lacks
+  `node:sqlite`; the Jenkins image runs Node 22 and exercises those tests there.
+- Updated README.md, docs/readme.md, and docs/development/dashboard-metrics.md.
+  No secrets staged; device keys never leave the encrypted store.
+

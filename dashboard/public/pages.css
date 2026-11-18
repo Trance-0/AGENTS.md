@@ -110,6 +110,21 @@
 .value.tone-error { color: var(--error); }
 .value.tone-warn { color: var(--warn); }
 
+/* ---------- Subscriptions ---------- */
+.subscription-devices, .subscription-alarms, .subscription-reset { display: grid; gap: 10px; margin-top: 8px; }
+.subscription-device, .subscription-alarm {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px 14px; display: grid; gap: 10px;
+}
+.subscription-device .setting-row, .subscription-alarm .setting-row { background: none; border: none; border-radius: 0; padding: 0; gap: 10px; }
+.subscription-device .setting-row > label, .subscription-alarm .setting-row > label,
+.subscription-reset .setting-row > label { flex: 0 0 74px; }
+.subscription-device input[type="text"], .subscription-device input[type="password"],
+.subscription-alarm input[type="text"], .subscription-reset input[type="text"] { flex: 1; min-width: 0; }
+.subscription-device .btn { justify-self: start; }
+.subscription-alarm .preference-toggle { border-bottom: none; padding: 0 0 4px; }
+
+
 @media (max-width: 720px) {
   .settings-card { padding: 14px; }
   .settings-card .setting-row { flex-direction: column; align-items: stretch; gap: 10px; }

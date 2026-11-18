@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { resetFields } from "./reset-fields.js";
 
 const fail = (status, reason) => Object.assign(new Error(`Quota unavailable: dashboard/CPA management — ${reason}.`), { status });
 const numeric = value => value !== null && value !== "" && Number.isFinite(Number(value)) ? Number(value) : null;
@@ -47,7 +48,7 @@ export async function fetchQuota(settings, fetcher = fetch) {
     while (next < accounts.length) {
       const index = next++, account = accounts[index];
       const provider = String(account.provider || account.type || "unknown").toLowerCase();
-      const row = { id: createHash("sha256").update(String(account.name || index)).digest("hex").slice(0, 12), provider, label: `${provider} account ${index + 1}`, windows: [] };
+      const row = { id: createHash("sha256").update(String(account.name || index)).digest("hex").slice(0, 12), provider, label: `${provider} account ${index + 1}`, windows: [], reset: resetFields(account) };
       const call = async (url, header = {}, data) => {
         const result = await request("/api-call", { authIndex: String(account.auth_index ?? account.authIndex), method: data ? "POST" : "GET", url, header: { Authorization: "Bearer $TOKEN$", "Content-Type": "application/json", ...header }, ...(data ? { data: JSON.stringify(data) } : {}) });
         if (Number(result.status_code) < 200 || Number(result.status_code) >= 300) throw fail(502, `upstream quota returned HTTP ${Number(result.status_code) || 0}`);

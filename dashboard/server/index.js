@@ -28,6 +28,9 @@ import { MetricsStore } from "./metrics/store.js";
 import { SecretStore } from "./metrics/secrets.js";
 import { watchUsage } from "./metrics/reader.js";
 import { mountMetrics } from "./metrics/routes.js";
+import { SubscriptionStore } from "./metrics/subscriptions.js";
+import { SubscriptionMonitor } from "./metrics/subscription-monitor.js";
+import { mountSubscriptions } from "./subscription-routes.js";
 import { SceneStore } from "./scene/store.js";
 import { SceneService } from "./scene/service.js";
 import { MetricsBridge } from "./scene/bridge.js";
@@ -174,6 +177,13 @@ function requireCsrf(req, res, next) {
 app.get("/auth/avatar", requireAuth, serveAvatar);
 // The metrics routes own the shared CPA quota refresher the usage line reuses.
 const quota = mountMetrics(app, { store: metrics, secrets: metricsSecrets, requireAuth, requireAdmin, requireCsrf, isEnabled });
+// Subscriptions push Bark alarms on top of the same quota snapshot; their
+// five-minute monitor shares the single-flight refresher, so a push never
+// triggers a second upstream quota poll.
+const subscriptions = new SubscriptionStore(metricsDirectory, config.metricsKeyFile);
+const subscriptionMonitor = new SubscriptionMonitor({ subscriptions, quota, secrets: metricsSecrets, isEnabled, emit });
+mountSubscriptions(app, { subscriptions, quota, monitor: subscriptionMonitor, requireAuth, requireAdmin, requireCsrf, isEnabled });
+subscriptionMonitor.start();
 const control = new StreamControl({ broadcast, emit });
 const usageLine = new UsageLine({ broadcast, metrics, quota, secrets: metricsSecrets, isEnabled, emit });
 mountBroadcast(app, broadcast, { requireAuth, requireAdmin, requireCsrf, control, usageLine, emit });
