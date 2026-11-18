@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "session-importer": {
-      "command": "node",
-      "args": ["server.mjs"],
-      "cwd": "."
-    }
-  }
-}

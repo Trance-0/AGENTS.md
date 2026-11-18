@@ -1,149 +1,36 @@
 # AGENTS.md
 
-Two things live here:
+This repository holds the canonical agent-handoff contract used across the
+owner's projects.
 
-- **[`AGENTS.md`](AGENTS.md)** — the canonical agent-handoff contract. It is the
-  reference template for how coding agents (Claude Code, Codex, Cursor,
-  Copilot) collaborate on this owner's projects. Other entry files
-  (`CLAUDE.md`, `CODEX.md`) are thin includes of it rather than forks, so there
-  is one source of truth.
-- **[`opencode/`](opencode/README.md)** — a set of personal
-  [opencode](https://opencode.ai) plugins, versioned and released from this
-  repository.
+## What lives on this branch
 
-`codex-plugins/` holds the earlier Codex MCP versions of the same tools, kept
-for reference; the opencode ports supersede them.
+The `main` branch carries **only the plain-text agent prompts and rules**:
 
-[`ai-platform-design/`](ai-platform-design/README.md) holds the v0 design for a
-self-hosted AI platform (AstrBot, OpenClaw, PCP, Claude Code) with a
-self-evolving, rollback-safe CI/CD loop. It is docs and check-script stubs
-only.
+- [`AGENTS.md`](AGENTS.md) — the canonical contract that coding agents (Claude
+  Code, Codex, Cursor, Copilot) follow. Other entry files (`CLAUDE.md`,
+  `CODEX.md`) are thin includes of it rather than forks, so there is one source
+  of truth.
+- [`CLAUDE.md`](CLAUDE.md) — a single-line `@AGENTS.md` include.
+- [`docs/LLM_CHECK.md`](docs/LLM_CHECK.md) — the canonical end-of-round checklist
+  every agent-managed project ships.
+- [`docs/readme.md`](docs/readme.md) — how the template is laid out and used.
 
-[`dashboard/`](dashboard/README.md) is the agent dashboard behind Casdoor OIDC.
-Administrator-only plugins show CPA quota with encrypted management-key storage
-and OpenClaw token/cost usage by route and model.
-The local Docker deployment is available at <https://live.trance-0.com>, through
-the existing frpc container on a private FRP remote port. Guests can watch live streams
-and replay visible recordings; signed-in viewers can chat with the OpenClaw
-host. Administrators start/end streams and curate recordings; the owner can
-also ask OpenClaw to start a broadcast, record activity, and set its summary.
-OpenClaw writes file-read progress to a shared directory that the dashboard
-mounts read-only; live recordings show file paths and start/completion events.
-The stream host uses CPA Opus 5.5, then CPA GPT-6 Astra, then official OpenAI
-GPT-6 Astra. CPA Gemini models are disabled. The Jenkins `agent-dashboard` job
-deploys GitHub pushes to `ai-infra-v0`. See the
-[deployment runbook](docs/deployment/dashboard.md) for setup and verification.
+## Branch structure
 
-## The plugins
+The repository is split across two branches:
 
-| Plugin | What it does |
-| --- | --- |
-| `plugin-manager` | Settings dashboard on localhost, soft enable/disable, config editor, marketplace update checks |
-| `bark-notify` | Bark push notifications for opencode lifecycle events, with per-type templates |
-| `cpa-usage` | CliProxy quota and model-catalog probing |
-| `task-queue` | Durable task queue with concurrency, restart resume, and automatic transport/quota retry |
-| `session-manager` | Merges local agents and per-project directory records; one-time full-history archive transfer ([sync guide](docs/development/session-archives.md)) |
-| `session-rename` | Retitles sessions from their transcript using a model you pick |
+- **`main`** (this branch) — plain-text agent prompts and rules only. No plugin
+  or dashboard code.
+- **`ai-infra-v0`** — everything else: the `opencode/` plugins, the
+  `codex-plugins/` reference, the `dashboard/` service, and the platform design
+  docs. The Jenkins `agent-dashboard` job deploys pushes to this branch.
 
-opencode has no plugin settings UI, so `plugin-manager` supplies one: run the
-`plugins_dashboard` tool for a `http://127.0.0.1:141xx` URL. Full behaviour,
-install steps and design notes are in [`opencode/README.md`](opencode/README.md).
+Code changes land on `ai-infra-v0`; plain-text rule changes land on `main` and
+are merged into `ai-infra-v0`.
 
-OpenClaw can delegate long coding tasks to a persistent OpenCode server with
-all six plugins. The local desktop and terminal UI share its sessions; see the
-[coding harness runbook](docs/deployment/opencode-harness.md).
+## Using the template
 
-## Install
-
-opencode auto-discovers any `*.ts` in `~/.config/opencode/plugin/`. Link this
-checkout in rather than copying, so edits are live:
-
-```powershell
-cmd /c mklink /J "$env:USERPROFILE\.config\opencode\plugin" "<checkout>\opencode\plugin"
-cmd /c mklink /J "$env:USERPROFILE\.config\opencode\lib"    "<checkout>\opencode\lib"
-cmd /c mklink /J "<checkout>\opencode\node_modules" "$env:USERPROFILE\.config\opencode\node_modules"
-```
-
-The third link lets the plugins resolve `@opencode-ai/plugin`, which opencode
-installs into its own config directory. Junctions are used instead of symlinks
-because they need no administrator rights.
-
-## Versioning and releases
-
-Every plugin declares a managed version in
-[`opencode/versions.json`](opencode/versions.json). Versions are `a.b.c`:
-
-- `c == 0` marks a **stable release** — pushing it publishes a GitHub release.
-- any `c > 0` is a **local beta** and is never published.
-- Promoting a verified beta bumps `b` and resets `c` to `0`.
-
-A push to `main` that touches `opencode/**` runs
-[`opencode-plugins-release.yml`](.github/workflows/opencode-plugins-release.yml),
-which releases every stable version that has no
-`opencode-<plugin>-v<version>` tag yet. Betas and already-released versions are
-skipped, so pushing one publishes nothing.
-
-Each release ships a zip of that plugin plus the shared `lib/`, because the
-plugins import `lib/` directly and a single-file asset would not install.
-
-To preview what a push would publish, without writing anything:
-
-```sh
-cd opencode
-EXISTING_TAGS="$(git tag --list 'opencode-*')" node scripts/plan-release.mjs plan
-```
-
-The planner also validates the manifest: a plugin missing from
-`versions.json`, a declared plugin with no file, or a malformed version fails
-there rather than halfway through publishing.
-
-OpenClaw settings use grouped form controls with an optional JSON tab. The
-[scheduled-task editor](docs/development/openclaw-settings.md) manages prompts, models, schedules, time zones,
-and delivery for enabled and paused jobs through the authenticated gateway.
-
-### AstrBot adapter access
-
-Administrator channel-access settings are available at `/adapters`. The list
-editor controls owner DM execution and selected groups/senders through a private
-policy directory shared read-only with PCP. Group access starts empty; each group
-requires its own sandboxed execution agent. PCP checks each tool call against
-the current policy and live grant.
-
-### Context sync and recovery integration
-
-The session manager now registers PCP projects/workspaces, writes versioned
-task context and merges redacted messages by stable identity. Legacy messages
-are mapped without changing their IDs or contents. The plugin is split into
-focused registration, tool and synchronization modules.
-
-The OpenClaw release helper deploys immutable images, verifies runtime identity
-and channel health, and promotes known-good releases after a soak. Its systemd
-watchdog recovers independently of Jenkins; the dashboard reads a restricted
-status record. Staging rollback, recovery and kill-switch checks passed.
-
-### Canvas and avatar editing (dashboard 0.4.0)
-
-Canvas is now a separate administrator panel with Layout and Avatars tabs.
-Drag preview widgets to move them, use corner handles to resize, or select
-Draw widget to create a rectangle. Save layout changes the default scene;
-Apply to live stream records the changes in the current stream.
-
-The avatar library imports ZIP collections from upload or a public HTTPS URL,
-previews named states, edits resource mappings as new immutable packs, and
-downloads packs. Avatar widget properties select the pack/state and blink
-interval/duration. The OpenClaw scene tool returns the available avatar catalog.
-Usage Summary checks quota on load by default, has Check now/auto-update controls,
-and shows the last snapshot time. Circtime backdrop properties include the
-red/yellow/green Monochrome toggle; fixed dark embeds now have black backgrounds.
-
-### Reliable task saves and delegated coding status
-
-Task updates send only changed fields, preserving older stored configuration
-that the current gateway write schema does not accept. Successful saves show a
-top notification with Undo for five seconds; failures also show a visible alert.
-Undo checks the saved revision before reverting.
-
-The shared OpenCode bridge reports sanitized provider billing/auth blockers and
-permission waits clearly and supplies the host/container path mapping in coding
-requests. PCP's delegated-work monitor carries progress and terminal results
-back to the original AstrBot conversation after the initial HTTP turn ends.
+Copy `AGENTS.md` into a target repo's root and `docs/LLM_CHECK.md` into its
+`docs/` directory (see `AGENTS.md` §8 for the full checklist). Adapt the
+project-specific sections rather than forking the rules per tool.
