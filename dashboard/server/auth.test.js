@@ -214,7 +214,7 @@ test("OIDC sessions, group authorization, mutation tokens, and HTTPS cookies", {
     assert.ok(adminPanels.some(panel => panel.id === "cpa-quota"));
     const adminMenu = await (await request("/api/panels", { headers })).json();
     assert.deepEqual(adminMenu.groups.map(group => group.id), ["live", "openclaw", "usage", "adapters", "canvas", "builds", "settings"]);
-    assert.deepEqual(adminPanels.filter(panel => panel.group === "usage").flatMap(panel => panel.tabs.map(tab => tab.title)), ["Summary", "CPA quota", "Token metrics"]);
+    assert.deepEqual(adminPanels.filter(panel => panel.group === "usage").flatMap(panel => panel.tabs.map(tab => tab.title)), ["Summary", "CPA quota", "Subscriptions", "Token metrics"]);
     assert.deepEqual(adminPanels.filter(panel => panel.group === "openclaw").flatMap(panel => panel.tabs.map(tab => tab.title)), ["Status", "Chat agent settings", "Scheduled tasks", "Coding agent settings"]);
     const codingView = await (await request("/api/admin/opencode-config", { headers })).json();
     assert.equal(codingView.config.chain[0].model, "cpa/claude-opus-5-5-high");

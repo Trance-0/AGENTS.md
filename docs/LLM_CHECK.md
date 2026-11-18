@@ -733,4 +733,14 @@ bullets specific: filenames, command names, outcomes.
   `node:sqlite`; the Jenkins image runs Node 22 and exercises those tests there.
 - Updated README.md, docs/readme.md, and docs/development/dashboard-metrics.md.
   No secrets staged; device keys never leave the encrypted store.
+- Verified against the local instance credential (read-only, no Jenkins container
+  touched): built the Node 22 image and ran the full server suite — 95/95 pass,
+  including the pre-existing `node:sqlite` metrics tests. The one update was the
+  Usage-tab list assertion in `auth.test.js`, now including Subscriptions.
+- Live read-only CPA probe (local encrypted credential) lists 5 accounts and
+  shows **no `reset*` fields on `/auth-files`** (actual fields include `status`,
+  `status_message`, `last_refresh`, `failed`, `success`, `unavailable`). The
+  reset alarms therefore correctly stay silent until the field mapping is set in
+  the Subscriptions panel. A throwaway instance boots cleanly on port 14145 and
+  `/api/admin/subscription` returns 401 (route mounted), not 404.
 
