@@ -326,11 +326,10 @@ construction. `plugins_versions` reports the same from a session.
 
 ### Releases
 
-[`opencode-plugins-release.yml`](../.github/workflows/opencode-plugins-release.yml)
-runs on a push to master that touches `opencode/`. `scripts/plan-release.mjs`
-compares the manifest against existing `opencode-*` tags and releases every
-plugin that is stable and untagged; betas and already-released versions are
-skipped, so a push that changes nothing publishes nothing.
+Releases are published manually from `ai-infra-v0` (the automatic GitHub Actions
+workflow was removed when the code moved off `main`). `scripts/plan-release.mjs`
+compares the manifest against existing `opencode-*` tags and lists every plugin
+that is stable and untagged; betas and already-released versions are skipped.
 
 Each release is tagged `opencode-<plugin>-v<a.b.c>` and carries
 `<plugin>-<a.b.c>.zip` containing that plugin, the whole of `lib/`, and the

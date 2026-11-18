@@ -14,6 +14,20 @@ Two things live here:
 `codex-plugins/` holds the earlier Codex MCP versions of the same tools, kept
 for reference; the opencode ports supersede them.
 
+## Branch structure
+
+This repository is split across two branches:
+
+- **`main`** holds only the plain-text agent handoff contract (`AGENTS.md`,
+  `CLAUDE.md`, `README.md`, `docs/`) — the prompts and rules an agent reads,
+  with no plugin or dashboard code.
+- **`ai-infra-v0`** holds everything: the `opencode/` plugins, `codex-plugins/`
+  reference, the `dashboard/` service, and the platform design docs. The Jenkins
+  `agent-dashboard` job deploys pushes to this branch.
+
+Code changes land on `ai-infra-v0`; plain-text rule changes land on `main` and
+are merged into `ai-infra-v0`.
+
 [`ai-platform-design/`](ai-platform-design/README.md) holds the v0 design for a
 self-hosted AI platform (AstrBot, OpenClaw, PCP, Claude Code) with a
 self-evolving, rollback-safe CI/CD loop. It is docs and check-script stubs
@@ -83,11 +97,10 @@ Every plugin declares a managed version in
 - any `c > 0` is a **local beta** and is never published.
 - Promoting a verified beta bumps `b` and resets `c` to `0`.
 
-A push to `main` that touches `opencode/**` runs
-[`opencode-plugins-release.yml`](.github/workflows/opencode-plugins-release.yml),
-which releases every stable version that has no
-`opencode-<plugin>-v<version>` tag yet. Betas and already-released versions are
-skipped, so pushing one publishes nothing.
+Releases are published manually from `ai-infra-v0`: the automatic GitHub
+Actions release workflow was removed when the code moved off `main`. Promote a
+verified beta by bumping `b` and resetting `c` to `0`, then publish every stable
+version that has no `opencode-<plugin>-v<version>` tag yet.
 
 Each release ships a zip of that plugin plus the shared `lib/`, because the
 plugins import `lib/` directly and a single-file asset would not install.
