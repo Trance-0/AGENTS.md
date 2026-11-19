@@ -733,6 +733,23 @@ bullets specific: filenames, command names, outcomes.
   `node:sqlite`; the Jenkins image runs Node 22 and exercises those tests there.
 - Updated README.md, docs/readme.md, and docs/development/dashboard-metrics.md.
   No secrets staged; device keys never leave the encrypted store.
+
+## 2026-11-19 — Subscriptions verification and reset-source correction
+
+- Verified against the local instance credentials (Jenkins container untouched):
+  built `agent-dashboard:sub-test` (Node 22), ran the full server suite — 95/95
+  after updating `auth.test.js` to include the new Subscriptions tab (committed
+  and pushed as `376b2ca`; the earlier push would have failed that assertion).
+  A throwaway container on port 14145 booted clean: healthz OK, the
+  subscription route answers 401 (mounted), startup logged "Dashboard is ready".
+- Live read-only CPA probe revealed `/auth-files` has no literal `reset*`
+  fields. Reset state is the ChatGPT subscription cycle inside `id_token`:
+  `chatgpt_subscription_active_start` (arrived), `chatgpt_subscription_active_until`
+  (expire date), and `plan_type`. Reset alarms now read these;
+  `resetRequested` fires when an account has a plan but no `active_until`.
+- The local repo had seven zero-byte git objects after the session interruption;
+  they were removed and re-fetched from origin — all work was already pushed.
+
 - Verified against the local instance credential (read-only, no Jenkins container
   touched): built the Node 22 image and ran the full server suite — 95/95 pass,
   including the pre-existing `node:sqlite` metrics tests. The one update was the

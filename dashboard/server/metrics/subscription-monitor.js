@@ -134,16 +134,19 @@ export class SubscriptionMonitor {
         }
 
         const arrived = Number.isFinite(reset.arrivedAt) ? reset.arrivedAt : null;
-        if (config.types.resetArrived.enabled && arrived !== null && prev && prev.arrivedAt !== arrived) {
-          deliveries.push(...await this.pushType(config, "resetArrived", { ...base(), expire: fmt(reset.expiresAt) }));
+        const expires = Number.isFinite(reset.expiresAt) ? reset.expiresAt : null;
+        if (config.types.resetArrived.enabled && expires !== null && prev && prev.expiresAt !== expires) {
+          deliveries.push(...await this.pushType(config, "resetArrived", { ...base(), expire: fmt(expires) }));
         }
 
-        const unticked = reset.requested === true && reset.ticked !== true;
-        if (config.types.resetRequested.enabled && unticked && prev && prev.unticked !== true) {
+        // A Codex account with a subscription plan but no active-until window is
+        // waiting on a reset whose expiry "tick" has not been recorded yet.
+        const missingTick = reset.planType !== null && expires === null;
+        if (config.types.resetRequested.enabled && missingTick && prev && prev.missingTick !== true) {
           deliveries.push(...await this.pushType(config, "resetRequested", base()));
         }
 
-        previous.set(id, { depleted, arrivedAt: arrived, unticked, ticked: reset.ticked, requested: reset.requested });
+        previous.set(id, { depleted, expiresAt: expires, arrivedAt: arrived, missingTick });
       }
 
       // Drop accounts that disappeared from the snapshot so a returning account

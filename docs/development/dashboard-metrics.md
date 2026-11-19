@@ -157,20 +157,23 @@ administrator subscribed to.
 | `depleted` | an account goes from serving to out of credits | `account`, `reset` (earliest next credits), `pool5h` |
 | `newCredits` | an account goes from out of credits to serving again | `account`, `pool5h` |
 | `pool5h` | the pooled 5-hour percentage changes | `pool5h`, `week`, `accounts` |
-| `resetArrived` | a new reset arrival appears on an account | `account`, `expire` |
-| `resetRequested` | an account shows a reset requested without its tick | `account`, `pool5h` |
+| `resetArrived` | an account's ChatGPT subscription window changes (new expire date) | `account`, `expire` |
+| `resetRequested` | an account has a subscription plan but no expiry window ("tick missing") | `account`, `pool5h` |
 
 The 5-hour pool is the **sum** of each Codex account's effective 5-hour
 remaining percentage, where each account contributes the smaller of its 5-hour
 and weekly remaining percentages (a 5-hour request also draws down the weekly
 window). Four fully-available accounts read 400%, not 100%.
 
-Reset state comes from per-account fields on `/v0/management/auth-files`. The
-exact field names are not pinned across CPA versions, so the monitor detects
-them (`server/metrics/reset-fields.js`) and the panel shows the detected
-mapping, letting the administrator override a field name without a redeploy.
-No field is fabricated: an undetected concept reads as unknown and its alarm
-stays silent.
+Reset state is the ChatGPT subscription cycle on each Codex auth file:
+`id_token.chatgpt_subscription_active_start` (arrived) and
+`id_token.chatgpt_subscription_active_until` (expire date), plus `plan_type`.
+The exact field names are not pinned across CPA versions, so the monitor
+detects them (`server/metrics/reset-fields.js`) and the panel shows the
+detected mapping, letting the administrator override a field name without a
+redeploy. No field is fabricated: an undetected concept reads as unknown and
+its alarm stays silent. `resetRequested` fires when an account has a
+`plan_type` but no `active_until` — a reset whose expiry tick is missing.
 
 ## Verification
 

@@ -88,6 +88,29 @@ test("reset field detection and state read", () => {
   assert.deepEqual(resolveMapping({ ticked: "a", requested: "b", arrivedAt: "c", expiresAt: "d" }, { ticked: "override" }), { ticked: "override", requested: "b", arrivedAt: "c", expiresAt: "d" });
 });
 
+test("reset state is detected from the ChatGPT subscription window in id_token", () => {
+  const files = [{
+    reset: {
+      plan_type: "plus",
+      chatgpt_subscription_active_start: "2026-10-08T08:55:44+00:00",
+      chatgpt_subscription_active_until: "2026-11-08T09:55:44+00:00",
+    },
+  }];
+  const mapping = detectResetFields(files);
+  assert.equal(mapping.arrivedAt, "chatgpt_subscription_active_start");
+  assert.equal(mapping.expiresAt, "chatgpt_subscription_active_until");
+  assert.equal(mapping.ticked, "");
+  assert.equal(mapping.requested, "");
+  const state = readResetState(files[0], mapping);
+  assert.equal(state.planType, "plus");
+  assert.equal(state.arrivedAt, Date.parse("2026-10-08T08:55:44+00:00"));
+  assert.equal(state.expiresAt, Date.parse("2026-11-08T09:55:44+00:00"));
+  // A plan with no active-until window is the "tick missing" case.
+  const missing = readResetState({ reset: { plan_type: "free" } }, mapping);
+  assert.equal(missing.planType, "free");
+  assert.equal(missing.expiresAt, null);
+});
+
 test("effective 5h is capped by weekly; pool sums it across accounts", () => {
   assert.equal(effective5h(account("a", 100, 5)), 5, "5h 100% beside weekly 5% counts 5%");
   assert.equal(effective5h(account("a", 20, 100)), 20);

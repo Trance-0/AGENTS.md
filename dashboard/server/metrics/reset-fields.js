@@ -1,30 +1,42 @@
 // Defensive read of CliProxy account reset state.
 //
-// The management /auth-files entries carry per-account reset fields whose
-// exact names are not pinned across CPA versions, so the dashboard detects the
-// key names from the response and the Subscriptions panel shows that mapping
-// (and lets the administrator override it). Nothing here fabricates a reset;
-// an undetected concept simply reads as null and the matching alarm stays
-// silent rather than guessing.
+// A Codex account's "reset" is its ChatGPT subscription cycle, held on the
+// /auth-files entry under `id_token.chatgpt_subscription_active_start` and
+// `id_token.chatgpt_subscription_active_until` (plus `plan_type`). The field
+// names are not pinned across CPA versions, so the dashboard detects them from
+// the response, the Subscriptions panel shows the mapping, and an administrator
+// can override it. Nothing here fabricates a reset; an undetected concept reads
+// as null and its alarm stays silent.
 
-// Semantic concepts the reset alarms depend on. Each maps to a key-name hint.
 export const RESET_CONCEPTS = ["ticked", "requested", "arrivedAt", "expiresAt"];
 
 const CONCEPT_HINTS = {
   ticked: /tick/i,
   requested: /request/i,
-  arrivedAt: /arriv/i,
-  expiresAt: /expire|expir/i,
+  arrivedAt: /active_start|arriv/i,
+  expiresAt: /active_until|expire|expir/i,
 };
 
-// Collect the reset-ish keys from one raw auth-file entry. Only keys that carry
-// "reset" (or the narrower concept words) are kept, so an account's bearer
-// token or other private fields never enter the snapshot.
+// Collect the reset-relevant fields from one raw auth-file entry. Only keys
+// that carry "reset" (or the narrower concept words) plus the non-secret
+// subscription/liveness fields are kept, so an account's bearer token or other
+// private fields never enter the snapshot.
 export function resetFields(entry) {
   const out = {};
   if (!entry || typeof entry !== "object") return out;
   for (const [key, value] of Object.entries(entry)) {
     if (/reset/i.test(key)) out[key] = value;
+  }
+  // ChatGPT subscription window lives one level down inside id_token; flatten
+  // the non-secret sub-fields so the reset mapping can address them by name.
+  const token = entry.id_token;
+  if (token && typeof token === "object") {
+    for (const key of ["chatgpt_subscription_active_start", "chatgpt_subscription_active_until", "plan_type"]) {
+      if (token[key] !== undefined) out[key] = token[key];
+    }
+  }
+  for (const key of ["last_refresh", "status", "failed", "success", "unavailable"]) {
+    if (entry[key] !== undefined) out[key] = entry[key];
   }
   return out;
 }
@@ -37,7 +49,7 @@ export function detectResetFields(files) {
   const keys = new Set();
   for (const file of files || []) {
     const raw = file?.reset ?? file ?? {};
-    for (const key of Object.keys(raw)) if (/reset/i.test(key)) keys.add(key);
+    for (const key of Object.keys(raw)) keys.add(key);
   }
   for (const concept of RESET_CONCEPTS) {
     mapping[concept] = [...keys].find(key => CONCEPT_HINTS[concept].test(key)) ?? "";
@@ -65,8 +77,9 @@ const epoch = value => {
   return null;
 };
 
-// Read one account's reset state using the resolved field mapping. An empty
-// field name (or a missing value) yields null for that concept.
+// Read one account's reset state using the resolved field mapping. `planType`
+// is surfaced separately: an account with a plan but no active-until window is
+// the "reset ticked missing" case the resetRequested alarm watches for.
 export function readResetState(entry, mapping = {}) {
   const raw = entry?.reset ?? entry ?? {};
   const read = concept => {
@@ -78,6 +91,7 @@ export function readResetState(entry, mapping = {}) {
     requested: truthy(read("requested")),
     arrivedAt: epoch(read("arrivedAt")),
     expiresAt: epoch(read("expiresAt")),
+    planType: typeof raw.plan_type === "string" && raw.plan_type ? raw.plan_type : null,
   };
 }
 
