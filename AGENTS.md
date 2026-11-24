@@ -591,22 +591,14 @@ fails, fix the underlying issue; do not just remove the check.
 - Lint/format-only churn: auto-resolve if no semantic change. If the user
   already asked to commit, include formatting in the same commit.
 - PR titles stay under 70 characters. Use the body for detail.
-- **Commit, but do not push by default.** When a round finishes cleanly
-  (no known bugs, no outstanding architectural concerns), stage the work
-  and commit it locally with a clear message and stop there. Leave `git
-  push` to the repo owner unless they explicitly asked you to push this
-  round. If the round leaves known bugs, missing tests, or architectural
-  concerns that should block a push, call them out in the final message
-  and leave the work either uncommitted or on a scratch branch — do not
-  quietly ship half-done work.
-- Branch discipline:
-  - If the repo has any branch other than `main` (release branches, feature
-    branches, protected `develop`, a `gh-pages`, etc.), work on a feature
-    branch and open a PR; do not commit directly to `main` / `origin/main`.
-  - If `main` is the **only** branch **and** the repo has GitHub Actions
-    wired up (i.e. CI is the review gate), committing to `main` directly
-    is fine. Pushing still follows the commit-without-push default above —
-    the owner decides when `main` moves forward on the remote.
+- **Push verified work to `main` by default.** Fetch the current remote `main`
+  before starting. If it is unprotected, work directly on `main`, run the
+  relevant checks, and push normally. Other branches are not a reason to
+  create a feature branch or wait for a separate push request.
+- If `main` is protected, push a topic branch and open a PR targeting `main`.
+  Respect required checks and reviews; never bypass protection. If a normal
+  push is rejected, check why rather than force-pushing. Honor explicit
+  local-only requests and do not publish unrelated or failing work.
 - Force-pushing to `main` / `origin/main` is never allowed without explicit
   per-task approval. Pulling `--rebase` to integrate is fine; force-pushing
   is not.
@@ -621,6 +613,12 @@ fails, fix the underlying issue; do not just remove the check.
 
 Expand these only when encountered:
 
+- **Semicolon-separated tasks (`;`)**: treat each task separated by a semicolon
+  in the owner's request as a work item. Run independent items concurrently
+  on subagents when available; keep dependent or overlapping edits in order.
+  Semicolons inside quoted text, code, or commands are not task boundaries.
+  If delegation is unavailable, complete the items locally. The coordinating
+  agent integrates and verifies the combined result before pushing.
 - **`sync`**: if working tree is dirty, commit all with a sensible
   Conventional Commit message, then `git pull --rebase`; stop on unresolved
   conflicts; otherwise `git push`.
